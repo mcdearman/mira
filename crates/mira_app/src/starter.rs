@@ -331,13 +331,15 @@ mod tests {
             .init_resource::<AssetServer>()
             .init_resource::<Assets<Mesh>>()
             .add_systems(Stage::Startup, scene);
+        // Every frame is a sixtieth of a second, however long the machine takes over it:
+        // by the clock, a slow one fired fourteen shots in what was meant as half a second.
+        app.world.resource_mut::<Time>().set_fixed_step(Some(std::time::Duration::from_secs_f64(1.0 / 60.0)));
         app
     }
 
-    /// Runs the game for about this long, a sixtieth of a second at a time.
+    /// Runs the game for this long, a sixtieth of a second at a time.
     fn run(app: &mut App, seconds: f32) {
         for _ in 0..(seconds * 60.0) as usize {
-            std::thread::sleep(std::time::Duration::from_micros(16_700));
             app.update();
         }
     }
