@@ -1,4 +1,5 @@
 /target
+/.cargo/local.toml
 .vscode/
 .idea/
 .vs/

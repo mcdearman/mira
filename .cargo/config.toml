@@ -1,0 +1,2 @@
+# Settings of one's own, not kept in the repository: see `local.toml.example`.
+include = [{ path = "local.toml", optional = true }]
