@@ -58,8 +58,11 @@ pub struct Shot {
 }
 
 /// Where the gun sits in front of the camera, and where its barrel ends.
-const GUN_AT: Vec3 = Vec3::new(0.24, -0.2, -0.5);
-const MUZZLE: Vec3 = Vec3::new(0.24, -0.16, -1.1);
+const GUN_AT: Vec3 = Vec3::new(0.27, -0.27, -0.55);
+const MUZZLE: Vec3 = Vec3::new(0.27, -0.248, -0.9);
+/// How big the gun is made, of the size its parts are given in. At their full size, held
+/// this near, it filled a quarter of the picture.
+const GUN_SIZE: f32 = 0.55;
 const BALL: f32 = 0.11;
 
 /// The walker, the gun and the shots: add it to play the starter scene or one saved from it.
@@ -272,7 +275,7 @@ pub fn scene(mut commands: Commands, mut server: ResMut<AssetServer>, mut meshes
         .id();
     let metal = Material { metallic: 0.9, ..paint(0.09, 0.1, 0.12, 0.38) };
     let gun = commands
-        .spawn((Transform::from_translation(GUN_AT), Gun::default(), Parent(camera), Name::new("Gun")))
+        .spawn((Transform::from_translation(GUN_AT).with_scale(Vec3::splat(GUN_SIZE)), Gun::default(), Parent(camera), Name::new("Gun")))
         .id();
     for (name, at, size, material) in [
         ("Barrel", Vec3::new(0.0, 0.04, -0.28), Vec3::new(0.05, 0.05, 0.62), metal),
