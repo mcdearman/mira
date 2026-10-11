@@ -145,6 +145,15 @@ impl Gpu {
                     },
                     ..Default::default()
                 },
+                // Ray queries are among the features wgpu calls experimental, and gives
+                // only to a device that was opened saying it accepts them as they are.
+                experimental_features: if traced {
+                    // SAFETY: nothing is asked of them but what wgpu documents: the
+                    // structures are built before a frame's queries are made of them.
+                    unsafe { wgpu::ExperimentalFeatures::enabled() }
+                } else {
+                    wgpu::ExperimentalFeatures::disabled()
+                },
                 ..Default::default()
             })
             .await?;
@@ -286,6 +295,8 @@ impl Gpu {
         } else {
             crate::shader!("rt_off.wgsl")
         };
-        crate::shader!("pbr.wgsl").source() + &tracing.source()
+        // Ray queries are extensions a shader must ask for, before anything else in it.
+        let enable = if self.ray_tracing { super::RAY_QUERY_WGSL } else { "" };
+        enable.to_string() + &crate::shader!("pbr.wgsl").source() + &tracing.source()
     }
 }
