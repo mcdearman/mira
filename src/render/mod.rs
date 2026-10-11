@@ -71,7 +71,10 @@ use renderer::{BatchKey, RenderObject, CASTS_SHADOW, VISIBLE};
 /// shadows, sky light and haze, at group 0. Prepend it to a custom shader's source.
 pub const PBR_WGSL: &str = concat!(include_str!("pbr.wgsl"), include_str!("rt_off.wgsl"));
 /// [`PBR_WGSL`] with ray-traced shadows, occlusion and reflections; see [`Gpu::pbr_wgsl`].
-pub const PBR_RT_WGSL: &str = concat!(include_str!("pbr.wgsl"), include_str!("rt_on.wgsl"));
+pub const PBR_RT_WGSL: &str = concat!("enable wgpu_ray_query;\nenable wgpu_binding_array;\n", include_str!("pbr.wgsl"), include_str!("rt_on.wgsl"));
+/// The lines that let a shader make ray queries and index the array of every texture, for
+/// what a reflection hits. They have to come first in the source.
+pub(crate) const RAY_QUERY_WGSL: &str = "enable wgpu_ray_query;\nenable wgpu_binding_array;\n";
 
 /// Linear RGBA color.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Reflect)]

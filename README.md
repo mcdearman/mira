@@ -5,6 +5,13 @@ voxel terrain. The engine is an app: a window, built with
 [Neo](https://github.com/mcdearman/neo), in which a game is shown, looked into and changed
 while it runs, with an AI agent beside it that can do the same.
 
+> **AI use.** Most of the code, tests and documentation in this repository were written by
+> AI coding agents (Claude, through Claude Code), working to my direction. I decide what is
+> built and how it should behave, but I have not read or reviewed every line. It is checked
+> by its tests and by running it, not by line-by-line human review, so expect mistakes, and
+> judge it accordingly before relying on it. Commits written this way carry a
+> `Co-Authored-By: Claude` line.
+
 ```
 cargo run                         # the app, on a small scene to start from
 cargo run -- chase scoreboard     # the app, on a game made of plugins
