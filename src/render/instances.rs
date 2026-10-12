@@ -159,9 +159,9 @@ pub(crate) struct Instances {
     stale: Vec<u32>,
     /// The frame entities were last brought up to date in.
     frame: u64,
-    /// Counts every change made to an instance: what was made from them is out of date when
-    /// this has moved on.
-    changes: u64,
+    /// Whether the traced scene has asked what changed, and the instances that have since.
+    traced: bool,
+    for_tracing: Vec<u32>,
     /// None until instances are first sent.
     buffer: Option<wgpu::Buffer>,
     /// How many instances the buffer has room for.
@@ -251,7 +251,7 @@ impl Instances {
         };
         self.batches.entry(part.key).or_default().push(number);
         self.stale.push(number);
-        self.changes += 1;
+        self.changed_for_tracing(number);
         number
     }
 
@@ -279,7 +279,7 @@ impl Instances {
             self.batches.entry(part.key).or_default().push(number);
         }
         self.stale.push(number);
-        self.changes += 1;
+        self.changed_for_tracing(number);
     }
 
     fn release(&mut self, number: u32) {
@@ -288,7 +288,13 @@ impl Instances {
             self.free.push(number);
             // Seen from nowhere, until the number is taken again.
             self.sight[number as usize].seen = (f32::INFINITY, f32::INFINITY);
-            self.changes += 1;
+            self.changed_for_tracing(number);
+        }
+    }
+
+    fn changed_for_tracing(&mut self, number: u32) {
+        if self.traced {
+            self.for_tracing.push(number);
         }
     }
 
@@ -390,30 +396,41 @@ impl Instances {
         seen
     }
 
-    /// Says whether the parts rays are traced against are the same as when this gave the
-    /// same answer before: it changes when any instance has changed, and when the camera has
-    /// moved so that a part has come within `reach` or left it, or changed its level of
-    /// detail. Cheap beside going through the parts themselves.
-    pub fn traced_key(&self, camera: Vec3, reach: f32) -> (u64, u64) {
-        let mut within = 0xcbf29ce484222325u64;
-        for (number, sight) in self.sight.iter().enumerate() {
-            let away = camera.distance(sight.origin);
-            if away >= sight.seen.0 && away < sight.seen.1 && away <= reach {
-                within = (within ^ number as u64).wrapping_mul(0x100000001b3);
-            }
+    /// The instances that have changed since this was last asked, for the traced scene to
+    /// bring itself up to date with: made, changed or let go. The first time, every one
+    /// there is. Nothing is kept for it until it has asked once, since where no rays are
+    /// traced nobody asks.
+    pub fn take_traced_changes(&mut self) -> Vec<u32> {
+        if !self.traced {
+            self.traced = true;
+            return (0..self.slots.len() as u32).filter(|number| self.slots[*number as usize].is_some()).collect();
         }
-        (self.changes, within)
+        std::mem::take(&mut self.for_tracing)
     }
 
-    /// The parts rays are traced against: every one near enough to the camera for its level
-    /// of detail, in view or not.
-    pub fn traced(&self, camera: Vec3) -> impl Iterator<Item = Traced<'_>> {
-        self.slots.iter().flatten().filter_map(move |slot| {
-            let away = camera.distance(slot.part.model.w_axis.truncate());
-            (away >= slot.part.seen.0 && away < slot.part.seen.1).then_some(Traced { mesh: slot.part.key.mesh(), model: slot.part.model, material: &slot.part.material })
+    /// For every instance number, whether it is within the rays' reach of the camera and at
+    /// the level of detail seen from there. Cheap: what a view reads to decide what it sees.
+    pub fn within(&self, camera: Vec3, reach: f32) -> impl Iterator<Item = (u32, bool)> + '_ {
+        self.sight.iter().enumerate().map(move |(number, sight)| {
+            let away = camera.distance(sight.origin);
+            (number as u32, away >= sight.seen.0 && away < sight.seen.1 && away <= reach)
         })
     }
 
+    /// Whether one instance is within the rays' reach, as [`within`](Self::within) says of
+    /// all of them.
+    pub fn is_within(&self, number: u32, camera: Vec3, reach: f32) -> bool {
+        self.sight.get(number as usize).is_some_and(|sight| {
+            let away = camera.distance(sight.origin);
+            away >= sight.seen.0 && away < sight.seen.1 && away <= reach
+        })
+    }
+
+    /// An instance as rays are traced against it, if it is there.
+    pub fn traced(&self, number: u32) -> Option<Traced<'_>> {
+        let slot = self.slots.get(number as usize)?.as_ref()?;
+        Some(Traced { mesh: slot.part.key.mesh(), model: slot.part.model, material: &slot.part.material })
+    }
 }
 
 /// Changed instances this near each other are sent as one stretch, the unchanged ones between
@@ -423,7 +440,7 @@ const NEAR: u32 = 32;
 /// Gathers changed instances into the stretches to send: each from its first changed number
 /// to one past its last, where no two changed numbers in it are more than `near` apart.
 /// Numbers come in any order and may repeat.
-fn runs(mut numbers: Vec<u32>, near: u32) -> Vec<Range<u32>> {
+pub(crate) fn runs(mut numbers: Vec<u32>, near: u32) -> Vec<Range<u32>> {
     numbers.sort_unstable();
     numbers.dedup();
     let mut runs: Vec<Range<u32>> = Vec::new();
@@ -547,7 +564,10 @@ mod tests {
         assert_eq!(meshes(&mut scene, Vec3::ZERO), [2]);
         assert_eq!(meshes(&mut scene, Vec3::new(0.0, 0.0, -15.0)), [1]);
         assert!(meshes(&mut scene, Vec3::new(0.0, 0.0, 60.0)).is_empty());
-        assert_eq!(scene.traced(Vec3::ZERO).map(|part| part.mesh).collect::<Vec<_>>(), [2]);
+        // The rays' reach asks the same of each level: from the origin only the far one is in.
+        let within: Vec<bool> = scene.within(Vec3::ZERO, 100.0).map(|(_, within)| within).collect();
+        assert_eq!(within, [false, true]);
+        assert!(scene.within(Vec3::ZERO, 10.0).all(|(_, within)| !within), "beyond the rays' reach");
     }
 
     #[test]
@@ -589,25 +609,29 @@ mod tests {
     }
 
     #[test]
-    fn what_is_traced_is_known_to_be_the_same_or_not() {
+    fn the_traced_scene_is_told_what_changed_and_what_is_in_reach() {
         let mut world = World::new();
         let (near, far) = (world.spawn(()), world.spawn(()));
         let mut scene = Instances::default();
         scene.set(near, &[part(1, Vec3::new(0.0, 0.0, -10.0))]);
-        scene.set(far, &[part(1, Vec3::new(0.0, 0.0, -100.0))]);
-        let key = scene.traced_key(Vec3::ZERO, 50.0);
-        // The same from the same place, and from a place where the same parts are in reach.
-        assert_eq!(scene.traced_key(Vec3::ZERO, 50.0), key);
-        assert_eq!(scene.traced_key(Vec3::new(1.0, 0.0, 0.0), 50.0), key);
-        // Not the same once the far one comes within reach, or an instance changes, or goes.
-        assert_ne!(scene.traced_key(Vec3::new(0.0, 0.0, -60.0), 50.0), key);
+        scene.set(far, &[part(2, Vec3::new(0.0, 0.0, -100.0))]);
+        // The first time it asks, everything there is; after that, only what has changed.
+        assert_eq!(scene.take_traced_changes(), [0, 1]);
+        assert!(scene.take_traced_changes().is_empty());
         scene.set(near, &[part(1, Vec3::new(0.0, 0.0, -11.0))]);
-        let moved = scene.traced_key(Vec3::ZERO, 50.0);
-        assert_ne!(moved, key);
+        assert_eq!(scene.take_traced_changes(), [0]);
+        assert_eq!(scene.traced(0).map(|part| part.mesh), Some(1));
+        // What is in reach depends on where the camera is.
+        let in_reach = |scene: &Instances, camera: Vec3| -> Vec<u32> { scene.within(camera, 50.0).filter(|(_, within)| *within).map(|(number, _)| number).collect() };
+        assert_eq!(in_reach(&scene, Vec3::ZERO), [0]);
+        assert_eq!(in_reach(&scene, Vec3::new(0.0, 0.0, -60.0)), [0, 1]);
+        assert!(scene.is_within(1, Vec3::new(0.0, 0.0, -60.0), 50.0) && !scene.is_within(1, Vec3::ZERO, 50.0));
+        // One that is gone is told of, is not there to trace, and is in reach of nothing.
         scene.forget(near);
-        assert_ne!(scene.traced_key(Vec3::ZERO, 50.0), moved);
+        assert_eq!(scene.take_traced_changes(), [0]);
+        assert!(scene.traced(0).is_none());
+        assert_eq!(in_reach(&scene, Vec3::ZERO), [] as [u32; 0]);
     }
-
     #[test]
     fn changed_instances_are_sent_as_runs_of_neighbours() {
         // Neighbours only, where nothing nearby counts as near.

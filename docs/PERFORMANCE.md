@@ -106,32 +106,46 @@ That is the roadmap's test for the renderer, 100,000 mesh instances and 1,000 sh
 lights at sixty frames a second, met on the machine measured, without ray tracing. The
 machine the roadmap names, the M2 Pro, has still not been measured.
 
-## The traced scene at rest
+## The traced scene
 
 Where rays are traced, the scene they are traced against was gathered again every frame:
 every instance looked up and listed, its material sent, and the structure the card traces
-against built anew. It is now gathered only when an instance has changed, or the camera
-has moved far enough that something has come within reach of the rays, left it, or changed
-its level of detail; otherwise what was gathered stands, on the card as well.
+against built anew.
+
+It now keeps what it has (`src/render/raytrace.rs`). An instance has a place in the
+structure for as long as it is traced against, and a frame looks only at the instances that
+changed and at those the camera's moving has brought within the rays' reach, taken out of
+it, or changed the level of detail of. Their materials are sent, their places told to the
+structure, and nothing else is touched. Where nothing changed, nothing is built.
 
 At 100,000 things with ray tracing:
 
-| Moving | A frame (mean) | Frames a second |
+| Moving | Gathered every frame | Kept |
 |---|---|---|
-| none | 6.6 ms | 151 |
-| one thing | 20.6 ms | 49 |
-| a tenth | 27.5 ms | 36 |
+| none | about 20 ms | 6.6 ms |
+| a hundredth | | 18.6 ms |
+| a tenth | 27.5 ms | 24.5 ms |
 
-So it helps a scene at rest and nothing else: **one thing moving costs the whole 14 ms**.
-About half of that is the engine's (going through every instance again to list it); the
-rest is the structure being built again from all of them, which the graphics library does
-whole whenever any instance in it has changed. The traced scene holds 65,536 instances at
-most, so at 100,000 a third are left out of it.
+What that says:
 
-(The figures above this section for "none moving" were taken with one thing moving, by a
-mistake in the example since put right; without ray tracing it made no difference to them.)
+- **At rest the rays cost a millisecond**: 6.6 ms against 5.6 without them.
+- **Anything moving within the rays' reach costs about 12 ms, however little moves.** That is
+  not the engine's work any longer, which is a few hundred microseconds for a thousand
+  changed instances. It is the structure being built again, whole, from every instance in
+  it, which the graphics library does whenever any one of them has changed.
+- So the cost goes with how many instances are in the structure, not with how many moved.
+  It holds 65,536 at most, and at 100,000 things that is what it holds.
 
-So the next work, where rays are traced, is to keep the list as the instances are kept, an
-entry changed only when its instance is, and to trace against fewer instances than are
-drawn. Without rays it is to decide on the card what each view and each cascade sees, with
-meshes in shared buffers so that a pipeline's draws are one call.
+What would cut it is fewer instances in what has to be built again: a structure of the
+things that move, kept apart from one of the things that stand still, with rays traced
+against both; or tracing against less than is drawn.
+
+(In the tables further up, the figures for "none moving" before this section were taken
+with one thing moving, by a mistake in the example since put right; without ray tracing it
+made no difference to them. And `moving=0.00001` at 100,000 moves one thing that is 490 m
+from the camera, beyond the rays' reach of 400, so it measures the same as nothing moving.)
+
+So the next work, where rays are traced, is those two structures. Without rays it is to
+decide on the card what each view and each cascade sees, with meshes in shared buffers so
+that a pipeline's draws are one call, which wants a benchmark of many different meshes and
+materials first.

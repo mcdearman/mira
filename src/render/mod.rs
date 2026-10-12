@@ -816,29 +816,26 @@ fn prepare(    gpu: Res<Gpu>,
     renderer.prepare_draws(&gpu, &mut frame, &from);
     skinner.prepare(&gpu, &renderer, &meshes, &frame.skinned);
 
-    // Everything opaque near enough to matter goes into the traced scene, seen or not: what's
-    // behind the camera still casts shadows and shows in reflections.
+    // Everything opaque near enough to matter is in the traced scene, seen or not: what's
+    // behind the camera still casts shadows and shows in reflections. It keeps what it has:
+    // only the instances that changed are looked at, and those the camera's moving has
+    // brought within the rays' reach, taken out of it, or changed the level of detail of.
     if let Some(rt) = rt.as_deref_mut() {
-        let reach = rt.settings.max_distance;
-        // Gathered again only when an instance has changed, or the camera has moved far
-        // enough that something has come into reach, left it, or changed its level of
-        // detail. Otherwise what was gathered stands, on the card as well.
-        let same = rt.same_as(renderer.scene.traced_key(frame.camera_position, reach));
-        if same {
-            rt.upload_geometry(&gpu);
-        } else {
-            rt.begin_frame();
-        }
-        // A mesh or a texture not yet there to be traced: looked for again next frame.
-        let mut waiting = false;
-        for object in renderer.scene.traced(frame.camera_position).filter(|_| !same) {
-            // Moving water stays out too: its traced copy would be frozen flat while the surface
-            // ripples through it.
-            if object.material.alpha_cutoff.is_some() || object.material.decal || object.material.waves > 0.0 {
+        let (camera, reach) = (frame.camera_position, rt.settings.max_distance);
+        let mut touched = renderer.scene.take_traced_changes();
+        touched.append(&mut rt.again);
+        touched.extend(renderer.scene.within(camera, reach).filter(|(number, within)| *within != rt.known(*number)).map(|(number, _)| number));
+        touched.sort_unstable();
+        touched.dedup();
+        for number in touched {
+            let Some(object) = renderer.scene.traced(number).filter(|_| renderer.scene.is_within(number, camera, reach)) else {
+                rt.leave_out(number, false);
                 continue;
-            }
-            let at = object.model.w_axis.truncate();
-            if at.distance(frame.camera_position) > reach {
+            };
+            // Cut-out and decal surfaces are not for rays. Moving water stays out too: its
+            // traced copy would be frozen flat while the surface ripples through it.
+            if object.material.alpha_cutoff.is_some() || object.material.decal || object.material.waves > 0.0 {
+                rt.leave_out(number, true);
                 continue;
             }
             let id = object.mesh;
@@ -850,30 +847,32 @@ fn prepare(    gpu: Res<Gpu>,
             } else {
                 rt.mesh_geometry(&gpu, &meshes, id)
             };
-            waiting |= geometry.is_none() && meshes.get_by_id(id).is_none_or(|mesh| !mesh.indices.is_empty());
-            if let Some(geometry) = geometry {
-                let m = object.material;
-                let texture = m
-                    .base_color_texture
-                    .map_or(0, |t| rt.texture_slot(t.id(), renderer.image_view(t.id())));
-                waiting |= m.base_color_texture.is_some_and(|t| renderer.image_view(t.id()).is_none());
-                let material = raytrace::HitMaterial {
-                    color: m.color.to_array(),
-                    emissive: [m.emissive.r, m.emissive.g, m.emissive.b, 0.0],
-                    texture,
-                    roughness: m.roughness,
-                    metallic: m.metallic,
-                    ..raytrace::HitMaterial::plain(m.color)
-                };
-                rt.push(geometry, object.model, material);
+            let Some(geometry) = geometry else {
+                rt.leave_out(number, true);
+                // A mesh that is not there yet may come: looked for again next frame. One
+                // with no triangles never will.
+                if meshes.get_by_id(id).is_none_or(|mesh| !mesh.indices.is_empty()) {
+                    rt.again.push(number);
+                }
+                continue;
+            };
+            let m = object.material;
+            let texture = m.base_color_texture.map_or(0, |t| rt.texture_slot(t.id(), renderer.image_view(t.id())));
+            // Shown plain until its texture is on the card, and looked at again then.
+            if m.base_color_texture.is_some_and(|t| renderer.image_view(t.id()).is_none()) {
+                rt.again.push(number);
             }
+            let material = raytrace::HitMaterial {
+                color: m.color.to_array(),
+                emissive: [m.emissive.r, m.emissive.g, m.emissive.b, 0.0],
+                texture,
+                roughness: m.roughness,
+                metallic: m.metallic,
+                ..raytrace::HitMaterial::plain(m.color)
+            };
+            rt.place(number, geometry, object.model, material);
         }
-        if !same {
-            rt.upload(&gpu);
-        }
-        if waiting {
-            rt.gather_again();
-        }
+        rt.upload(&gpu);
         if rt.generation != view.rt_generation {
             view.rt_generation = rt.generation;
             view.rebind(&gpu, &shadows, &sky.gpu_environment, Some(rt));
