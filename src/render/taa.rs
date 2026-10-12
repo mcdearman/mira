@@ -53,6 +53,15 @@ pub(crate) struct Taa {
     previous_view_proj: Mat4,
 }
 
+/// What the frame has drawn, for the blend to work from.
+pub(crate) struct Drawn<'a> {
+    pub hdr: &'a wgpu::TextureView,
+    pub depth: &'a wgpu::TextureView,
+    /// How far what moved has come, and whether anything did: if not, it holds nothing.
+    pub motion: &'a wgpu::TextureView,
+    pub moving: bool,
+}
+
 impl Taa {
     pub(crate) fn new(gpu: &Gpu) -> Self {
         let device = &gpu.device;
@@ -147,7 +156,8 @@ impl Taa {
 
     /// Blends this frame into the history and returns the result, which post-processing reads.
     /// `view_proj` is this frame's camera without the jitter.
-    pub(crate) fn resolve<'a>(&'a mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, view_proj: Mat4, motion: &wgpu::TextureView, moving: bool) -> &'a wgpu::TextureView {
+    pub(crate) fn resolve<'a>(&'a mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, view_proj: Mat4, of: Drawn<'_>) -> &'a wgpu::TextureView {
+        let Drawn { hdr, depth, motion, moving } = of;
         let (w, h) = (gpu.config.width, gpu.config.height);
         if !matches!(&self.history, Some((hw, hh, _)) if *hw == w && *hh == h) {
             let make = || {
@@ -188,7 +198,7 @@ impl Taa {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&gpu.targets.hdr),
+                    resource: wgpu::BindingResource::TextureView(hdr),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -196,7 +206,7 @@ impl Taa {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&gpu.targets.depth),
+                    resource: wgpu::BindingResource::TextureView(depth),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,

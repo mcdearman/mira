@@ -36,7 +36,7 @@ pub mod slots {
     pub const SHADOW_MAPS: Slot = "shadow maps";
     /// The scene's colour, lit, before anything is done to the picture as a whole.
     pub const HDR: Slot = "hdr";
-    /// The multisampled target `HDR` is resolved from.
+    /// The multisampled target `HDR` is resolved from, at the end of the main pass.
     pub const HDR_MSAA: Slot = "hdr msaa";
     /// The scene's depth.
     pub const DEPTH: Slot = "depth";
@@ -52,15 +52,36 @@ pub mod slots {
 pub type PassFn = fn(&mut World, &mut PassContext);
 
 /// What a pass is given: where to record its work, and the frame's targets by name.
-pub struct PassContext<'a> {
-    pub encoder: &'a mut wgpu::CommandEncoder,
+pub struct PassContext {
+    /// Where the frame's work is recorded. Passes record into it one after another, and it
+    /// is sent to the graphics card when the last has run.
+    pub encoder: wgpu::CommandEncoder,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
     views: HashMap<Slot, wgpu::TextureView>,
     notes: HashSet<&'static str>,
 }
 
-impl<'a> PassContext<'a> {
-    pub(crate) fn new(encoder: &'a mut wgpu::CommandEncoder, views: HashMap<Slot, wgpu::TextureView>) -> Self {
-        Self { encoder, views, notes: HashSet::new() }
+impl PassContext {
+    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue, views: HashMap<Slot, wgpu::TextureView>) -> Self {
+        Self { encoder: Self::recorder(device), device: device.clone(), queue: queue.clone(), views, notes: HashSet::new() }
+    }
+
+    fn recorder(device: &wgpu::Device) -> wgpu::CommandEncoder {
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") })
+    }
+
+    /// Sends what has been recorded so far to the graphics card, and starts recording
+    /// afresh. For a pass that submits work of its own, which would otherwise reach the card
+    /// before the passes that ran ahead of it.
+    pub fn flush(&mut self) {
+        let recorded = std::mem::replace(&mut self.encoder, Self::recorder(&self.device));
+        self.queue.submit([recorded.finish()]);
+    }
+
+    /// Sends the frame's work to the graphics card.
+    pub(crate) fn finish(self) {
+        self.queue.submit([self.encoder.finish()]);
     }
 
     /// The view of a target. A pass may ask for what it declared it reads or writes; asking
@@ -166,6 +187,12 @@ impl TargetDesc {
         self
     }
 
+    /// What the target is used for, where it is not both drawn into and read from.
+    pub fn usage(mut self, usage: wgpu::TextureUsages) -> Self {
+        self.usage = usage;
+        self
+    }
+
     /// The size of the target for a frame of this size: never less than one pixel.
     pub fn size(&self, width: u32, height: u32) -> (u32, u32) {
         let of = |length: u32| ((length as f32 * self.scale).round() as u32).max(1);
@@ -183,7 +210,7 @@ struct Target {
 }
 
 /// How many sizes of one target are kept before the least lately used is let go.
-const SIZES_KEPT: usize = 4;
+const SIZES_KEPT: usize = 8;
 
 /// The passes were asked to run in a circle: each of these waits on the one before it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -461,7 +488,7 @@ mod tests {
         let mut graph = super::super::frame_graph();
         assert_eq!(
             names(&mut graph),
-            ["skinning", "ray tracing", "shadows", "main", "light shafts", "motion", "blend over time", "post"]
+            ["skinning", "ray tracing", "shadows", "main", "light shafts", "motion", "blend over time", "post", "debug lines", "overlays"]
         );
         // A pass a plugin adds, saying only what it reads and writes, falls between the
         // scene being drawn and the picture being finished.

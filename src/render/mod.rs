@@ -30,7 +30,7 @@ pub use debug_lines::DebugLines;
 pub use environment::{direction_to_uv, uv_to_direction, Environment};
 pub use gltf_scene::{GltfPart, GltfScene, Imported};
 pub use gpu::{
-    main_depth_state, main_multisample, Gpu, Targets, DEPTH_CLEAR, DEPTH_COMPARE, DEPTH_FORMAT,
+    main_depth_state, main_multisample, Gpu, DEPTH_CLEAR, DEPTH_COMPARE, DEPTH_FORMAT,
     HDR_FORMAT, MSAA_SAMPLES,
 };
 pub use graph::{slots, Pass, PassContext, PassInfo, RenderGraph, TargetDesc};
@@ -924,34 +924,20 @@ fn render(world: &mut World) {
         Some(output) => output.texture.clone(),
         None => world.resource::<Offscreen>().0.clone(),
     };
-    let target = frame_texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let mut encoder = gpu
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("frame"),
-        });
-    // The frame is its passes, each given the targets by name. Those that outlast a frame
-    // are the renderer's; the graph has made the rest.
-    views.insert(slots::FRAME, target.clone());
-    views.insert(slots::HDR, gpu.targets.hdr.clone());
-    views.insert(slots::HDR_MSAA, gpu.targets.hdr_msaa.clone());
-    views.insert(slots::DEPTH, gpu.targets.depth.clone());
-    let mut context = PassContext::new(&mut encoder, views);
+    // The frame is its passes, each given the targets by name: the graph has made them all
+    // but the picture that is shown.
+    views.insert(slots::FRAME, frame_texture.create_view(&wgpu::TextureViewDescriptor::default()));
+    let mut context = PassContext::new(&gpu.device, &gpu.queue, views);
     let mut took = Vec::with_capacity(passes.len());
     for (name, pass) in passes {
         let began = std::time::Instant::now();
         pass(world, &mut context);
         took.push((name, began.elapsed()));
     }
+    context.finish();
     world.resource_mut::<RenderGraph>().timed(took);
 
-    // The frame itself is done; overlays draw on top of it, and a screenshot is taken of
-    // the two together.
-    world.resource::<Gpu>().queue.submit([encoder.finish()]);
-    let overlays = world.resource::<Overlays>().0.clone();
-    for overlay in overlays {
-        overlay(world, &target);
-    }
+    // The frame is done, with what is drawn over it; a screenshot is of the two together.
     let gpu = world.resource::<Gpu>();
     let path = world.resource::<Screenshot>().path.clone();
     let mut encoder = gpu
@@ -983,6 +969,10 @@ fn frame_graph() -> RenderGraph {
     use slots::*;
     let mut graph = RenderGraph::default();
     graph
+        // Depth is read after the main pass, by the light shafts and the blend over time.
+        .target(DEPTH, TargetDesc::new(DEPTH_FORMAT).samples(MSAA_SAMPLES))
+        .target(HDR_MSAA, TargetDesc::new(HDR_FORMAT).samples(MSAA_SAMPLES).usage(wgpu::TextureUsages::RENDER_ATTACHMENT))
+        .target(HDR, TargetDesc::new(HDR_FORMAT))
         .target(MOTION, TargetDesc::new(gpu::MOTION_FORMAT).samples(MSAA_SAMPLES))
         .add(Pass::new("skinning", pose_skins).writes(&[SKINNED]))
         .add(Pass::new("ray tracing", build_traced_scene).reads(&[SKINNED]).writes(&[TRACED_SCENE]))
@@ -991,13 +981,15 @@ fn frame_graph() -> RenderGraph {
         .add(Pass::new("light shafts", draw_shafts).reads(&[HDR, DEPTH, SHADOW_MAPS]).writes(&[HDR]))
         .add(Pass::new("motion", draw_motion).reads(&[DEPTH]).writes(&[MOTION]))
         .add(Pass::new("blend over time", blend_over_time).reads(&[HDR, DEPTH, MOTION]).writes(&[SCENE]))
-        .add(Pass::new("post", finish_picture).reads(&[SCENE]).writes(&[FRAME]));
+        .add(Pass::new("post", finish_picture).reads(&[SCENE]).writes(&[FRAME]))
+        .add(Pass::new("debug lines", debug_lines::draw).reads(&[DEPTH, FRAME]).writes(&[FRAME]))
+        .add(Pass::new("overlays", draw_overlays).reads(&[FRAME]).writes(&[FRAME]));
     graph
 }
 
 /// Skinned meshes are posed for the frame, on the GPU.
 fn pose_skins(world: &mut World, cx: &mut PassContext) {
-    world.resource::<skin::Skinner>().dispatch(cx.encoder);
+    world.resource::<skin::Skinner>().dispatch(&mut cx.encoder);
 }
 
 /// Where rays are traced: the scene they are traced against is brought up to date, and the
@@ -1007,13 +999,13 @@ fn build_traced_scene(world: &mut World, cx: &mut PassContext) {
         return;
     }
     world.resource_scope(|world, rt: &mut RayTracing| {
-        rt.build(cx.encoder);
+        rt.build(&mut cx.encoder);
         let scene = rt.scene_key();
         if rt.ready() && rt.probes.wants_bake(scene) {
             let view = &world.resource::<ViewBinding>().bind_group;
             world
                 .resource::<ProbeBaker>()
-                .bake(world.resource::<Gpu>(), cx.encoder, view, &mut rt.probes);
+                .bake(world.resource::<Gpu>(), &mut cx.encoder, view, &mut rt.probes);
         }
     });
 }
@@ -1087,8 +1079,9 @@ fn draw_scene(world: &mut World, cx: &mut PassContext) {
 fn draw_shafts(world: &mut World, cx: &mut PassContext) {
     let air = *world.resource::<VolumetricLight>();
     if air.enabled && world.resource::<RenderFrame>().shadows {
+        let (hdr, depth) = (cx.view(slots::HDR).clone(), cx.view(slots::DEPTH).clone());
         world.resource_scope(|world, shafts: &mut volumetric::Shafts| {
-            shafts.render(world.resource::<Gpu>(), cx.encoder, &world.resource::<ViewBinding>().bind_group, &air);
+            shafts.render(world.resource::<Gpu>(), &mut cx.encoder, &world.resource::<ViewBinding>().bind_group, &air, &hdr, &depth);
         });
     }
 }
@@ -1102,9 +1095,9 @@ fn draw_motion(world: &mut World, cx: &mut PassContext) {
         let renderer = motion::MotionRenderer::new(world.resource::<Gpu>());
         world.insert_resource(renderer);
     }
-    let target = cx.view(slots::MOTION).clone();
+    let (target, depth) = (cx.view(slots::MOTION).clone(), cx.view(slots::DEPTH).clone());
     let moving = world.resource_scope(|world, motion: &mut motion::MotionRenderer| {
-        motion.render(world.resource::<Gpu>(), cx.encoder, &target, world.resource::<MeshRenderer>(), world.resource::<RenderFrame>())
+        motion.render(world.resource::<Gpu>(), &mut cx.encoder, &target, &depth, world.resource::<MeshRenderer>(), world.resource::<RenderFrame>())
     });
     if moving {
         cx.note(MOVING);
@@ -1119,14 +1112,15 @@ const MOVING: &str = "moving";
 fn blend_over_time(world: &mut World, cx: &mut PassContext) {
     let blended = world.resource::<PostProcess>().taa;
     let unjittered = world.resource::<RenderFrame>().unjittered_view_proj;
+    let (hdr, depth) = (cx.view(slots::HDR).clone(), cx.view(slots::DEPTH).clone());
     let (motion, moving) = (cx.view(slots::MOTION).clone(), cx.noted(MOVING));
     let scene = world.resource_scope(|world, taa: &mut taa::Taa| {
         let gpu = world.resource::<Gpu>();
         if blended {
-            taa.resolve(gpu, cx.encoder, unjittered, &motion, moving).clone()
+            taa.resolve(gpu, &mut cx.encoder, unjittered, taa::Drawn { hdr: &hdr, depth: &depth, motion: &motion, moving }).clone()
         } else {
             taa.reset();
-            gpu.targets.hdr.clone()
+            hdr.clone()
         }
     });
     cx.set_view(slots::SCENE, scene);
@@ -1139,8 +1133,23 @@ fn finish_picture(world: &mut World, cx: &mut PassContext) {
     let (scene, target) = (cx.view(slots::SCENE).clone(), cx.view(slots::FRAME).clone());
     world.resource_scope(|world, post: &mut PostRenderer| {
         let plain = world.resource::<ViewMode>().is_plain();
-        post.render(world.resource::<Gpu>(), cx.encoder, &scene, &target, &settings, time, plain);
+        post.render(world.resource::<Gpu>(), &mut cx.encoder, &scene, &target, &settings, time, plain);
     });
+}
+
+/// What is drawn over the finished picture: an interface, and whatever else has been pushed
+/// onto [`Overlays`]. Each submits work of its own, so what the frame has recorded so far is
+/// sent ahead of them.
+fn draw_overlays(world: &mut World, cx: &mut PassContext) {
+    let overlays = world.resource::<Overlays>().0.clone();
+    if overlays.is_empty() {
+        return;
+    }
+    cx.flush();
+    let target = cx.view(slots::FRAME).clone();
+    for overlay in overlays {
+        overlay(world, &target);
+    }
 }
 
 /// Where frames are drawn while the window can't give us one, or there is no window.
@@ -1253,7 +1262,6 @@ impl Plugin for RenderPlugin {
         app.world.init_resource::<Overlays>();
         app.world.init_resource::<views::ExtraViews>();
         app.world.init_resource::<DebugLines>();
-        app.world.resource_mut::<Overlays>().0.push(debug_lines::draw);
         app.world.init_resource::<DrawFunctions>();
         app.world.init_resource::<TransparentDrawFunctions>();
         app.world.init_resource::<ShadowDrawFunctions>();

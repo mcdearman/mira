@@ -37,7 +37,8 @@ pub fn main_multisample(alpha_to_coverage: bool) -> wgpu::MultisampleState {
     }
 }
 
-/// The wgpu device and surface, and the render targets every frame draws into.
+/// The wgpu device and surface. The targets a frame draws into are made by the render graph
+/// (see `graph`), at the size given here.
 pub struct Gpu {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -45,18 +46,8 @@ pub struct Gpu {
     /// see [`Gpu::hosted`].
     pub surface: Option<wgpu::Surface<'static>>,
     pub config: wgpu::SurfaceConfiguration,
-    pub targets: Targets,
     /// Hardware ray queries are available and enabled.
     pub ray_tracing: bool,
-}
-
-/// Size-dependent textures, recreated on resize. The frame's passes are given them by name
-/// (see `graph::slots`); the targets only passes use are made by the graph itself.
-pub struct Targets {
-    pub depth: wgpu::TextureView,
-    /// Multisampled HDR color, resolved into `hdr` at the end of the main pass.
-    pub hdr_msaa: wgpu::TextureView,
-    pub hdr: wgpu::TextureView,
 }
 
 impl Gpu {
@@ -182,14 +173,12 @@ impl Gpu {
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
-        let targets = Targets::new(&device, &config);
 
         Ok(Self {
             device,
             queue,
             surface: Some(surface),
             config,
-            targets,
             ray_tracing: traced,
         })
     }
@@ -217,13 +206,11 @@ impl Gpu {
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
-        let targets = Targets::new(&device, &config);
         Self {
             device,
             queue,
             surface: None,
             config,
-            targets,
             ray_tracing: false,
         }
     }
@@ -241,46 +228,10 @@ impl Gpu {
         if let Some(surface) = &self.surface {
             surface.configure(&self.device, &self.config);
         }
-        self.targets = Targets::new(&self.device, &self.config);
     }
 
     pub fn aspect_ratio(&self) -> f32 {
         self.config.width as f32 / self.config.height as f32
-    }
-}
-
-impl Targets {
-    pub(crate) fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> Self {
-        let texture = |label, format, samples, usage| {
-            device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: wgpu::Extent3d {
-                        width: config.width,
-                        height: config.height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: samples,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage,
-                    view_formats: &[],
-                })
-                .create_view(&wgpu::TextureViewDescriptor::default())
-        };
-        let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT;
-        Self {
-            // Read after the main pass, by the light shafts and TAA.
-            depth: texture("depth", DEPTH_FORMAT, MSAA_SAMPLES, attachment | wgpu::TextureUsages::TEXTURE_BINDING),
-            hdr_msaa: texture("hdr msaa", HDR_FORMAT, MSAA_SAMPLES, attachment),
-            hdr: texture(
-                "hdr",
-                HDR_FORMAT,
-                1,
-                attachment | wgpu::TextureUsages::TEXTURE_BINDING,
-            ),
-        }
     }
 }
 

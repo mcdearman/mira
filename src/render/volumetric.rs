@@ -132,7 +132,7 @@ impl Shafts {
     }
 
     /// Adds the scattered light to the resolved HDR image.
-    pub(crate) fn render(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, view: &wgpu::BindGroup, settings: &VolumetricLight) {
+    pub(crate) fn render(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, view: &wgpu::BindGroup, settings: &VolumetricLight, hdr: &wgpu::TextureView, depth: &wgpu::TextureView) {
         let uniform = ShaftsUniform {
             params: [settings.density, settings.anisotropy, settings.max_distance, settings.height_falloff],
             more: [settings.base_height, 0.0, 0.0, 0.0],
@@ -144,7 +144,7 @@ impl Shafts {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&gpu.targets.depth),
+                    resource: wgpu::BindingResource::TextureView(depth),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -155,7 +155,7 @@ impl Shafts {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("light shafts"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &gpu.targets.hdr,
+                view: hdr,
                 resolve_target: None,
                 depth_slice: None,
                 ops: wgpu::Operations {

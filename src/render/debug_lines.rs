@@ -5,7 +5,7 @@
 
 use glam::{Mat4, Quat, Vec3};
 
-use super::{gpu::Gpu, Color, RenderFrame};
+use super::{gpu::Gpu, graph::{slots, PassContext}, Color, RenderFrame};
 use crate::ecs::World;
 
 /// Must match the instance inputs of `debug_lines.wgsl`.
@@ -307,8 +307,8 @@ impl LineRenderer {
     }
 }
 
-/// The overlay that draws the frame's lines and forgets them.
-pub(crate) fn draw(world: &mut World, target: &wgpu::TextureView) {
+/// The pass that draws the frame's lines over the finished picture, and forgets them.
+pub(crate) fn draw(world: &mut World, cx: &mut PassContext) {
     let (lines, shown, through) = {
         let lines = world.resource_mut::<DebugLines>();
         (std::mem::take(&mut lines.lines), lines.shown, lines.through)
@@ -321,6 +321,7 @@ pub(crate) fn draw(world: &mut World, target: &wgpu::TextureView) {
         world.insert_resource(renderer);
     }
     let view_proj = world.resource::<RenderFrame>().unjittered_view_proj;
+    let (target, depth) = (cx.view(slots::FRAME).clone(), cx.view(slots::DEPTH).clone());
     world.resource_scope(|world, renderer: &mut LineRenderer| {
         let gpu = world.resource::<Gpu>();
         if lines.len() > renderer.room {
@@ -334,7 +335,7 @@ pub(crate) fn draw(world: &mut World, target: &wgpu::TextureView) {
             0,
             bytemuck::bytes_of(&ViewUniform { view_proj: view_proj.to_cols_array_2d(), size }),
         );
-        // The depth buffer is made again whenever the frame changes size, so it is bound anew.
+        // The depth target is another one whenever the frame changes size, so it is bound anew.
         let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("debug lines"),
             layout: &renderer.layout,
@@ -342,18 +343,15 @@ pub(crate) fn draw(world: &mut World, target: &wgpu::TextureView) {
                 wgpu::BindGroupEntry { binding: 0, resource: renderer.uniform.as_entire_binding() },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&gpu.targets.depth),
+                    resource: wgpu::BindingResource::TextureView(&depth),
                 },
             ],
         });
-        let mut encoder = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("debug lines") });
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut pass = cx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("debug lines"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
+                    view: &target,
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
@@ -368,7 +366,6 @@ pub(crate) fn draw(world: &mut World, target: &wgpu::TextureView) {
             pass.set_vertex_buffer(0, renderer.instances.slice(..));
             pass.draw(0..6, 0..lines.len() as u32);
         }
-        gpu.queue.submit([encoder.finish()]);
     });
     // Hand the list's memory back for the next frame.
     let mut lines = lines;

@@ -52,6 +52,8 @@ Adding a pass with the name of one that is there replaces it, so a plugin can pu
 | `motion` | `depth` | `motion` |
 | `blend over time` | `hdr`, `depth`, `motion` | `scene` |
 | `post` | `scene` | `frame` |
+| `debug lines` | `depth`, `frame` | `frame` |
+| `overlays` | `frame` | `frame` |
 
 The names are in `mira::render::slots`. The main pass still draws what plugins push onto
 `DrawFunctions`, `TransparentDrawFunctions` and `ShadowDrawFunctions`: those add draws to a
@@ -59,22 +61,28 @@ pass, where the graph adds passes to the frame.
 
 ## Targets
 
-A pass is handed the frame's targets by name: `cx.view(slots::DEPTH)`. `hdr`, `hdr msaa`
-and `depth` belong to the renderer (`Gpu::targets`) and `frame` is the picture that is
-shown. The rest the graph makes itself, at the size of the frame being drawn:
+A pass is handed the frame's targets by name: `cx.view(slots::DEPTH)`. `frame` is the
+picture that is shown. Every other target the graph makes itself, at the size of the frame
+being drawn: the engine's `hdr`, `hdr msaa`, `depth` and `motion`, and any a plugin asks for:
 
 ```rust
 graph.target("outline mask", TargetDesc::new(wgpu::TextureFormat::R8Unorm).scale(0.5));
 ```
 
-The motion target is made this way. Where more than one view of the scene is drawn in a
-frame (see `ViewTarget`), a target is kept for each size.
+Where more than one view of the scene is drawn in a frame (see `ViewTarget`), a target is
+kept for each size, up to eight. A target holds nothing from one frame to the next: what
+must last, as the history the blend over time keeps, belongs to the pass that keeps it.
 
 A pass whose result is a view of its own, as the blend over time's is, says where the slot's
 picture now is with `cx.set_view`. `cx.note` leaves a word for the passes that follow, in
 that frame only.
 
-## What is outside it
+## Over the finished picture
 
-Overlays (`Overlays`: debug lines, an interface) draw after the graph's passes, straight
-onto the finished frame, and a screenshot is taken of the two together.
+What is drawn over the picture is passes too, after `post`: the debug lines, then the
+`overlays` pass, which runs the functions pushed onto `Overlays` (an interface made with
+`mira_ui` is one). Those submit work of their own, so the pass first sends on what the frame
+has recorded so far: `cx.flush()`, for any pass that does the same. A pass that records
+into `cx.encoder` needs none of that.
+
+Only the screenshot is outside the graph: it is taken of the frame once every pass has run.
