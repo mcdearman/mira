@@ -787,26 +787,21 @@ mod together {
     #[test]
     fn pinned_systems_stay_on_the_calling_thread() {
         struct Screen;
+        // Each takes a moment, so that while the calling thread is at one the others are
+        // still waiting to be taken. Done in an instant, all three were sometimes through
+        // on the calling thread before a worker had woken, and nothing "ran elsewhere".
+        fn took(name: &'static str, threads: &Threads) {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            threads.0.lock().unwrap().push((name, std::thread::current().id()));
+        }
         fn draws(_: Res<Screen>, threads: Res<Threads>) {
-            threads
-                .0
-                .lock()
-                .unwrap()
-                .push(("draws", std::thread::current().id()));
+            took("draws", &threads);
         }
         fn thinks(threads: Res<Threads>, _: Query<&Pos>) {
-            threads
-                .0
-                .lock()
-                .unwrap()
-                .push(("thinks", std::thread::current().id()));
+            took("thinks", &threads);
         }
         fn dreams(threads: Res<Threads>, _: Query<&Vel>) {
-            threads
-                .0
-                .lock()
-                .unwrap()
-                .push(("dreams", std::thread::current().id()));
+            took("dreams", &threads);
         }
         let mut world = World::new();
         world.insert_resource(Screen);
