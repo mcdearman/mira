@@ -28,6 +28,8 @@ struct Asked {
     frames: Option<u64>,
     /// Whether rays are traced where the card can. A card that cannot does not pay for it.
     rays: bool,
+    /// Whether the sun casts shadows: without them, what the shadows cost is what is saved.
+    shadows: bool,
 }
 
 /// A thing that bobs up and down about where it was put.
@@ -38,14 +40,15 @@ struct Bob {
 }
 
 fn asked() -> Asked {
-    let mut asked = Asked { count: 100_000, moving: 0.1, frames: None, rays: true };
+    let mut asked = Asked { count: 100_000, moving: 0.1, frames: None, rays: true, shadows: true };
     for arg in std::env::args().skip(1) {
         match arg.split_once('=') {
             Some(("count", value)) => asked.count = value.parse().expect("count=<how many>"),
             Some(("moving", value)) => asked.moving = value.parse::<f32>().expect("moving=<0 to 1>").clamp(0.0, 1.0),
             Some(("frames", value)) => asked.frames = Some(value.parse().expect("frames=<how many>")),
             Some(("rays", value)) => asked.rays = value != "off",
-            _ => panic!("not understood: {arg} (count=, moving=, frames=, rays=off)"),
+            Some(("shadows", value)) => asked.shadows = value != "off",
+            _ => panic!("not understood: {arg} (count=, moving=, frames=, rays=off, shadows=off)"),
         }
     }
     asked
@@ -89,7 +92,7 @@ fn field(mut commands: Commands, mut server: ResMut<AssetServer>, mut meshes: Re
         Transform::from_xyz(0.0, half * 0.55 + 6.0, half * 1.25 + 8.0).looking_at(Vec3::new(0.0, 0.0, -half * 0.2), Vec3::Y),
         Camera::default(),
     ));
-    commands.spawn((Transform::IDENTITY.looking_at(Vec3::new(-0.5, -1.0, -0.35), Vec3::Y), DirectionalLight::default()));
+    commands.spawn((Transform::IDENTITY.looking_at(Vec3::new(-0.5, -1.0, -0.35), Vec3::Y), DirectionalLight { shadows: asked.shadows, ..Default::default() }));
     log::info!("{} things in a field {side} across, {} of them moving", asked.count, asked.count.div_ceil(every.min(asked.count.max(1))));
 }
 

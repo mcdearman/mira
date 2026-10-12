@@ -112,10 +112,11 @@ impl Sight {
 /// of instance numbers sent to the card.
 #[derive(Default)]
 pub(crate) struct Seen {
-    /// Instance numbers: those of the view's batches, then those of the shadows' batches.
+    /// Instance numbers: those of the view's batches, then those of each shadow cascade's.
     pub numbers: Vec<u32>,
     pub batches: Vec<(BatchKey, Range<u32>)>,
-    pub shadow_batches: Vec<(BatchKey, Range<u32>)>,
+    /// For each shadow cascade, the batches of what casts a shadow into it.
+    pub shadow_batches: Vec<Vec<(BatchKey, Range<u32>)>>,
     /// What is in view and moved this frame, for the blend over time.
     pub moved: Vec<motion::Moved>,
 }
@@ -124,8 +125,11 @@ pub(crate) struct Seen {
 pub(crate) struct Viewpoint {
     pub view_proj: Mat4,
     pub camera: Vec3,
-    /// Whether shadows are cast at all, and how far from the camera a caster still matters.
-    pub shadows: bool,
+    /// What each shadow cascade's map takes in, as the matrix it is drawn with; none where
+    /// no shadows are cast. A cascade's matrix reaches far enough toward the sun to hold what
+    /// casts into it, so what lies outside it casts nothing there.
+    pub cascades: Vec<Mat4>,
+    /// How far from the camera a caster still matters.
     pub shadow_reach: f32,
     /// Whether frames are blended over time, which is what wants to know what moved.
     pub blended: bool,
@@ -315,15 +319,13 @@ impl Instances {
     /// What a view sees. `bounds` gives a mesh's bounding sphere in its own space, once the
     /// mesh is on the card; until then its instances are taken to be in view.
     pub fn seen(&mut self, from: &Viewpoint, bounds: impl Fn(u32) -> Option<(Vec3, f32)>) -> Seen {
-        // Each plane with a normal of length one, so that a distance from it is in metres.
-        let planes = frustum_planes(from.view_proj).map(|p| {
-            let length = p.truncate().length().max(1e-12);
-            (p.truncate() / length, p.w / length)
-        });
-        let mut seen = Seen::default();
-        let mut shadow_numbers: Vec<u32> = Vec::new();
+        let planes = unit_planes(from.view_proj);
+        let cascades: Vec<_> = from.cascades.iter().map(|cascade| unit_planes(*cascade)).collect();
+        let mut seen = Seen { shadow_batches: vec![vec![]; cascades.len()], ..Default::default() };
+        let mut shadow_numbers: Vec<Vec<u32>> = vec![vec![]; cascades.len()];
         for (key, numbers) in &self.batches {
-            let (first, first_shadow) = (seen.numbers.len() as u32, shadow_numbers.len() as u32);
+            let first = seen.numbers.len() as u32;
+            let first_shadows: Vec<u32> = shadow_numbers.iter().map(|numbers| numbers.len() as u32).collect();
             // A mesh's size is asked for once a batch, and only if an instance wants it.
             let mut size: Option<Option<(Vec3, f32)>> = None;
             for &number in numbers {
@@ -339,12 +341,11 @@ impl Instances {
                         (sight.center, sight.radius) = (model.transform_point3(center), radius * scale);
                     }
                 }
-                let (mut in_view, mut casts) = (true, sight.casts_shadow && from.shadows);
-                if sight.radius >= 0.0 {
-                    let (center, radius) = (sight.center, sight.radius);
-                    in_view = !planes.iter().any(|p| p.0.dot(center) + p.1 < -radius);
-                    casts &= center.distance(from.camera) - radius <= from.shadow_reach;
-                }
+                let sized = sight.radius >= 0.0;
+                let (center, radius) = (sight.center, sight.radius);
+                let inside = |planes: &[(Vec3, f32); 5]| !sized || !planes.iter().any(|p| p.0.dot(center) + p.1 < -radius);
+                let in_view = inside(&planes);
+                let casts = sight.casts_shadow && (!sized || center.distance(from.camera) - radius <= from.shadow_reach);
                 if in_view {
                     seen.numbers.push(number);
                     if from.blended && sight.moved == self.frame && self.frame != 0 && !sight.decal {
@@ -353,22 +354,31 @@ impl Instances {
                     }
                 }
                 if casts {
-                    shadow_numbers.push(number);
+                    // Into each cascade whose map it falls in, and no other.
+                    for (cascade, numbers) in cascades.iter().zip(&mut shadow_numbers) {
+                        if inside(cascade) {
+                            numbers.push(number);
+                        }
+                    }
                 }
             }
             if seen.numbers.len() as u32 > first {
                 seen.batches.push((*key, first..seen.numbers.len() as u32));
             }
-            if shadow_numbers.len() as u32 > first_shadow {
-                seen.shadow_batches.push((*key, first_shadow..shadow_numbers.len() as u32));
+            for ((numbers, first), batches) in shadow_numbers.iter().zip(first_shadows).zip(&mut seen.shadow_batches) {
+                if numbers.len() as u32 > first {
+                    batches.push((*key, first..numbers.len() as u32));
+                }
             }
         }
-        // The shadows' numbers follow the view's in the one list.
-        let offset = seen.numbers.len() as u32;
-        for (_, range) in &mut seen.shadow_batches {
-            *range = range.start + offset..range.end + offset;
+        // Each cascade's numbers follow the view's, one cascade after another, in the one list.
+        for (numbers, batches) in shadow_numbers.into_iter().zip(&mut seen.shadow_batches) {
+            let offset = seen.numbers.len() as u32;
+            for (_, range) in batches {
+                *range = range.start + offset..range.end + offset;
+            }
+            seen.numbers.extend(numbers);
         }
-        seen.numbers.extend(shadow_numbers);
         seen
     }
 
@@ -403,8 +413,19 @@ fn runs(mut numbers: Vec<u32>, near: u32) -> Vec<Range<u32>> {
     runs
 }
 
+/// The planes bounding what a matrix takes in, each with a normal of length one so that a
+/// distance from it is in metres.
+fn unit_planes(view_proj: Mat4) -> [(Vec3, f32); 5] {
+    frustum_planes(view_proj).map(|p| {
+        let length = p.truncate().length().max(1e-12);
+        (p.truncate() / length, p.w / length)
+    })
+}
+
 /// Planes `(normal, d)` bounding the view, inward-facing. With reversed, infinite Z there is
-/// no far plane; the near plane is `z <= w`.
+/// no far plane; the near plane is `z <= w`. For a shadow cascade's matrix, whose depth runs
+/// the usual way, the same five are its sides and its far end: nothing is left out for being
+/// too near the sun.
 pub(crate) fn frustum_planes(view_proj: Mat4) -> [Vec4; 5] {
     let (x, y, z, w) = (view_proj.row(0), view_proj.row(1), view_proj.row(2), view_proj.row(3));
     [w + x, w - x, w + y, w - y, w - z]
@@ -423,7 +444,9 @@ mod tests {
     /// Looking down -z from the origin, with everything in reach of the shadows.
     fn viewpoint() -> Viewpoint {
         let projection = Mat4::perspective_infinite_reverse_rh(1.0, 1.0, 0.1);
-        Viewpoint { view_proj: projection, camera: Vec3::ZERO, shadows: true, shadow_reach: 1000.0, blended: true }
+        // One cascade: a box forty metres square about the origin, looked into along -z.
+        let cascade = Mat4::orthographic_rh(-20.0, 20.0, -20.0, 20.0, 0.0, 100.0) * Mat4::from_translation(Vec3::new(0.0, 0.0, -50.0));
+        Viewpoint { view_proj: projection, camera: Vec3::ZERO, cascades: vec![cascade], shadow_reach: 1000.0, blended: true }
     }
 
     fn unit_sphere(_: u32) -> Option<(Vec3, f32)> {
@@ -464,14 +487,23 @@ mod tests {
         }
         let seen = scene.seen(&viewpoint(), unit_sphere);
         // Two of mesh 1 and one of mesh 2 are in view; the one behind and the one far to the
-        // side are not, but all five are near enough to cast a shadow into it.
+        // side are not. The one behind still casts into the cascade, which holds it; the one
+        // far to the side is outside the cascade's map and casts nothing there.
         let counts: Vec<(u32, u32)> = seen.batches.iter().map(|(key, range)| (key.mesh(), range.end - range.start)).collect();
         assert_eq!(counts, [(1, 2), (2, 1)]);
-        let shadows: u32 = seen.shadow_batches.iter().map(|(_, range)| range.end - range.start).sum();
-        assert_eq!(shadows, 5);
-        // The shadows' numbers follow the view's in the one list.
-        assert_eq!(seen.numbers.len(), 8);
-        assert_eq!(seen.shadow_batches[0].1.start, 3);
+        let shadows: u32 = seen.shadow_batches[0].iter().map(|(_, range)| range.end - range.start).sum();
+        assert_eq!(shadows, 4);
+        // The cascade's numbers follow the view's in the one list.
+        assert_eq!(seen.numbers.len(), 7);
+        assert_eq!(seen.shadow_batches[0][0].1.start, 3);
+        // A second cascade, somewhere there is nothing, gets nothing; with no cascades there
+        // are no shadows at all.
+        let elsewhere = Mat4::orthographic_rh(-5.0, 5.0, -5.0, 5.0, 0.0, 10.0) * Mat4::from_translation(Vec3::new(0.0, -900.0, 0.0));
+        let two = Viewpoint { cascades: vec![viewpoint().cascades[0], elsewhere], ..viewpoint() };
+        let seen = scene.seen(&two, unit_sphere);
+        assert_eq!(seen.shadow_batches.len(), 2);
+        assert!(seen.shadow_batches[1].is_empty() && seen.numbers.len() == 7);
+        assert_eq!(scene.seen(&Viewpoint { cascades: vec![], ..viewpoint() }, unit_sphere).numbers.len(), 3);
         // Until a mesh's size is known, its instances are taken to be in view.
         let mut unknown = Instances::default();
         unknown.set(world.spawn(()), &[part(1, -ahead)]);

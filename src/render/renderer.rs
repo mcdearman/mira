@@ -1,4 +1,11 @@
-use std::{collections::HashMap, ops::Range, sync::Mutex};
+use std::{
+    collections::HashMap,
+    ops::Range,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex,
+    },
+};
 
 use glam::Vec3;
 use wgpu::util::DeviceExt;
@@ -183,7 +190,10 @@ pub struct MeshRenderer {
     seen: Option<SeenOnCard>,
     meshes: HashMap<u32, GpuMesh>,
     batches: Vec<Batch>,
-    shadow_batches: Vec<Batch>,
+    /// For each shadow cascade, what casts into it.
+    shadow_batches: Vec<Vec<Batch>>,
+    /// The cascade being drawn, said by the shadow pass before each one's draws.
+    cascade: AtomicUsize,
 }
 
 impl MeshRenderer {
@@ -311,6 +321,7 @@ impl MeshRenderer {
             meshes: HashMap::new(),
             batches: Vec::new(),
             shadow_batches: Vec::new(),
+            cascade: AtomicUsize::new(0),
         }
     }
 
@@ -535,9 +546,9 @@ impl MeshRenderer {
         let seen = self.scene.seen(from, |mesh| meshes.get(&mesh).map(|m| (m.center, m.radius)));
         let batch = |(key, instances): &(BatchKey, Range<u32>)| Batch { key: *key, instances: instances.clone() };
         self.batches = seen.batches.iter().map(batch).collect();
-        self.shadow_batches = seen.shadow_batches.iter().map(batch).collect();
+        self.shadow_batches = seen.shadow_batches.iter().map(|cascade| cascade.iter().map(batch).collect()).collect();
         frame.moved = seen.moved;
-        let sets: Vec<_> = self.batches.iter().chain(&self.shadow_batches).map(|b| b.key.textures).collect();
+        let sets: Vec<_> = self.batches.iter().chain(self.shadow_batches.iter().flatten()).map(|b| b.key.textures).collect();
         for set in sets {
             self.material(gpu, set);
         }
@@ -596,8 +607,17 @@ impl MeshRenderer {
         self.images.get(&image)
     }
 
+    /// Says which shadow cascade the draws that follow are for.
+    pub(crate) fn begin_cascade(&self, cascade: usize) {
+        self.cascade.store(cascade, Ordering::Relaxed);
+    }
+
+    /// Draws what casts a shadow into the cascade being drawn.
     pub fn draw_shadows(&self, pass: &mut wgpu::RenderPass<'_>) {
-        self.draw_with(pass, &self.shadow_batches, |key| {
+        let Some(batches) = self.shadow_batches.get(self.cascade.load(Ordering::Relaxed)) else {
+            return;
+        };
+        self.draw_with(pass, batches, |key| {
             if key.masked() {
                 &self.shadow_masked
             } else {

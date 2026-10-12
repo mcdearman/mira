@@ -342,8 +342,8 @@ dying in any order; the timer is right in every case because no code ever sets i
 - [ ] Further for materials: values of a surface's own beyond the standard ones, and the
       shadow, the traced reflection and the vertices in a surface shader's reach
 - [x] Instances kept on the card: one for each mesh an entity draws, written only when its
-      entity changes; each view sends the numbers of those it sees (see
-      [PERFORMANCE.md](PERFORMANCE.md))
+      entity changes; each view sends the numbers of those it sees, and each shadow cascade
+      of those that cast into it (see [PERFORMANCE.md](PERFORMANCE.md))
 - [ ] The rest of the scene on the GPU: shared vertex and index buffers, bindless textures,
       and the traced scene kept as the instances are
 - [ ] Culling in compute against the frustum and a depth pyramid; multi-draw indirect

@@ -43,10 +43,15 @@ With ray tracing, as that machine runs by default:
 
 Without it (`rays=off`), as a machine that cannot trace rays runs, at 100,000:
 
-| Moving | A frame (mean) | Extract | Prepare | Render | Frames a second |
-|---|---|---|---|---|---|
-| a tenth | 21.0 ms | 3.4 ms | 3.9 ms | 10.5 ms | 48 |
-| none | 21.1 ms | 0.4 ms | 1.0 ms | 16.9 ms | 47 |
+| Moving | | A frame (mean) | Extract | Prepare | Render | Frames a second |
+|---|---|---|---|---|---|---|
+| a tenth | instances kept | 21.0 ms | 3.4 ms | 3.9 ms | 10.5 ms | 48 |
+| | and shadows by cascade | 13.4 ms | 3.2 ms | 4.2 ms | 3.0 ms | 74 |
+| none | instances kept | 21.1 ms | 0.4 ms | 1.0 ms | 16.9 ms | 47 |
+| | and shadows by cascade | 5.4 ms | 0.4 ms | 2.0 ms | 0.1 ms | 185 |
+
+Without ray tracing the roadmap's 16.7 ms is met on this machine, with a tenth of the
+things moving. With it, 100,000 is still 26.7 ms.
 
 "Before" is 2026-10-12, when every instance was gathered and sent again each frame. "Now" is
 with instances kept on the card (below).
@@ -67,14 +72,22 @@ What the second table says:
 
 - **Gathering no longer grows with what stands still.** With nothing moving, Extract and
   Prepare together are 1.4 ms at 100,000, where they were 28.
-- **The frame is the same 21 ms whether a tenth moves or nothing does**, and what Extract
-  and Prepare give up, Render takes. That is the mark of the card being what is waited for:
-  the processor's part is done and it stands idle until the card can take the next frame.
-  Each caster is still drawn into every one of the four shadow cascades, so the card draws
-  the field five times.
+- **With instances kept and nothing else, the frame was the same 21 ms whether a tenth moved
+  or nothing did**, and what Extract and Prepare gave up, Render took. That is the mark of
+  the card being what is waited for. Turning the sun's shadows off (`shadows=off`) took the
+  frame from 21.2 ms to 4.6: every caster was drawn into every one of the four shadow
+  cascades, so the card drew the field five times.
 - **With ray tracing the traced scene is the next cost**: every instance is put into it
   again each frame, moved or not.
 
-So the next work is the card's: to decide on the card what each view and each cascade sees,
-with meshes in shared buffers so that a pipeline's draws are one call, and for the traced
-scene to keep what it was given as the instances now do.
+## Shadows by cascade
+
+A cascade's map takes in a box of the world, long enough toward the sun to hold what casts
+into it. A caster is now drawn into the cascades whose box it falls in, where it was drawn
+into all four: the near cascades are small, so most of a wide scene is in one or two.
+Deciding it is part of deciding what the view sees, from the same small record.
+
+So the next work is for the traced scene to keep what it was given as the instances now
+do, which is what a frame with ray tracing still pays for; then to decide on the card what
+each view and each cascade sees, with meshes in shared buffers so that a pipeline's draws
+are one call.
