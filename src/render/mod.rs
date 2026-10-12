@@ -466,6 +466,8 @@ pub struct RenderFrame {
     pub cascades: CascadeData,
     /// The lamps, fires and torches there are, wherever they are.
     pub(crate) lights: Vec<lights::LocalLight>,
+    /// What the shadow map of each light that casts shadows is drawn with.
+    pub(crate) light_shadows: Vec<Mat4>,
     /// How far from the camera something may be and still cast a shadow that matters.
     pub(crate) shadow_reach: f32,
     /// Skinned meshes to pose this frame.
@@ -810,6 +812,11 @@ fn prepare(    gpu: Res<Gpu>,
     }
     // The lights with a place, sorted into the cells of this view.
     let lookout = lights::Lookout { view_proj: frame.view_proj, camera: frame.camera_position, forward: frame.camera_forward };
+    // Those that cast shadows are given their maps first, so that each is told which is its
+    // own. What a light's map takes in is decided on the card, so only where it can.
+    let camera = frame.camera_position;
+    frame.light_shadows = if renderer.decides_on_card() { lights::shadowed(&mut frame.lights, camera) } else { Vec::new() };
+    shadows.write_lights(&gpu, &frame.light_shadows);
     if view.write_lights(&gpu, &lights::LightGrid::build(&frame.lights, &lookout)) {
         view.rebind(&gpu, &shadows, &sky.gpu_environment, rt.as_deref());
     }
@@ -825,6 +832,7 @@ fn prepare(    gpu: Res<Gpu>,
         cascades: if frame.shadows { frame.cascades.matrices.to_vec() } else { vec![] },
         shadow_reach: frame.shadow_reach,
         blended: frame.temporal,
+        lights: frame.light_shadows.clone(),
     };
     renderer.prepare_draws(&gpu, &mut frame, &from);
     skinner.prepare(&gpu, &renderer, &meshes, &frame.skinned);
@@ -1102,11 +1110,14 @@ fn cull_scene(world: &mut World, cx: &mut PassContext) {
 
 /// The sun's shadow cascades.
 fn draw_shadows(world: &mut World, cx: &mut PassContext) {
-    if !world.resource::<RenderFrame>().shadows {
-        return;
-    }
+    let frame = world.resource::<RenderFrame>();
     let shadows = world.resource::<ShadowMaps>();
-    for (cascade, layer) in shadows.layer_views.iter().enumerate() {
+    // The sun's cascades where it casts shadows, and then a map for each light with a place
+    // that does. A light's map is spoken of as a cascade after the sun's.
+    let cascades = if frame.shadows { shadows.layer_views.len() } else { 0 };
+    let maps = shadows.layer_views.iter().take(cascades).enumerate();
+    let lights = shadows.light_views.iter().take(frame.light_shadows.len()).enumerate().map(|(light, layer)| (shadow::CASCADES + light, layer));
+    for (cascade, layer) in maps.chain(lights) {
         let mut pass = cx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("shadow pass"),
             color_attachments: &[],

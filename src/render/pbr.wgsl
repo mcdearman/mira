@@ -40,6 +40,8 @@ struct View {
     temporal: vec4<f32>,
     // x: 1 while anything is in the traced structure of the things that move
     traced: vec4<f32>,
+    // What each shadow map of the lights with a place is drawn with.
+    light_shadows: array<mat4x4<f32>, 8>,
 };
 
 // A storage buffer rather than a uniform: the same group may hold a texture binding array.
@@ -58,11 +60,15 @@ struct Light {
     light: vec4<f32>,
     // xyz: the way it faces, w: the cosine of the cone's inner angle
     direction: vec4<f32>,
+    // x: which shadow map is its own, or less than nought where it casts no shadows
+    shadow: vec4<f32>,
 };
 
 @group(0) @binding(16) var<storage, read> lights: array<Light>;
 // For each cell, where its lights begin in the list and how many there are; then the list.
 @group(0) @binding(17) var<storage, read> light_grid: array<u32>;
+// A shadow map for each of the lights that cast shadows.
+@group(0) @binding(19) var light_shadow_maps: texture_depth_2d_array;
 
 // Cells across, down and through the view's depth, and where the depth begins and ends.
 const LIGHT_CELLS: vec3<u32> = vec3<u32>(16u, 9u, 24u);
@@ -241,7 +247,31 @@ fn light_cell(world_position: vec3<f32>) -> vec2<u32> {
     return vec2<u32>(list + light_grid[cell], light_grid[cell + 1u]);
 }
 
-// What the lamps, fires and torches near a surface add to it. They cast no shadows.
+// How much of a light that casts shadows reaches a point: its own map is looked up a little
+// off the surface, the further off the further the light is, so that a surface does not
+// shadow itself.
+fn light_visibility(map: u32, world_position: vec3<f32>, n: vec3<f32>, away: f32) -> f32 {
+    let clip = view.light_shadows[map] * vec4<f32>(world_position + n * (0.02 + 0.004 * away), 1.0);
+    if clip.w <= 0.0 {
+        return 1.0;
+    }
+    let ndc = clip.xyz / clip.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || ndc.z > 1.0 {
+        return 1.0;
+    }
+    let texel = 1.0 / f32(textureDimensions(light_shadow_maps).x);
+    var lit = 0.0;
+    for (var y = -0.5; y <= 0.5; y += 1.0) {
+        for (var x = -0.5; x <= 0.5; x += 1.0) {
+            lit += textureSampleCompareLevel(light_shadow_maps, shadow_sampler, uv + vec2<f32>(x, y) * texel, map, ndc.z);
+        }
+    }
+    return lit * 0.25;
+}
+
+// What the lamps, fires and torches near a surface add to it. Those that cast shadows are
+// hidden by what stands in their light.
 fn local_lights(world_position: vec3<f32>, n: vec3<f32>, v: vec3<f32>, diffuse_color: vec3<f32>, f0: vec3<f32>, a: f32, n_dot_v: f32) -> vec3<f32> {
     let cell = light_cell(world_position);
     var sum = vec3<f32>(0.0);
@@ -260,13 +290,20 @@ fn local_lights(world_position: vec3<f32>, n: vec3<f32>, v: vec3<f32>, diffuse_c
         if n_dot_l <= 0.0 || cone <= 0.0 {
             continue;
         }
+        var reaching = 1.0;
+        if light.shadow.x >= 0.0 {
+            reaching = light_visibility(u32(light.shadow.x), world_position, n, sqrt(distance_squared));
+            if reaching <= 0.0 {
+                continue;
+            }
+        }
         // Weaker with the square of the distance, and brought to nothing at its reach.
         let edge = saturate(1.0 - distance_squared * distance_squared / (reach * reach * reach * reach));
         let falloff = edge * edge / max(distance_squared, 0.01);
         let h = normalize(l + v);
         let f = fresnel(f0, saturate(dot(h, v)));
         let specular = d_ggx(saturate(dot(n, h)), a) * v_smith(n_dot_v, n_dot_l, a) * f;
-        sum += (diffuse_color / PI * (1.0 - f) + specular) * n_dot_l * light.light.rgb * falloff * cone;
+        sum += (diffuse_color / PI * (1.0 - f) + specular) * n_dot_l * light.light.rgb * falloff * cone * reaching;
     }
     return sum;
 }

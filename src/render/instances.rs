@@ -161,6 +161,9 @@ pub(crate) struct Viewpoint {
     pub shadow_reach: f32,
     /// Whether frames are blended over time, which is what wants to know what moved.
     pub blended: bool,
+    /// What each shadow map of a light with a place takes in. Only where the card decides
+    /// what is seen: see `cull.rs`.
+    pub lights: Vec<Mat4>,
 }
 
 /// A part in the traced scene: what rays are traced against.
@@ -683,7 +686,7 @@ mod tests {
         let projection = Mat4::perspective_infinite_reverse_rh(1.0, 1.0, 0.1);
         // One cascade: a box forty metres square about the origin, looked into along -z.
         let cascade = Mat4::orthographic_rh(-20.0, 20.0, -20.0, 20.0, 0.0, 100.0) * Mat4::from_translation(Vec3::new(0.0, 0.0, -50.0));
-        Viewpoint { view_proj: projection, camera: Vec3::ZERO, cascades: vec![cascade], shadow_reach: 1000.0, blended: true }
+        Viewpoint { view_proj: projection, camera: Vec3::ZERO, cascades: vec![cascade], shadow_reach: 1000.0, blended: true, lights: vec![] }
     }
 
     fn unit_sphere(_: u32) -> Option<(Vec3, f32)> {

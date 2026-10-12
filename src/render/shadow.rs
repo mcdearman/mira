@@ -7,7 +7,7 @@
 
 use glam::{Mat4, Vec3, Vec4Swizzles};
 
-use super::{gpu::Gpu, DEPTH_FORMAT};
+use super::{gpu::Gpu, lights, DEPTH_FORMAT};
 
 pub const CASCADES: usize = 4;
 /// Uniform buffer offsets for dynamic bindings must be 256-byte aligned.
@@ -114,6 +114,10 @@ pub struct ShadowMaps {
     pub resolution: u32,
     pub layer_views: Vec<wgpu::TextureView>,
     pub array_view: wgpu::TextureView,
+    /// The maps of the lights with a place that cast shadows: one layer each, and all of
+    /// them as the shaders read them.
+    pub light_views: Vec<wgpu::TextureView>,
+    pub light_array_view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
     buffer: wgpu::Buffer,
     /// Group 0 for shadow pipelines: the cascade's light matrix, with a dynamic offset.
@@ -152,6 +156,27 @@ impl ShadowMaps {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
+        let light_maps = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("light shadow maps"),
+            size: wgpu::Extent3d { width: lights::SHADOW_MAP, height: lights::SHADOW_MAP, depth_or_array_layers: lights::SHADOWED as u32 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let light_views = (0..lights::SHADOWED as u32)
+            .map(|layer| {
+                light_maps.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_array_layer: layer,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                })
+            })
+            .collect();
+        let light_array_view = light_maps.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("shadow sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -161,7 +186,7 @@ impl ShadowMaps {
         });
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("shadow cascades"),
-            size: SLOT * CASCADES as u64,
+            size: SLOT * (CASCADES + lights::SHADOWED) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -194,6 +219,8 @@ impl ShadowMaps {
             resolution,
             layer_views,
             array_view,
+            light_views,
+            light_array_view,
             sampler,
             buffer,
             layout,
@@ -205,6 +232,14 @@ impl ShadowMaps {
         for (i, m) in cascades.matrices.iter().enumerate() {
             gpu.queue
                 .write_buffer(&self.buffer, SLOT * i as u64, bytemuck::bytes_of(m));
+        }
+    }
+
+    /// Says what each light's shadow map is drawn with. They come after the cascades: the
+    /// first light's is at `offset(CASCADES)`.
+    pub(crate) fn write_lights(&self, gpu: &Gpu, maps: &[Mat4]) {
+        for (i, m) in maps.iter().take(lights::SHADOWED).enumerate() {
+            gpu.queue.write_buffer(&self.buffer, SLOT * (CASCADES + i) as u64, bytemuck::bytes_of(m));
         }
     }
 

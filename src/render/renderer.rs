@@ -202,6 +202,7 @@ pub struct MeshRenderer {
     culler: Option<Culler>,
     drawn: Vec<(BatchKey, u32)>,
     cascades: usize,
+    light_maps: usize,
 }
 
 impl MeshRenderer {
@@ -332,6 +333,7 @@ impl MeshRenderer {
             culler: cull::supported(gpu).then(|| Culler::new(gpu)),
             drawn: Vec::new(),
             cascades: 0,
+            light_maps: 0,
             cascade: AtomicUsize::new(0),
         }
     }
@@ -563,6 +565,7 @@ impl MeshRenderer {
         let seen = if on_card {
             self.drawn = self.scene.batches().map(|(key, number, _)| (key, number)).collect();
             self.cascades = from.cascades.len();
+            self.light_maps = from.lights.len();
             frame.moved = if from.blended { self.scene.moved_near(from.camera) } else { Vec::new() };
             None
         } else {
@@ -578,7 +581,7 @@ impl MeshRenderer {
             self.material(gpu, set);
         }
 
-        let listed = seen.as_ref().map_or_else(|| Culler::listed(&self.scene), Vec::len);
+        let listed = seen.as_ref().map_or_else(|| Culler::listed(&self.scene, from), Vec::len);
         if self.seen.as_ref().is_none_or(|on_card| listed > on_card.room) {
             let room = listed.next_power_of_two().max(256);
             let numbers = gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -611,6 +614,12 @@ impl MeshRenderer {
             });
             *bound = Some((self.scene.generation, group));
         }
+    }
+
+    /// Whether the card decides what each view sees, which the shadows of lights with a
+    /// place need.
+    pub(crate) fn decides_on_card(&self) -> bool {
+        self.culler.is_some()
     }
 
     /// Records the pass in which the card decides what each view sees, where it does.
@@ -659,7 +668,9 @@ impl MeshRenderer {
         let cascade = self.cascade.load(Ordering::Relaxed);
         let batches = match self.shadow_batches.get(cascade) {
             Some(batches) => batches.as_slice(),
-            None if self.culler.is_some() && cascade < self.cascades.min(cull::VIEWS - 1) => &[],
+            // Where the card decided what is seen: a cascade there are draws for, or, after
+            // the cascades, a light's shadow map.
+            None if self.culler.is_some() && (cascade < self.cascades.min(cull::LIGHTS - 1) || (cull::LIGHTS - 1..cull::LIGHTS - 1 + self.light_maps).contains(&cascade)) => &[],
             None => return,
         };
         self.draw_with(pass, 1 + cascade, batches, |key| {
