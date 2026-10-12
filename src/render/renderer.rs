@@ -11,6 +11,7 @@ use glam::Vec3;
 use wgpu::util::DeviceExt;
 
 use super::{
+    cull::{self, Culler},
     gpu::{main_depth_state, main_multisample, Gpu, HDR_FORMAT},
     image::Image,
     instances::{Instances, Viewpoint},
@@ -194,6 +195,13 @@ pub struct MeshRenderer {
     shadow_batches: Vec<Vec<Batch>>,
     /// The cascade being drawn, said by the shadow pass before each one's draws.
     cascade: AtomicUsize,
+    /// Decides on the card what each view sees, where the card can: see `cull.rs`. Then
+    /// the two lists above are empty, and every batch is drawn with a draw the card filled
+    /// in: the batches in the order they are drawn, each with its number, and how many
+    /// cascades there are draws for.
+    culler: Option<Culler>,
+    drawn: Vec<(BatchKey, u32)>,
+    cascades: usize,
 }
 
 impl MeshRenderer {
@@ -321,6 +329,9 @@ impl MeshRenderer {
             meshes: HashMap::new(),
             batches: Vec::new(),
             shadow_batches: Vec::new(),
+            culler: cull::supported(gpu).then(|| Culler::new(gpu)),
+            drawn: Vec::new(),
+            cascades: 0,
             cascade: AtomicUsize::new(0),
         }
     }
@@ -541,20 +552,35 @@ impl MeshRenderer {
     /// and for the shadow cascades.
     pub(crate) fn prepare_draws(&mut self, gpu: &Gpu, frame: &mut RenderFrame, from: &Viewpoint) {
         self.build_surfaces(gpu);
-        self.scene.upload(gpu);
         let meshes = &self.meshes;
-        let seen = self.scene.seen(from, |mesh| meshes.get(&mesh).map(|m| (m.center, m.radius)));
-        let batch = |(key, instances): &(BatchKey, Range<u32>)| Batch { key: *key, instances: instances.clone() };
-        self.batches = seen.batches.iter().map(batch).collect();
-        self.shadow_batches = seen.shadow_batches.iter().map(|cascade| cascade.iter().map(batch).collect()).collect();
-        frame.moved = seen.moved;
-        let sets: Vec<_> = self.batches.iter().chain(self.shadow_batches.iter().flatten()).map(|b| b.key.textures).collect();
+        let on_card = self.culler.is_some();
+        if on_card {
+            self.scene.size(|mesh| meshes.get(&mesh).map(|m| (m.center, m.radius)));
+        }
+        self.scene.upload(gpu);
+        // Where the card decides what is seen, it is given room to list it; otherwise it is
+        // decided here and the list sent.
+        let seen = if on_card {
+            self.drawn = self.scene.batches().map(|(key, number, _)| (key, number)).collect();
+            self.cascades = from.cascades.len();
+            frame.moved = if from.blended { self.scene.moved_near(from.camera) } else { Vec::new() };
+            None
+        } else {
+            let seen = self.scene.seen(from, |mesh| meshes.get(&mesh).map(|m| (m.center, m.radius)));
+            let batch = |(key, instances): &(BatchKey, Range<u32>)| Batch { key: *key, instances: instances.clone() };
+            self.batches = seen.batches.iter().map(batch).collect();
+            self.shadow_batches = seen.shadow_batches.iter().map(|cascade| cascade.iter().map(batch).collect()).collect();
+            frame.moved = seen.moved;
+            Some(seen.numbers)
+        };
+        let sets: Vec<_> = self.batches.iter().chain(self.shadow_batches.iter().flatten()).map(|b| b.key.textures).chain(self.drawn.iter().map(|(key, _)| key.textures)).collect();
         for set in sets {
             self.material(gpu, set);
         }
 
-        if self.seen.as_ref().is_none_or(|on_card| seen.numbers.len() > on_card.room) {
-            let room = seen.numbers.len().next_power_of_two().max(256);
+        let listed = seen.as_ref().map_or_else(|| Culler::listed(&self.scene), Vec::len);
+        if self.seen.as_ref().is_none_or(|on_card| listed > on_card.room) {
+            let room = listed.next_power_of_two().max(256);
             let numbers = gpu.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("instances in view"),
                 size: (room * std::mem::size_of::<u32>()) as u64,
@@ -564,7 +590,14 @@ impl MeshRenderer {
             self.seen = Some(SeenOnCard { numbers, room, bound: None });
         }
         let SeenOnCard { numbers, bound, .. } = self.seen.as_mut().unwrap();
-        gpu.queue.write_buffer(numbers, 0, bytemuck::cast_slice(&seen.numbers));
+        match (&seen, &mut self.culler) {
+            (Some(seen), _) => gpu.queue.write_buffer(numbers, 0, bytemuck::cast_slice(seen)),
+            (None, Some(culler)) => {
+                let meshes = &self.meshes;
+                culler.prepare(gpu, &self.scene, from, numbers, |mesh| meshes.get(&mesh).map(|m| m.index_count));
+            }
+            (None, None) => unreachable!("what is seen is decided here or on the card"),
+        }
         // Bound again whenever either buffer is another one.
         if bound.as_ref().is_none_or(|(generation, _)| *generation != self.scene.generation) {
             let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -579,10 +612,18 @@ impl MeshRenderer {
             *bound = Some((self.scene.generation, group));
         }
     }
+
+    /// Records the pass in which the card decides what each view sees, where it does.
+    pub(crate) fn cull(&self, encoder: &mut wgpu::CommandEncoder) {
+        if let Some(culler) = &self.culler {
+            culler.run(encoder);
+        }
+    }
+
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         match (&self.wire, self.wireframe) {
-            (Some(wire), true) => self.draw_with(pass, &self.batches, |_| wire),
-            _ => self.draw_with(pass, &self.batches, |key| {
+            (Some(wire), true) => self.draw_with(pass, 0, &self.batches, |_| wire),
+            _ => self.draw_with(pass, 0, &self.batches, |key| {
                 let own = key.surface.checked_sub(1).and_then(|at| self.surfaces.get(at as usize));
                 &own.and_then(|surface| surface.pipelines.as_ref()).unwrap_or(&self.pipelines)[key.variant as usize]
             }),
@@ -615,10 +656,13 @@ impl MeshRenderer {
 
     /// Draws what casts a shadow into the cascade being drawn.
     pub fn draw_shadows(&self, pass: &mut wgpu::RenderPass<'_>) {
-        let Some(batches) = self.shadow_batches.get(self.cascade.load(Ordering::Relaxed)) else {
-            return;
+        let cascade = self.cascade.load(Ordering::Relaxed);
+        let batches = match self.shadow_batches.get(cascade) {
+            Some(batches) => batches.as_slice(),
+            None if self.culler.is_some() && cascade < self.cascades.min(cull::VIEWS - 1) => &[],
+            None => return,
         };
-        self.draw_with(pass, batches, |key| {
+        self.draw_with(pass, 1 + cascade, batches, |key| {
             if key.masked() {
                 &self.shadow_masked
             } else {
@@ -630,10 +674,11 @@ impl MeshRenderer {
     fn draw_with<'a>(
         &'a self,
         pass: &mut wgpu::RenderPass<'_>,
+        view: usize,
         batches: &[Batch],
         pipeline: impl Fn(&BatchKey) -> &'a wgpu::RenderPipeline,
     ) {
-        if batches.is_empty() {
+        if batches.is_empty() && self.drawn.is_empty() {
             return;
         }
         let Some((_, instances)) = self.seen.as_ref().and_then(|seen| seen.bound.as_ref()) else {
@@ -641,6 +686,23 @@ impl MeshRenderer {
         };
         pass.set_bind_group(2, instances, &[]);
         let mut current: Option<*const wgpu::RenderPipeline> = None;
+        // Where the card decided what the view sees, every batch is drawn with the draw it
+        // filled in, which is of no instances where it saw none.
+        if let Some(culler) = &self.culler {
+            for (key, number) in &self.drawn {
+                let (Some(mesh), Some(material)) = (self.meshes.get(&key.mesh), self.materials.get(&key.textures)) else { continue };
+                let p = pipeline(key);
+                if current != Some(p as *const _) {
+                    pass.set_pipeline(p);
+                    current = Some(p as *const _);
+                }
+                pass.set_bind_group(1, material, &[]);
+                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed_indirect(&culler.draws, culler.draw(view, *number));
+            }
+            return;
+        }
         for batch in batches {
             let Some(mesh) = self.meshes.get(&batch.key.mesh) else {
                 continue;

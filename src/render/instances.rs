@@ -68,6 +68,23 @@ impl LookRaw {
     }
 }
 
+/// What the card needs of an instance to decide for itself whether a view sees it (see
+/// `cull.rs`). Must match `Sight` in `cull.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct SightRaw {
+    /// The mesh's bounding sphere in its own space. The radius is negative until the mesh
+    /// is on the card and its size known, and the instance is then taken to be in view.
+    center: [f32; 3],
+    radius: f32,
+    /// The distances the instance is seen over.
+    seen: [f32; 2],
+    /// Which batch it is drawn in: see [`Instances::batch_number`].
+    batch: u32,
+    /// Bit 0: there is such an instance. Bit 1: it casts a shadow.
+    flags: u32,
+}
+
 /// One thing an entity draws: a mesh with a material, somewhere. An entity with levels of
 /// detail has one for each level, each seen over its own range of distances.
 #[derive(Clone, Copy)]
@@ -170,6 +187,19 @@ pub(crate) struct Instances {
     /// Instances moved, and instances whose look changed, since they were last sent.
     stale: Vec<u32>,
     stale_looks: Vec<u32>,
+    /// What the card is told of each instance to decide whether it is seen, the mesh whose
+    /// size that holds (or none yet), and the instances it is to be told of again.
+    card_sights: Vec<SightRaw>,
+    sized: Vec<u32>,
+    stale_sights: Vec<u32>,
+    /// Instances whose mesh was not on the card when they were last looked at.
+    unsized_yet: Vec<u32>,
+    sights_buffer: Option<wgpu::Buffer>,
+    /// A number for every batch there has been, which it keeps: the card files what it sees
+    /// under these.
+    batch_numbers: HashMap<BatchKey, u32>,
+    /// The instances that moved in the frame being brought up to date.
+    moved_now: Vec<u32>,
     /// The frame entities were last brought up to date in.
     frame: u64,
     /// Whether the traced scene has asked what changed, and the instances that have since.
@@ -204,14 +234,109 @@ impl Instances {
         self.looks_buffer.as_ref().expect("instances are sent before they are drawn")
     }
 
+    /// What the card is told of the instances to decide what is seen. Sent once, as the
+    /// others.
+    pub fn sights(&self) -> &wgpu::Buffer {
+        self.sights_buffer.as_ref().expect("instances are sent before they are drawn")
+    }
+
     /// How many instances there are.
     pub fn len(&self) -> usize {
         self.slots.len() - self.free.len()
     }
 
+    /// How many numbers have been given to instances, in use or free: the card goes through
+    /// that many.
+    pub fn numbers(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// How many numbers have been given to batches.
+    pub fn batch_numbers(&self) -> usize {
+        self.batch_numbers.len()
+    }
+
+    /// The batches in the order they are drawn, each with its number and how many instances
+    /// it has.
+    pub fn batches(&self) -> impl Iterator<Item = (BatchKey, u32, u32)> + '_ {
+        self.batches.iter().map(|(key, numbers)| (*key, self.batch_numbers[key], numbers.len() as u32))
+    }
+
     /// Says which frame it is, before entities are brought up to date in it.
     pub fn begin(&mut self, frame: u64) {
         self.frame = frame;
+        self.moved_now.clear();
+    }
+
+    /// Brings what the card is told of an instance, to decide whether it is seen, up to
+    /// date with its part.
+    fn resight(&mut self, number: u32) {
+        let at = number as usize;
+        if self.card_sights.len() <= at {
+            self.card_sights.resize(at + 1, bytemuck::Zeroable::zeroed());
+            self.sized.resize(at + 1, u32::MAX);
+        }
+        let part = &self.slots[at].as_ref().expect("an instance to be sighted is there").part;
+        let next = self.batch_numbers.len() as u32;
+        let batch = *self.batch_numbers.entry(part.key).or_insert(next);
+        let mut sight = SightRaw {
+            center: self.card_sights[at].center,
+            radius: self.card_sights[at].radius,
+            seen: [part.seen.0, part.seen.1],
+            batch,
+            flags: 1 | (part.casts_shadow as u32) << 1,
+        };
+        if self.sized[at] != part.key.mesh() {
+            // One whose radius is negative already is waiting for its size.
+            if sight.radius >= 0.0 {
+                self.unsized_yet.push(number);
+            }
+            (sight.center, sight.radius) = ([0.0; 3], -1.0);
+            self.sized[at] = u32::MAX;
+        }
+        if std::mem::replace(&mut self.card_sights[at], sight) != sight {
+            self.stale_sights.push(number);
+        }
+    }
+
+    /// Gives the instances whose mesh has come onto the card since they were made its size.
+    /// `bounds` is a mesh's bounding sphere in its own space, once it is there.
+    pub fn size(&mut self, bounds: impl Fn(u32) -> Option<(Vec3, f32)>) {
+        if self.unsized_yet.is_empty() {
+            return;
+        }
+        let waiting = std::mem::take(&mut self.unsized_yet);
+        for number in waiting {
+            let at = number as usize;
+            let Some(slot) = &self.slots[at] else { continue };
+            // Let go of and taken again since, or told of a mesh that has its size: it is
+            // not waiting, or is in the list a second time.
+            if self.card_sights[at].radius >= 0.0 {
+                continue;
+            }
+            match bounds(slot.part.key.mesh()) {
+                Some((center, radius)) => {
+                    (self.card_sights[at].center, self.card_sights[at].radius) = (center.to_array(), radius);
+                    self.sized[at] = slot.part.key.mesh();
+                    self.stale_sights.push(number);
+                }
+                None => self.unsized_yet.push(number),
+            }
+        }
+    }
+
+    /// What moved in the frame being brought up to date and is near enough to be drawn, for
+    /// the blend over time, where the card decides what is seen and so does not say.
+    pub fn moved_near(&self, camera: Vec3) -> Vec<motion::Moved> {
+        let mut moved = Vec::new();
+        for &number in &self.moved_now {
+            let (Some(slot), sight) = (&self.slots[number as usize], &self.sight[number as usize]) else { continue };
+            let away = camera.distance(sight.origin);
+            if sight.moved == self.frame && self.frame != 0 && !sight.decal && away >= sight.seen.0 && away < sight.seen.1 {
+                moved.push(motion::Moved { mesh: slot.part.key.mesh(), model: slot.part.model, was: slot.was });
+            }
+        }
+        moved
     }
 
     /// Sets what an entity draws. Its instances are kept where their batch has not changed,
@@ -256,6 +381,7 @@ impl Instances {
             if motion::has_moved(&model, &slot.part.model) {
                 slot.was = slot.part.model;
                 sight.moved = self.frame;
+                self.moved_now.push(number);
             }
             // The mesh's place in the world is worked out again when it is next looked at.
             (sight.origin, sight.radius) = (model.w_axis.truncate(), -1.0);
@@ -298,6 +424,7 @@ impl Instances {
         self.batches.entry(part.key).or_default().push(number);
         self.stale.push(number);
         self.stale_looks.push(number);
+        self.resight(number);
         self.changed_for_tracing(number);
         number
     }
@@ -312,6 +439,7 @@ impl Instances {
         if motion::has_moved(&part.model, &before.model) {
             slot.was = before.model;
             sight.moved = self.frame;
+            self.moved_now.push(number);
         } else {
             sight.moved = was_sighted.moved;
             if before.key.mesh() == part.key.mesh() {
@@ -333,6 +461,7 @@ impl Instances {
             Self::unlist(&mut self.batches, before.key, number);
             self.batches.entry(part.key).or_default().push(number);
         }
+        self.resight(number);
         self.changed_for_tracing(number);
     }
 
@@ -342,6 +471,10 @@ impl Instances {
             self.free.push(number);
             // Seen from nowhere, until the number is taken again.
             self.sight[number as usize].seen = (f32::INFINITY, f32::INFINITY);
+            // Nothing is there, and whoever takes the number starts afresh.
+            self.card_sights[number as usize] = bytemuck::Zeroable::zeroed();
+            self.sized[number as usize] = u32::MAX;
+            self.stale_sights.push(number);
             self.changed_for_tracing(number);
         }
     }
@@ -371,12 +504,15 @@ impl Instances {
             self.room = self.slots.len().next_power_of_two().max(256);
             let places = Self::make(&gpu.device, "instances", self.room * std::mem::size_of::<PlaceRaw>());
             let looks = Self::make(&gpu.device, "instances' looks", self.room * std::mem::size_of::<LookRaw>());
+            let sights = Self::make(&gpu.device, "instances' sights", self.room * std::mem::size_of::<SightRaw>());
             self.generation += 1;
             self.stale.clear();
             self.stale_looks.clear();
+            self.stale_sights.clear();
             gpu.queue.write_buffer(&places, 0, bytemuck::cast_slice(&self.on_card));
             gpu.queue.write_buffer(&looks, 0, bytemuck::cast_slice(&self.looks));
-            (self.buffer, self.looks_buffer) = (Some(places), Some(looks));
+            gpu.queue.write_buffer(&sights, 0, bytemuck::cast_slice(&self.card_sights));
+            (self.buffer, self.looks_buffer, self.sights_buffer) = (Some(places), Some(looks), Some(sights));
             return true;
         }
         fn send<T: bytemuck::Pod>(gpu: &Gpu, buffer: &wgpu::Buffer, kept: &[T], stale: Vec<u32>) {
@@ -387,6 +523,7 @@ impl Instances {
         }
         send(gpu, self.buffer.as_ref().unwrap(), &self.on_card, std::mem::take(&mut self.stale));
         send(gpu, self.looks_buffer.as_ref().unwrap(), &self.looks, std::mem::take(&mut self.stale_looks));
+        send(gpu, self.sights_buffer.as_ref().unwrap(), &self.card_sights, std::mem::take(&mut self.stale_sights));
         false
     }
 
@@ -515,7 +652,7 @@ pub(crate) fn runs(mut numbers: Vec<u32>, near: u32) -> Vec<Range<u32>> {
 
 /// The planes bounding what a matrix takes in, each with a normal of length one so that a
 /// distance from it is in metres.
-fn unit_planes(view_proj: Mat4) -> [(Vec3, f32); 5] {
+pub(crate) fn unit_planes(view_proj: Mat4) -> [(Vec3, f32); 5] {
     frustum_planes(view_proj).map(|p| {
         let length = p.truncate().length().max(1e-12);
         (p.truncate() / length, p.w / length)
@@ -682,6 +819,41 @@ mod tests {
         assert_eq!(seen.moved.len(), 2);
         assert_eq!(seen.moved[0].was, Mat4::from_translation(ahead));
         assert_eq!(scene.batches.len(), 2);
+    }
+
+    #[test]
+    fn the_card_is_told_what_it_needs_to_decide_what_is_seen() {
+        let mut world = World::new();
+        let (a, b) = (world.spawn(()), world.spawn(()));
+        let mut scene = Instances::default();
+        scene.set(a, &[Part { seen: (0.0, 20.0), ..part(1, Vec3::ZERO) }, Part { seen: (20.0, 80.0), casts_shadow: false, ..part(2, Vec3::ZERO) }]);
+        scene.set(b, &[part(1, Vec3::X)]);
+        // Each batch has a number, which the instances in it are filed under.
+        assert_eq!(scene.batch_numbers(), 2);
+        assert_eq!(scene.card_sights[0].batch, scene.card_sights[2].batch);
+        assert_ne!(scene.card_sights[0].batch, scene.card_sights[1].batch);
+        assert_eq!((scene.card_sights[1].seen, scene.card_sights[1].flags), ([20.0, 80.0], 1));
+        assert_eq!(scene.card_sights[0].flags, 3);
+        // A mesh's size is not known until it is on the card: asked for until it is, then given
+        // to every instance of it, and those are sent again.
+        assert!(scene.card_sights.iter().all(|sight| sight.radius < 0.0));
+        scene.stale_sights.clear();
+        scene.size(|mesh| (mesh == 1).then_some((Vec3::Y, 2.0)));
+        assert_eq!(scene.stale_sights, [0, 2]);
+        assert_eq!((scene.card_sights[0].center, scene.card_sights[0].radius), ([0.0, 1.0, 0.0], 2.0));
+        assert_eq!(scene.unsized_yet, [1]);
+        scene.size(unit_sphere);
+        assert!(scene.unsized_yet.is_empty() && scene.card_sights[1].radius == 1.0);
+        // Moving changes nothing of it; another mesh has its size asked for again; and one
+        // let go of is not there.
+        scene.stale_sights.clear();
+        scene.moved(b, Mat4::from_translation(Vec3::Z));
+        assert!(scene.stale_sights.is_empty());
+        scene.set(b, &[part(3, Vec3::Z)]);
+        assert_eq!((scene.card_sights[2].radius, scene.unsized_yet.as_slice()), (-1.0, &[2][..]));
+        scene.forget(a);
+        assert_eq!(scene.card_sights[0].flags, 0);
+        assert_eq!(scene.batches().map(|(key, _, instances)| (key.mesh(), instances)).collect::<Vec<_>>(), [(3, 1)]);
     }
 
     #[test]
