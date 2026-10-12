@@ -327,9 +327,10 @@ dying in any order; the timer is right in every case because no code ever sets i
 
 - [x] Render graph: passes declare what they read and write; the graph orders them and
       allocates targets (see [RENDER_GRAPH.md](RENDER_GRAPH.md)). The frame's own passes run
-      through it, and the motion target is the first it makes
-- [ ] The rest of the targets made by the graph (`hdr`, `depth`, the history the blend over
-      time keeps), and overlays as passes
+      through it
+- [x] The rest of the frame's targets made by the graph (`hdr`, `depth`), and the debug
+      lines and overlays as passes. What outlasts a frame (the history the blend over time
+      keeps) stays with its pass
 - [ ] Material system: shader modules with imports, generated variants, material instances
 - [ ] Scene on the GPU: shared vertex and index buffers, a persistent instance buffer updated
       only for changed transforms, bindless textures

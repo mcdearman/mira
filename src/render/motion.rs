@@ -144,7 +144,7 @@ impl MotionRenderer {
 
     /// Draws how far each moved mesh has come. Returns whether anything was drawn: if not,
     /// the target was left alone and holds nothing to read.
-    pub(crate) fn render(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, meshes: &MeshRenderer, frame: &RenderFrame) -> bool {
+    pub(crate) fn render(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, depth: &wgpu::TextureView, meshes: &MeshRenderer, frame: &RenderFrame) -> bool {
         if frame.moved.is_empty() {
             return false;
         }
@@ -176,7 +176,7 @@ impl MotionRenderer {
                 ops: wgpu::Operations { load: wgpu::LoadOp::Clear(MOTION_CLEAR), store: wgpu::StoreOp::Store },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &gpu.targets.depth,
+                view: depth,
                 depth_ops: None,
                 stencil_ops: None,
             }),

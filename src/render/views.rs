@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 use super::{
-    gpu::{Gpu, Targets},
+    gpu::Gpu,
     post::PostRenderer,
     taa::Taa,
     Camera, Offscreen, RenderFrame,
@@ -47,7 +47,6 @@ impl ViewTarget {
 /// What one view keeps from frame to frame, set in the renderer's place while it draws.
 struct ViewState {
     size: (u32, u32),
-    targets: Targets,
     surface: Option<wgpu::Surface<'static>>,
     taa: Taa,
     frame: RenderFrame,
@@ -57,11 +56,8 @@ struct ViewState {
 
 impl ViewState {
     fn new(gpu: &Gpu, size: (u32, u32)) -> Self {
-        let mut config = gpu.config.clone();
-        (config.width, config.height) = size;
         Self {
             size,
-            targets: Targets::new(&gpu.device, &config),
             surface: None,
             taa: Taa::new(gpu),
             frame: RenderFrame::default(),
@@ -73,7 +69,6 @@ impl ViewState {
     /// Changes places with the renderer's own state. Twice puts everything back.
     fn swap(&mut self, world: &mut World) {
         let gpu = world.resource_mut::<Gpu>();
-        std::mem::swap(&mut gpu.targets, &mut self.targets);
         std::mem::swap(&mut gpu.config.width, &mut self.size.0);
         std::mem::swap(&mut gpu.config.height, &mut self.size.1);
         // With no window to draw to, a frame is drawn off screen: into the view's picture.
