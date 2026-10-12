@@ -96,6 +96,7 @@ Failures that pause the game instead of ending it, and stepping time:
 
 The frame as passes a plugin can add to: [docs/RENDER_GRAPH.md](docs/RENDER_GRAPH.md).
 Shaders made of modules that import each other: [docs/SHADERS.md](docs/SHADERS.md).
+What a frame costs, and how to measure it: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
 AI agents driving a running game over MCP: [docs/MCP.md](docs/MCP.md).
 

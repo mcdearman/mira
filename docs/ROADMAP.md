@@ -60,7 +60,9 @@ Make the project safe to change quickly.
       (`FrameStats`, `mira-debug profile`)
 - [ ] A timeline of a frame across threads; GPU timings (timestamp queries per pass); shown
       on screen
-- [ ] Benchmarks for ECS iteration, chunk meshing and a standard frame
+- [x] A benchmark of a frame as the number of things in it grows (`examples/instances`;
+      what it shows is in [PERFORMANCE.md](PERFORMANCE.md))
+- [ ] Benchmarks for ECS iteration and chunk meshing, and any of them run in CI
 
 **Exit test:** a change that breaks rendering or halves ECS speed fails CI.
 
