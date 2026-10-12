@@ -73,6 +73,7 @@ impl Plugin for StarterPlugin {
         app.register_type::<Walker>()
             .register_type::<Gun>()
             .register_type::<Shot>()
+            .add_systems(Stage::Startup, shaders)
             .add_systems(Stage::Update, (walk, fire, expire));
     }
 }
@@ -170,6 +171,17 @@ fn expire(time: Res<Time>, mut commands: Commands, mut shots: Query<(Entity, &mu
     }
 }
 
+/// The ground's surface shader, by the name it is imported under.
+const GRID: &str = "starter::grid";
+
+/// Gives the renderer the level's shaders, where there is a renderer: a game run without one,
+/// as in a test, has no use for them.
+fn shaders(world: &mut mira::ecs::World) {
+    if let Some(gpu) = world.get_resource_mut::<mira::render::Gpu>() {
+        gpu.shaders.add(GRID, mira::shader!("grid.wgsl"));
+    }
+}
+
 /// Builds the level: the ground, walls and blocks to walk among, crates to knock over, the
 /// player with camera and gun, the sun, and how the air and the picture are set.
 pub fn scene(mut commands: Commands, mut server: ResMut<AssetServer>, mut meshes: ResMut<Assets<Mesh>>) {
@@ -187,7 +199,14 @@ pub fn scene(mut commands: Commands, mut server: ResMut<AssetServer>, mut meshes
     let blue = paint(0.1, 0.32, 0.85, 0.45);
     let orange = paint(0.95, 0.42, 0.08, 0.5);
 
-    commands.spawn((Transform::IDENTITY, Mesh3d(ground), floor, Collider::ground(), Name::new("Ground")));
+    commands.spawn((
+        Transform::IDENTITY,
+        Mesh3d(ground),
+        floor,
+        mira::render::Surface::new(GRID),
+        Collider::ground(),
+        Name::new("Ground"),
+    ));
 
     // Something that stands still: a box of this size, here.
     let mut block = |name: &str, at: Vec3, size: Vec3, material: Material| {

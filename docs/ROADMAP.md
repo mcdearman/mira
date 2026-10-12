@@ -334,8 +334,11 @@ dying in any order; the timer is right in every case because no code ever sets i
 - [x] Shaders made of modules: imports by name, and parts kept by what is defined, so one
       source gives its variants (see [SHADERS.md](SHADERS.md)). The engine's lighting is a
       module its shaders import
-- [ ] Material system on top of that: materials as data naming a shader and its values,
-      instances that share one pipeline
+- [x] Materials with a shader of their own: an entity's `Surface` names a module that has the
+      last word on what is lit, its `Material` gives the values, and every entity naming
+      one surface shares its pipelines
+- [ ] Further for materials: values of a surface's own beyond the standard ones, and the
+      shadow, the traced reflection and the vertices in a surface shader's reach
 - [ ] Scene on the GPU: shared vertex and index buffers, a persistent instance buffer updated
       only for changed transforms, bindless textures
 - [ ] Culling in compute against the frustum and a depth pyramid; multi-draw indirect

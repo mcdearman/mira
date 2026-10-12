@@ -69,9 +69,14 @@ fn modified(path: &PathBuf) -> Option<SystemTime> {
 
 impl Shader {
     fn path(&self) -> PathBuf {
-        PathBuf::from(self.manifest_dir)
-            .join(self.beside)
-            .with_file_name(self.name)
+        // `file!()` is counted from where the build was started, which for a crate inside a
+        // workspace is the workspace's folder and not the crate's: so try the crate's folder
+        // and then each one above it.
+        let own = PathBuf::from(self.manifest_dir);
+        own.ancestors()
+            .map(|folder| folder.join(self.beside).with_file_name(self.name))
+            .find(|path| path.exists())
+            .unwrap_or_else(|| own.join(self.beside).with_file_name(self.name))
     }
 
     /// The shader's text: the file on disk when shaders are being reloaded and it exists,
