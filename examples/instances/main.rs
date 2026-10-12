@@ -4,7 +4,7 @@
 //!
 //! ```sh
 //! cargo run --release --example instances                        # 100,000, a tenth moving
-//! cargo run --release --example instances -- count=20000 moving=0.5 rays=off
+//! cargo run --release --example instances -- count=20000 moving=0.5 rays=off lights=1000
 //! MIRA_HIDDEN=1 cargo run --release --example instances -- frames=300   # measure, say, and stop
 //! ```
 //!
@@ -30,6 +30,8 @@ struct Asked {
     rays: bool,
     /// Whether the sun casts shadows: without them, what the shadows cost is what is saved.
     shadows: bool,
+    /// How many lamps stand over the field.
+    lights: usize,
 }
 
 /// A thing that bobs up and down about where it was put.
@@ -40,7 +42,7 @@ struct Bob {
 }
 
 fn asked() -> Asked {
-    let mut asked = Asked { count: 100_000, moving: 0.1, frames: None, rays: true, shadows: true };
+    let mut asked = Asked { count: 100_000, moving: 0.1, frames: None, rays: true, shadows: true, lights: 0 };
     for arg in std::env::args().skip(1) {
         match arg.split_once('=') {
             Some(("count", value)) => asked.count = value.parse().expect("count=<how many>"),
@@ -48,7 +50,8 @@ fn asked() -> Asked {
             Some(("frames", value)) => asked.frames = Some(value.parse().expect("frames=<how many>")),
             Some(("rays", value)) => asked.rays = value != "off",
             Some(("shadows", value)) => asked.shadows = value != "off",
-            _ => panic!("not understood: {arg} (count=, moving=, frames=, rays=off, shadows=off)"),
+            Some(("lights", value)) => asked.lights = value.parse().expect("lights=<how many>"),
+            _ => panic!("not understood: {arg} (count=, moving=, frames=, rays=off, shadows=off, lights=)"),
         }
     }
     asked
@@ -84,6 +87,15 @@ fn field(mut commands: Commands, mut server: ResMut<AssetServer>, mut meshes: Re
         if every.is_some_and(|every| i % every == 0) {
             commands.entity(thing).insert(Bob { rest: at.y, phase: i as f32 * 0.37 });
         }
+    }
+    // Lamps spread evenly over the field, each lighting the few things about it.
+    let lamps_across = (asked.lights as f32).sqrt().ceil().max(1.0) as usize;
+    let between = half * 2.0 / lamps_across as f32;
+    for i in 0..asked.lights {
+        let (column, row) = (i % lamps_across, i / lamps_across);
+        let at = Vec3::new((column as f32 + 0.5) * between - half, 1.6, (row as f32 + 0.5) * between - half);
+        let lamp = PointLight { color: colours[(column * 5 + row) % colours.len()], intensity: 12.0, range: (between * 0.75).clamp(3.0, 12.0) };
+        commands.spawn((Transform::from_translation(at), lamp));
     }
     let ground = server.plane(&mut meshes, half * 2.0 + 20.0);
     commands.spawn((Transform::IDENTITY, Mesh3d(ground), Material { color: Color::rgb(0.3, 0.32, 0.35), roughness: 0.9, ..Default::default() }));

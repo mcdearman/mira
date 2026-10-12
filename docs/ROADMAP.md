@@ -349,7 +349,9 @@ dying in any order; the timer is right in every case because no code ever sets i
       changes; one thing moving still has all of it gathered and built again)
 - [ ] Culling in compute against the frustum and a depth pyramid; multi-draw indirect
 - [ ] Visibility buffer or deferred shading, replacing forward + MSAA
-- [ ] Point and spot lights, clustered, with a shadow atlas
+- [x] Point and spot lights, clustered: sorted each frame into cells of the view, so a
+      surface goes through only the lights that reach it (see [LIGHTS.md](LIGHTS.md))
+- [ ] Shadows for them, in an atlas; and the lights in traced reflections and the probes
 - [ ] GPU particles, sorted or order-independent transparency, temporal upscaling
 - [ ] Voxels: greedy meshing, transparent-block pass, chunk draws through the same indirect path
 

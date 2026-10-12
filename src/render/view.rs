@@ -1,4 +1,11 @@
-use super::{environment::GpuEnvironment, gpu::Gpu, raytrace::{RayTracing, TEXTURE_SLOTS}, shadow::ShadowMaps, RenderFrame};
+use super::{
+    environment::GpuEnvironment,
+    gpu::Gpu,
+    lights::{LightBuffers, LightGrid},
+    raytrace::{RayTracing, TEXTURE_SLOTS},
+    shadow::ShadowMaps,
+    RenderFrame,
+};
 
 /// How the scene is drawn, for looking into it: as it is, or with part of the shading left
 /// out. A resource; `Lit` unless changed.
@@ -79,6 +86,8 @@ pub struct ViewBinding {
     /// Which version of the ray-traced scene's bindings the bind group holds.
     pub(crate) rt_generation: u64,
     buffer: wgpu::Buffer,
+    /// The lights with a place, and the cells of the view they are sorted into.
+    lights: LightBuffers,
     sky_sampler: wgpu::Sampler,
     pub layout: wgpu::BindGroupLayout,
     pub bind_group: wgpu::BindGroup,
@@ -169,6 +178,19 @@ impl ViewBinding {
                 fragment(15, probe_texture(), None),
             ]);
         }
+        // The lights with a place, read where surfaces are shaded.
+        for binding in [16, 17] {
+            entries.push(wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            });
+        }
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("view layout"),
             entries: &entries,
@@ -182,20 +204,24 @@ impl ViewBinding {
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
-        let bind_group = Self::bind(device, &layout, &buffer, shadows, sky, &sky_sampler, scene);
+        let lights = LightBuffers::new(device);
+        let bind_group = Self::bind(device, &layout, &buffer, &lights, shadows, sky, &sky_sampler, scene);
         Self {
             rt_generation: scene.map_or(0, |rt| rt.generation),
             buffer,
+            lights,
             sky_sampler,
             layout,
             bind_group,
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn bind(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         buffer: &wgpu::Buffer,
+        lights: &LightBuffers,
         shadows: &ShadowMaps,
         sky: &GpuEnvironment,
         sky_sampler: &wgpu::Sampler,
@@ -223,6 +249,16 @@ impl ViewBinding {
                 resource: wgpu::BindingResource::Sampler(sky_sampler),
             },
         ];
+        entries.extend([
+            wgpu::BindGroupEntry {
+                binding: 16,
+                resource: lights.lights.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 17,
+                resource: lights.grid.as_entire_binding(),
+            },
+        ]);
         let views = scene.map(|rt| rt.texture_views()).unwrap_or_default();
         if let Some(rt) = scene {
             entries.extend([
@@ -271,7 +307,13 @@ impl ViewBinding {
 
     /// Points the bind group at a new sky texture.
     pub(crate) fn rebind(&mut self, gpu: &Gpu, shadows: &ShadowMaps, sky: &GpuEnvironment, scene: Option<&RayTracing>) {
-        self.bind_group = Self::bind(&gpu.device, &self.layout, &self.buffer, shadows, sky, &self.sky_sampler, scene);
+        self.bind_group = Self::bind(&gpu.device, &self.layout, &self.buffer, &self.lights, shadows, sky, &self.sky_sampler, scene);
+    }
+
+    /// Sends a frame's lights, sorted into the view's cells. Answers whether there is a new
+    /// buffer for them, in which case [`rebind`](Self::rebind) is to be called.
+    pub(crate) fn write_lights(&mut self, gpu: &Gpu, grid: &LightGrid) -> bool {
+        self.lights.write(&gpu.device, &gpu.queue, grid)
     }
 
 

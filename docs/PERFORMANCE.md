@@ -87,6 +87,25 @@ into it. A caster is now drawn into the cascades whose box it falls in, where it
 into all four: the near cascades are small, so most of a wide scene is in one or two.
 Deciding it is part of deciding what the view sees, from the same small record.
 
+## A thousand lights
+
+`lights=N` stands that many lamps over the field, each reaching the things about it (see
+[LIGHTS.md](LIGHTS.md)). At 100,000 things without ray tracing:
+
+| Moving | Lights | A frame (mean) | Frames a second |
+|---|---|---|---|
+| a tenth | none | 14.3 ms | 70 |
+| a tenth | 1,000 | 14.2 ms | 70 |
+| none | 1,000 | 5.7 ms | 175 |
+
+A thousand lamps cost nothing that shows in the frame: sorting them into the view's cells
+is a fraction of a millisecond, and a fragment goes through only the few in its own cell.
+With 4,000 over 20,000 things a frame is 3.6 ms.
+
+That is the roadmap's test for the renderer, 100,000 mesh instances and 1,000 shadow-less
+lights at sixty frames a second, met on the machine measured, without ray tracing. The
+machine the roadmap names, the M2 Pro, has still not been measured.
+
 ## The traced scene at rest
 
 Where rays are traced, the scene they are traced against was gathered again every frame:
