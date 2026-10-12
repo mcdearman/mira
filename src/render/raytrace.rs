@@ -1,8 +1,9 @@
 //! Hardware ray tracing, through wgpu's (experimental, Vulkan-only) ray queries.
 //!
-//! Every opaque mesh gets a bottom-level acceleration structure once; each frame the scene's
-//! instances are gathered into a top-level structure that shaders trace against, for sun
-//! shadows, ambient occlusion and reflections.
+//! Every opaque mesh gets a bottom-level acceleration structure once, and the scene's
+//! instances are kept in a top-level structure that shaders trace against, for sun shadows,
+//! ambient occlusion and reflections. An instance keeps its place there, so a frame touches
+//! only the ones that changed; the structure itself is built again whenever any has.
 //!
 //! Reflections shade what they hit properly: every traced mesh's normals and texture
 //! coordinates live in one storage buffer, each instance has a material entry, and all
@@ -60,6 +61,17 @@ struct Geometry {
     dynamic: bool,
 }
 
+/// An instance traced against: which geometry, and where.
+struct Entry {
+    geometry: GeometryId,
+    transform: Mat4,
+}
+
+/// Said of an instance of the scene in place of a place: it has not been looked at, or it
+/// was, is within reach, and is left out (not a thing to trace against, or no room).
+const UNKNOWN: u32 = u32::MAX;
+const LEFT_OUT: u32 = u32::MAX - 1;
+
 /// A handle to geometry added with [`RayTracing::add_geometry`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct GeometryId(u32);
@@ -96,17 +108,23 @@ pub struct RayTracing {
     pub tlas: wgpu::Tlas,
     geometry: Vec<Geometry>,
     meshes: HashMap<u32, GeometryId>,
-    /// Instances that never move.
-    fixed: Vec<(GeometryId, Mat4, HitMaterial)>,
-    /// This frame's instances, fixed ones first.
-    frame: Vec<(GeometryId, Mat4, HitMaterial)>,
-    used: u32,
-    /// What the instances in `frame` were gathered from, as [`Self::same_as`] was last told:
-    /// while it is the same there is nothing to gather again. None when they must be.
-    gathered: Option<(u64, u64)>,
-    /// Whether the top-level structure holds every instance of `frame`, none left out for
-    /// geometry that was not built yet.
-    placed: bool,
+    /// What is traced against, each instance at a place in the top-level structure that it
+    /// keeps for as long as it is there: so only the places that change are touched.
+    entries: Vec<Option<Entry>>,
+    free: Vec<u32>,
+    /// For each instance of the scene, by its number: its place here, or that it has not
+    /// been looked at, or that it was and is left out.
+    of: Vec<u32>,
+    /// What the card holds of each place's material, kept here too so a stretch can be sent.
+    materials: Vec<HitMaterial>,
+    /// Places whose material is to be sent, and places the structure is to be told of.
+    stale: Vec<u32>,
+    unplaced: Vec<u32>,
+    /// Whether the structure has been told of anything since it was last built.
+    changed: bool,
+    /// Instances of the scene to look at again next frame: a mesh or a texture of theirs
+    /// was not ready.
+    pub(crate) again: Vec<u32>,
     pub settings: RayTracingSettings,
 
     /// Normals and texture coordinates of every geometry, end to end.
@@ -172,11 +190,14 @@ impl RayTracing {
             tlas,
             geometry: Vec::new(),
             meshes: HashMap::new(),
-            fixed: Vec::new(),
-            frame: Vec::new(),
-            used: 0,
-            gathered: None,
-            placed: false,
+            entries: Vec::new(),
+            free: Vec::new(),
+            of: Vec::new(),
+            materials: Vec::new(),
+            stale: Vec::new(),
+            unplaced: Vec::new(),
+            changed: false,
+            again: Vec::new(),
             settings,
             hit_vertices: Vec::new(),
             hit_indices: Vec::new(),
@@ -252,8 +273,9 @@ impl RayTracing {
 
     /// An instance that stays put for the rest of the run, like terrain or a building.
     pub fn add_fixed(&mut self, geometry: GeometryId, transform: Mat4, material: HitMaterial) {
-        self.fixed.push((geometry, transform, material));
-        self.gathered = None;
+        if let Some(place) = self.take_place() {
+            self.put(place, geometry, transform, material);
+        }
     }
 
     /// The traced copy of an engine mesh, made the first time it's needed.
@@ -352,37 +374,75 @@ impl RayTracing {
     /// Identifies the traced scene's contents: its geometry and textures, and how many
     /// instances it holds.
     pub(crate) fn scene_key(&self) -> (u64, usize) {
-        (self.generation, self.frame.len())
+        (self.generation, self.entries.len() - self.free.len())
     }
 
-    /// Whether the instances are the ones gathered before from the same thing: if so they
-    /// stand, and nothing is to be gathered or sent this frame.
-    pub(crate) fn same_as(&mut self, key: (u64, u64)) -> bool {
-        let same = self.gathered == Some(key);
-        self.gathered = Some(key);
-        same
+    /// A place in the top-level structure, if there is one left.
+    fn take_place(&mut self) -> Option<u32> {
+        self.free.pop().or_else(|| {
+            (self.entries.len() < MAX_INSTANCES as usize).then(|| {
+                self.entries.push(None);
+                self.materials.push(HitMaterial::plain(Color::WHITE));
+                self.entries.len() as u32 - 1
+            })
+        })
     }
 
-    /// Says that what was gathered this frame is not all there is: a mesh or a texture was
-    /// not ready. It is gathered again next frame whatever [`Self::same_as`] is told.
-    pub(crate) fn gather_again(&mut self) {
-        self.gathered = None;
+    /// Puts an instance in a place: its material is sent and the structure told of it when
+    /// the frame is next built.
+    fn put(&mut self, place: u32, geometry: GeometryId, transform: Mat4, material: HitMaterial) {
+        self.entries[place as usize] = Some(Entry { geometry, transform });
+        self.materials[place as usize] = HitMaterial { geometry: geometry.0, ..material };
+        self.stale.push(place);
+        self.unplaced.push(place);
     }
 
-    pub(crate) fn begin_frame(&mut self) {
-        self.frame.clear();
-        self.frame.extend_from_slice(&self.fixed);
-        self.placed = false;
+    /// Whether an instance of the scene has been looked at and found within reach: traced
+    /// against, or left out for what it is. One that has not is to be looked at.
+    pub(crate) fn known(&self, number: u32) -> bool {
+        self.of.get(number as usize).is_some_and(|place| *place != UNKNOWN)
     }
 
-    pub(crate) fn push(&mut self, geometry: GeometryId, transform: Mat4, material: HitMaterial) {
-        if self.frame.len() < MAX_INSTANCES as usize {
-            self.frame.push((geometry, transform, material));
+    /// Where an instance of the scene is kept, making room to say so.
+    fn place_of(&mut self, number: u32) -> &mut u32 {
+        if number as usize >= self.of.len() {
+            self.of.resize(number as usize + 1, UNKNOWN);
+        }
+        &mut self.of[number as usize]
+    }
+
+    /// Traces against an instance of the scene, or brings what is traced up to date with
+    /// it. It keeps its place, so nothing else is touched. Where the structure is full it
+    /// is left out.
+    pub(crate) fn place(&mut self, number: u32, geometry: GeometryId, transform: Mat4, material: HitMaterial) {
+        let place = match *self.place_of(number) {
+            UNKNOWN | LEFT_OUT => self.take_place(),
+            place => Some(place),
+        };
+        match place {
+            Some(place) => {
+                *self.place_of(number) = place;
+                self.put(place, geometry, transform, material);
+            }
+            None => *self.place_of(number) = LEFT_OUT,
         }
     }
 
-    /// Uploads the hit buffers if geometry was added.
-    pub(crate) fn upload_geometry(&mut self, gpu: &Gpu) {
+    /// Stops tracing against an instance of the scene. `within_reach` says whether it is
+    /// still there and near enough, only not a thing rays can be traced against: such a one
+    /// is known and not looked at again until it changes.
+    pub(crate) fn leave_out(&mut self, number: u32, within_reach: bool) {
+        let kept = std::mem::replace(self.place_of(number), if within_reach { LEFT_OUT } else { UNKNOWN });
+        if kept != UNKNOWN && kept != LEFT_OUT {
+            self.entries[kept as usize] = None;
+            self.free.push(kept);
+            self.unplaced.push(kept);
+        }
+    }
+
+    /// Uploads the hit buffers if geometry was added, and the materials of the instances
+    /// that changed.
+    pub(crate) fn upload(&mut self, gpu: &Gpu) {
         if self.buffers_stale {
             self.buffers_stale = false;
             self.vertex_buffer = storage(&gpu.device, "hit vertices", bytemuck::cast_slice(&self.hit_vertices));
@@ -390,27 +450,15 @@ impl RayTracing {
             self.range_buffer = storage(&gpu.device, "hit ranges", bytemuck::cast_slice(&self.hit_ranges));
             self.generation += 1;
         }
-    }
-
-    /// Uploads the instances' materials as they were gathered this frame, and the hit
-    /// buffers if geometry was added.
-    pub(crate) fn upload(&mut self, gpu: &Gpu) {
-        self.upload_geometry(gpu);
-        let materials: Vec<HitMaterial> = self
-            .frame
-            .iter()
-            .map(|(geometry, _, m)| HitMaterial {
-                geometry: geometry.0,
-                ..*m
-            })
-            .collect();
-        if !materials.is_empty() {
-            gpu.queue
-                .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&materials));
+        const STRIDE: u64 = std::mem::size_of::<HitMaterial>() as u64;
+        for run in super::instances::runs(std::mem::take(&mut self.stale), 32) {
+            let stretch = &self.materials[run.start as usize..run.end as usize];
+            gpu.queue.write_buffer(&self.instance_buffer, run.start as u64 * STRIDE, bytemuck::cast_slice(stretch));
         }
     }
 
-    /// Records the acceleration structure builds for this frame.
+    /// Records the acceleration structure builds for this frame: new geometry, geometry
+    /// that moves, and the top-level structure if any instance in it has changed.
     pub(crate) fn build(&mut self, encoder: &mut wgpu::CommandEncoder) {
         // Build a few million triangles' worth of new geometry a frame at most: a big scene
         // built all at once can keep the GPU busy long enough for Windows to reset it.
@@ -425,36 +473,35 @@ impl RayTracing {
             })
             .chain((0..self.geometry.len()).filter(|i| self.geometry[*i].dynamic))
             .collect();
-        // Every instance is in place and no geometry is to be built or built again: the
-        // structure stands as it is.
-        if self.placed && pending.is_empty() {
-            return;
-        }
-        let mut left_out = false;
-        // In place already, the instances are not gone through again: only the geometry that
-        // moves is built anew under them.
-        for (i, (geometry, transform, _)) in self.frame.iter().enumerate().filter(|_| !self.placed) {
-            let g = geometry.0 as usize;
+        // Only the places that changed are told to the structure.
+        let mut unplaced = std::mem::take(&mut self.unplaced);
+        unplaced.sort_unstable();
+        unplaced.dedup();
+        for place in unplaced {
+            self.changed = true;
+            let Some(entry) = &self.entries[place as usize] else {
+                self.tlas[place as usize] = None;
+                continue;
+            };
+            let g = entry.geometry.0 as usize;
             if !self.geometry[g].built && !pending.contains(&g) {
-                // Not built yet: leave it out this frame.
-                self.tlas[i] = None;
-                left_out = true;
+                // Not built yet: left out this frame, and tried again the next.
+                self.tlas[place as usize] = None;
+                self.unplaced.push(place);
                 continue;
             }
-            let t = transform.transpose().to_cols_array();
+            let t = entry.transform.transpose().to_cols_array();
             // Row-major 3x4: the first three rows of the (column-major) matrix.
             let rows: [f32; 12] = t[..12].try_into().unwrap();
-            // The custom index finds the instance's material, however many are left out.
-            self.tlas[i] = Some(wgpu::TlasInstance::new(&self.geometry[g].blas, rows, i as u32, 0xff));
+            // The custom index finds the instance's material: both are kept by place.
+            self.tlas[place as usize] = Some(wgpu::TlasInstance::new(&self.geometry[g].blas, rows, place, 0xff));
         }
-        if !self.placed {
-            for i in self.frame.len()..self.used as usize {
-                self.tlas[i] = None;
-            }
-            self.used = self.frame.len() as u32;
-            self.placed = !left_out;
+        // No instance changed and no geometry is to be built or built again: the structure
+        // stands as it is.
+        if !self.changed && pending.is_empty() {
+            return;
         }
-
+        self.changed = false;
         let entries: Vec<wgpu::BlasBuildEntry> = pending
             .iter()
             .map(|&i| {
