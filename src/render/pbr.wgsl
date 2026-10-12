@@ -1,6 +1,6 @@
 // Shared by every pipeline that draws into the main pass: the view, the sky, the sun and its
-// shadows, and physically based shading. Custom shaders are prepended with this file (see
-// `render::PBR_WGSL`), so everything below is available to them at group 0.
+// shadows, and physically based shading. A shader takes it in with `#import mira::pbr`,
+// which makes everything below available to it at group 0.
 
 const PI: f32 = 3.14159265;
 const CASCADES: u32 = 4u;

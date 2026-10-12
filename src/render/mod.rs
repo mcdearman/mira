@@ -1,4 +1,5 @@
 mod animation;
+pub mod compose;
 mod debug_lines;
 mod environment;
 pub mod frame_diff;
@@ -33,6 +34,7 @@ pub use gpu::{
     main_depth_state, main_multisample, Gpu, DEPTH_CLEAR, DEPTH_COMPARE, DEPTH_FORMAT,
     HDR_FORMAT, MSAA_SAMPLES,
 };
+pub use compose::{ComposeError, ShaderLibrary};
 pub use graph::{slots, Pass, PassContext, PassInfo, RenderGraph, TargetDesc};
 pub use image::{Image, Processed};
 pub use mesh::{Mesh, Mesh3d, Vertex};
@@ -69,14 +71,6 @@ use environment::GpuEnvironment;
 use post::PostRenderer;
 use renderer::{BatchKey, RenderObject, CASTS_SHADOW, VISIBLE};
 
-/// Physically based lighting shared by every main-pass pipeline: the `View` uniform, sun and
-/// shadows, sky light and haze, at group 0. Prepend it to a custom shader's source.
-pub const PBR_WGSL: &str = concat!(include_str!("pbr.wgsl"), include_str!("rt_off.wgsl"));
-/// [`PBR_WGSL`] with ray-traced shadows, occlusion and reflections; see [`Gpu::pbr_wgsl`].
-pub const PBR_RT_WGSL: &str = concat!("enable wgpu_ray_query;\nenable wgpu_binding_array;\n", include_str!("pbr.wgsl"), include_str!("rt_on.wgsl"));
-/// The lines that let a shader make ray queries and index the array of every texture, for
-/// what a reflection hits. They have to come first in the source.
-pub(crate) const RAY_QUERY_WGSL: &str = "enable wgpu_ray_query;\nenable wgpu_binding_array;\n";
 
 /// Linear RGBA color.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Reflect)]
@@ -558,10 +552,7 @@ fn rebuild_pipelines(world: &World) -> Option<shaders::Install> {
 
 fn sky_pipeline(gpu: &Gpu, view: &ViewBinding) -> wgpu::RenderPipeline {
     let device = &gpu.device;
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("sky shader"),
-        source: wgpu::ShaderSource::Wgsl(format!("{}\n{}", gpu.pbr_wgsl(), crate::shader!("sky.wgsl").source()).into()),
-    });
+    let shader = gpu.shader(crate::shader!("sky.wgsl"));
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("sky layout"),
         bind_group_layouts: &[Some(&view.layout)],

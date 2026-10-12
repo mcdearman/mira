@@ -1,4 +1,5 @@
-// Voxel chunks. Prepended with render::PBR_WGSL.
+// Voxel chunks.
+#import mira::pbr
 
 @group(1) @binding(0)
 var block_textures: texture_2d_array<f32>;

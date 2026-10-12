@@ -1,4 +1,8 @@
 // Ray-traced lighting, using hardware ray queries against the scene's acceleration structure.
+// The module `mira::pbr::traced`. Ray queries, and the array of every texture that shows
+// what a reflection hit, are extensions a shader has to ask for.
+enable wgpu_ray_query;
+enable wgpu_binding_array;
 
 const RAY_TRACING: bool = true;
 

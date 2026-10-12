@@ -148,10 +148,7 @@ pub struct MeshRenderer {
 impl MeshRenderer {
     pub fn new(gpu: &Gpu, view: &ViewBinding, shadows: &ShadowMaps) -> Self {
         let device = &gpu.device;
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mesh shader"),
-            source: wgpu::ShaderSource::Wgsl(format!("{}\n{}", gpu.pbr_wgsl(), crate::shader!("mesh.wgsl").source()).into()),
-        });
+        let shader = gpu.shader(crate::shader!("mesh.wgsl"));
         let shadow_shader = crate::shader!("mesh_shadow.wgsl").module(device);
 
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {

@@ -14,8 +14,8 @@ reloaded a moment after it is saved, and left as it was if the new version is br
 
 ```rust
 let module = mira::shader!("water.wgsl").module(&gpu.device);
-// or, to prepend the engine's lighting code:
-let source = format!("{}\n{}", gpu.pbr_wgsl(), mira::shader!("water.wgsl").source());
+// or, for a shader that says `#import mira::pbr` (see SHADERS.md):
+let module = gpu.shader(mira::shader!("water.wgsl"));
 ```
 
 `shader!` names a WGSL file beside the current source file, like `include_str!`. The file is

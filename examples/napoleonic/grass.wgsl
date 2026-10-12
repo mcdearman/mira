@@ -1,5 +1,5 @@
 // Grass, cereal and wildflowers, grown on the GPU around the camera. Prepended with
-// render::PBR_WGSL.
+// the engine's lighting (`Gpu::pbr_wgsl`).
 //
 // Each instance is one blade or stalk, drawn as a 9-vertex strip. Instances come in tiles of
 // the ground: the instance index says which tile (from the draw's first instance) and which

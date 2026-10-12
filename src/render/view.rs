@@ -74,7 +74,7 @@ struct ViewUniform {
 }
 
 /// Camera, sun, sky and shadow data shared by every pipeline in the main pass. Always bound at
-/// group 0; the matching WGSL is `render::PBR_WGSL`.
+/// group 0; the matching WGSL is the module `mira::pbr`.
 pub struct ViewBinding {
     /// Which version of the ray-traced scene's bindings the bind group holds.
     pub(crate) rt_generation: u64,

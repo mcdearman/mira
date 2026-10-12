@@ -331,7 +331,11 @@ dying in any order; the timer is right in every case because no code ever sets i
 - [x] The rest of the frame's targets made by the graph (`hdr`, `depth`), and the debug
       lines and overlays as passes. What outlasts a frame (the history the blend over time
       keeps) stays with its pass
-- [ ] Material system: shader modules with imports, generated variants, material instances
+- [x] Shaders made of modules: imports by name, and parts kept by what is defined, so one
+      source gives its variants (see [SHADERS.md](SHADERS.md)). The engine's lighting is a
+      module its shaders import
+- [ ] Material system on top of that: materials as data naming a shader and its values,
+      instances that share one pipeline
 - [ ] Scene on the GPU: shared vertex and index buffers, a persistent instance buffer updated
       only for changed transforms, bindless textures
 - [ ] Culling in compute against the frustum and a depth pyramid; multi-draw indirect

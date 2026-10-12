@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use anyhow::Context;
 
+use super::{compose::{self, ShaderLibrary}, Shader};
+
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// The scene is lit and blended in linear HDR, then tone mapped onto the swapchain.
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -48,6 +50,9 @@ pub struct Gpu {
     pub config: wgpu::SurfaceConfiguration,
     /// Hardware ray queries are available and enabled.
     pub ray_tracing: bool,
+    /// The shader modules a shader may import by name: the engine's, and any a plugin adds
+    /// before it builds its pipelines. See `compose`.
+    pub shaders: ShaderLibrary,
 }
 
 impl Gpu {
@@ -180,6 +185,7 @@ impl Gpu {
             surface: Some(surface),
             config,
             ray_tracing: traced,
+            shaders: ShaderLibrary::engine(),
         })
     }
 
@@ -212,6 +218,7 @@ impl Gpu {
             surface: None,
             config,
             ray_tracing: false,
+            shaders: ShaderLibrary::engine(),
         }
     }
 
@@ -236,16 +243,34 @@ impl Gpu {
 }
 
 impl Gpu {
-    /// The shared lighting code for main-pass shaders, ray traced where the GPU allows. Prepend
-    /// it to a custom shader's source.
+    /// What is defined for shaders built on this device: `RAY_TRACING` where it traces rays.
+    pub fn shader_defines(&self) -> Vec<&'static str> {
+        if self.ray_tracing { vec![compose::RAY_TRACING] } else { vec![] }
+    }
+
+    /// Puts a shader together for this device: the modules it imports taken in from
+    /// [`shaders`](Self::shaders), and the parts kept that this device's definitions ask for.
+    /// A mistake in the directives is logged and the text handed back as it came, so that
+    /// compiling it fails and says so: at startup loudly, on a reload leaving the old shader.
+    pub fn compose(&self, source: &str) -> String {
+        self.shaders.compose(source, &self.shader_defines()).unwrap_or_else(|mistake| {
+            log::error!("shader not put together: {mistake}");
+            source.to_owned()
+        })
+    }
+
+    /// Compiles a shader file for this device, its imports taken in.
+    pub fn shader(&self, shader: Shader) -> wgpu::ShaderModule {
+        self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some(shader.name),
+            source: wgpu::ShaderSource::Wgsl(self.compose(&shader.source()).into()),
+        })
+    }
+
+    /// The engine's lighting as text, ray traced where the device allows, for a shader built
+    /// by joining strings. A shader file says `#import mira::pbr` instead and is built with
+    /// [`shader`](Self::shader).
     pub fn pbr_wgsl(&self) -> String {
-        let tracing = if self.ray_tracing {
-            crate::shader!("rt_on.wgsl")
-        } else {
-            crate::shader!("rt_off.wgsl")
-        };
-        // Ray queries are extensions a shader must ask for, before anything else in it.
-        let enable = if self.ray_tracing { super::RAY_QUERY_WGSL } else { "" };
-        enable.to_string() + &crate::shader!("pbr.wgsl").source() + &tracing.source()
+        self.compose(&format!("#import {}", compose::PBR))
     }
 }

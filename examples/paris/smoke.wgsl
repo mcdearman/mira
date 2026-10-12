@@ -1,5 +1,5 @@
 // Powder smoke, dust and woodsmoke: soft, lit, camera-facing billboards. Prepended with
-// render::PBR_WGSL.
+// the engine's lighting (`Gpu::pbr_wgsl`).
 
 @group(1) @binding(0) var puffs: texture_2d_array<f32>;
 @group(1) @binding(1) var puff_sampler: sampler;

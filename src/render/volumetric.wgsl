@@ -1,5 +1,5 @@
-
-// ---- Light shafts: sunlight scattered along each view ray. Prepended with pbr.wgsl. ---------
+// ---- Light shafts: sunlight scattered along each view ray. -----------------------------------
+#import mira::pbr
 
 struct Shafts {
     // x: density per metre, y: anisotropy, z: reach in metres, w: height falloff per metre

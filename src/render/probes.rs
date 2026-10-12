@@ -187,11 +187,7 @@ pub(crate) struct ProbeBaker {
 impl ProbeBaker {
     pub(crate) fn new(gpu: &Gpu, view_layout: &wgpu::BindGroupLayout) -> Self {
         let device = &gpu.device;
-        let source = format!("{}{}", gpu.pbr_wgsl(), include_str!("probes.wgsl"));
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("probe bake"),
-            source: wgpu::ShaderSource::Wgsl(source.into()),
-        });
+        let module = gpu.shader(crate::shader!("probes.wgsl"));
         let storage = |binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,

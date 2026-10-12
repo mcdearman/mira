@@ -54,11 +54,7 @@ pub(crate) struct Shafts {
 impl Shafts {
     pub(crate) fn new(gpu: &Gpu, view_layout: &wgpu::BindGroupLayout) -> Self {
         let device = &gpu.device;
-        let source = format!("{}{}", gpu.pbr_wgsl(), crate::shader!("volumetric.wgsl").source());
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("light shafts"),
-            source: wgpu::ShaderSource::Wgsl(source.into()),
-        });
+        let module = gpu.shader(crate::shader!("volumetric.wgsl"));
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("light shafts layout"),
             entries: &[
