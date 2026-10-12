@@ -31,11 +31,12 @@ struct Draw {
 struct Views {
     // xyz: the camera, w: how far from it a caster still matters
     camera: vec4<f32>,
-    // x: how many views (the frame's, then the cascades), y: how many batches a view has
-    // draws for, z: how many instances to go through
+    // x: where the views of the lights that cast shadows begin (the frame's is first, then
+    // the sun's cascades), y: how many batches a view has draws for, z: how many instances
+    // to go through, w: which of the views there are this frame, a bit for each
     counts: vec4<u32>,
     // Five planes a view: four sides and the far end, pointing inward.
-    planes: array<vec4<f32>, 25>,
+    planes: array<vec4<f32>, 65>,
 };
 
 @group(0) @binding(0) var<storage, read> places: array<Place>;
@@ -90,13 +91,18 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
     if !sized || inside(0u, center, radius) {
         list(0u, sight.batch, number);
     }
-    let casts = (sight.flags & 2u) != 0u && (!sized || distance(center, views.camera.xyz) - radius <= views.camera.w);
-    if casts {
-        // Into each cascade whose map it falls in, and no other.
-        for (var view = 1u; view < views.counts.x; view++) {
-            if !sized || inside(view, center, radius) {
-                list(view, sight.batch, number);
-            }
+    if (sight.flags & 2u) == 0u {
+        return;
+    }
+    // Into each shadow map it falls in, and no other: the sun's cascades, for what is near
+    // enough the camera to matter to them, and then the lights'.
+    let near = !sized || distance(center, views.camera.xyz) - radius <= views.camera.w;
+    for (var view = 1u; view < 13u; view++) {
+        if (views.counts.w & (1u << view)) == 0u || (view < views.counts.x && !near) {
+            continue;
+        }
+        if !sized || inside(view, center, radius) {
+            list(view, sight.batch, number);
         }
     }
 }

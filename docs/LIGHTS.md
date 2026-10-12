@@ -17,7 +17,7 @@ commands.spawn((
 ));
 commands.spawn((
     Transform::from_xyz(0.0, 4.0, 0.0).looking_at(Vec3::ZERO, Vec3::X),
-    SpotLight { intensity: 60.0, range: 15.0, inner: 0.3, outer: 0.45, ..Default::default() },
+    SpotLight { intensity: 60.0, range: 15.0, inner: 0.3, outer: 0.45, shadows: true, ..Default::default() },
 ));
 ```
 
@@ -26,11 +26,24 @@ commands.spawn((
 | `color`, `intensity` | how bright a metre away, in the sun's units |
 | `range` | how far it reaches, in metres: it weakens with the square of the distance and is brought to nothing there |
 | `inner`, `outer` | a spot light's cone, as half angles in radians: full inside the first, none outside the second |
+| `shadows` | a spot light's: whether what stands in its light casts a shadow |
 
 Both are components like any other: saved in scenes, set in the inspector, moved by moving
 their entity.
 
-They light a surface as the sun does, colour and shine, and **cast no shadows**.
+They light a surface as the sun does, colour and shine.
+
+## Shadows
+
+A spot light with `shadows: true` is hidden by what stands in its light. It has a shadow
+map of its own, 1,024 across, drawn each frame from where the light is with what casts into
+its cone. There are eight such maps: of the lights that ask, the eight nearest the camera
+have one, and the rest shine through things until the camera comes nearer. Eight of them
+over a field of 100,000 things cost the graphics card 0.2 ms a frame.
+
+A point light casts no shadows. Nor does a spot light where the graphics card cannot decide
+for itself what each view sees (see [PERFORMANCE.md](PERFORMANCE.md)), since that is how what
+casts into a light's map is found.
 
 ## Many of them
 

@@ -79,6 +79,7 @@ struct ViewUniform {
     probe_dims: [f32; 4],
     temporal: [f32; 4],
     traced: [f32; 4],
+    light_shadows: [[[f32; 4]; 4]; super::lights::SHADOWED],
 }
 
 /// Camera, sun, sky and shadow data shared by every pipeline in the main pass. Always bound at
@@ -194,6 +195,13 @@ impl ViewBinding {
                 count: None,
             });
         }
+        // The shadow maps of the lights with a place that cast shadows.
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 19,
+            visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2Array, multisampled: false },
+            count: None,
+        });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("view layout"),
             entries: &entries,
@@ -260,6 +268,10 @@ impl ViewBinding {
             wgpu::BindGroupEntry {
                 binding: 17,
                 resource: lights.grid.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 19,
+                resource: wgpu::BindingResource::TextureView(&shadows.light_array_view),
             },
         ]);
         let views = scene.map(|rt| rt.texture_views()).unwrap_or_default();
@@ -376,6 +388,7 @@ impl ViewBinding {
             ],
             // Said once the traced scene is up to date: see `say_traced`.
             traced: [0.0; 4],
+            light_shadows: std::array::from_fn(|map| frame.light_shadows.get(map).copied().unwrap_or_default().to_cols_array_2d()),
         };
         gpu.queue
             .write_buffer(&self.buffer, 0, bytemuck::bytes_of(&view));

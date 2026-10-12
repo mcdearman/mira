@@ -17,8 +17,11 @@ use super::{
     instances::{unit_planes, Instances, Viewpoint},
 };
 
-/// The frame's view and the sun's four cascades.
-pub(crate) const VIEWS: usize = 5;
+/// The frame's view, the sun's four cascades, and the lights that cast shadows: each has a
+/// place of its own among the views, used or not.
+pub(crate) const VIEWS: usize = LIGHTS + super::lights::SHADOWED;
+/// Where the lights' views begin.
+pub(crate) const LIGHTS: usize = 1 + super::shadow::CASCADES;
 /// The bytes of a draw as the card reads one for an indirect draw: how many indices, how
 /// many instances, the first index, what is added to an index, the first instance.
 pub(crate) const DRAW: u64 = 20;
@@ -103,10 +106,18 @@ impl Culler {
         (view * self.room + batch as usize) as u64 * DRAW
     }
 
+    /// The views a frame has, each with its place among them: the frame's, the cascades',
+    /// and the shadow-casting lights'.
+    fn views(from: &Viewpoint) -> Vec<(usize, glam::Mat4)> {
+        let cascades = from.cascades.iter().take(LIGHTS - 1).enumerate().map(|(i, matrix)| (1 + i, *matrix));
+        let lights = from.lights.iter().take(VIEWS - LIGHTS).enumerate().map(|(i, matrix)| (LIGHTS + i, *matrix));
+        std::iter::once((0, from.view_proj)).chain(cascades).chain(lights).collect()
+    }
+
     /// How many numbers the list of what is seen must have room for: every view may see
     /// every instance.
-    pub(crate) fn listed(scene: &Instances) -> usize {
-        VIEWS * scene.numbers()
+    pub(crate) fn listed(scene: &Instances, from: &Viewpoint) -> usize {
+        Self::views(from).len() * scene.numbers()
     }
 
     /// Readies the pass for a view of the scene: the draws are set out with nothing in
@@ -122,8 +133,8 @@ impl Culler {
         // each view, one view after another.
         let mut draws = vec![[0u32; 5]; VIEWS * self.room];
         let mut first = 0;
-        let views = 1 + from.cascades.len().min(VIEWS - 1);
-        for view in 0..views {
+        let views = Self::views(from);
+        for (view, _) in &views {
             for (key, batch, instances) in scene.batches() {
                 draws[view * self.room + batch as usize] = [indices(key.mesh()).unwrap_or(0), 0, 0, 0, first];
                 first += instances;
@@ -133,11 +144,12 @@ impl Culler {
 
         let mut raw = ViewsRaw {
             camera: from.camera.extend(from.shadow_reach).to_array(),
-            counts: [views as u32, self.room as u32, scene.numbers() as u32, 0],
+            // Which of the views there are this frame, a bit for each.
+            counts: [LIGHTS as u32, self.room as u32, scene.numbers() as u32, views.iter().fold(0, |mask, (view, _)| mask | 1 << view)],
             planes: [[0.0; 4]; VIEWS * 5],
         };
-        for (view, matrix) in std::iter::once(&from.view_proj).chain(&from.cascades).take(views).enumerate() {
-            for (at, (normal, distance)) in unit_planes(*matrix).into_iter().enumerate() {
+        for (view, matrix) in views {
+            for (at, (normal, distance)) in unit_planes(matrix).into_iter().enumerate() {
                 raw.planes[view * 5 + at] = normal.extend(distance).to_array();
             }
         }

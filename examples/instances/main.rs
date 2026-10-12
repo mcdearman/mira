@@ -39,6 +39,8 @@ struct Asked {
     size: (u32, u32),
     /// Whether the balls are drawn with fewer triangles the further away they are.
     lods: bool,
+    /// How many spot lights shine down on the middle of the field, casting shadows.
+    spots: usize,
 }
 
 /// A thing that bobs up and down about where it was put.
@@ -49,7 +51,7 @@ struct Bob {
 }
 
 fn asked() -> Asked {
-    let mut asked = Asked { count: 100_000, moving: 0.1, frames: None, rays: true, shadows: true, lights: 0, size: (1280, 720), lods: false };
+    let mut asked = Asked { count: 100_000, moving: 0.1, frames: None, rays: true, shadows: true, lights: 0, size: (1280, 720), lods: false, spots: 0 };
     for arg in std::env::args().skip(1) {
         match arg.split_once('=') {
             Some(("count", value)) => asked.count = value.parse().expect("count=<how many>"),
@@ -59,11 +61,12 @@ fn asked() -> Asked {
             Some(("shadows", value)) => asked.shadows = value != "off",
             Some(("lights", value)) => asked.lights = value.parse().expect("lights=<how many>"),
             Some(("lods", value)) => asked.lods = value != "off",
+            Some(("spots", value)) => asked.spots = value.parse().expect("spots=<how many>"),
             Some(("size", value)) => {
                 let (wide, high) = value.split_once('x').expect("size=<wide>x<high>");
                 asked.size = (wide.parse().expect("size=<wide>x<high>"), high.parse().expect("size=<wide>x<high>"));
             }
-            _ => panic!("not understood: {arg} (count=, moving=, frames=, rays=off, shadows=off, lights=, size=, lods=on)"),
+            _ => panic!("not understood: {arg} (count=, moving=, frames=, rays=off, shadows=off, lights=, size=, lods=on, spots=)"),
         }
     }
     asked
@@ -118,6 +121,15 @@ fn field(mut commands: Commands, mut server: ResMut<AssetServer>, mut meshes: Re
         let at = Vec3::new((column as f32 + 0.5) * between - half, 1.6, (row as f32 + 0.5) * between - half);
         let lamp = PointLight { color: colours[(column * 5 + row) % colours.len()], intensity: 12.0, range: (between * 0.75).clamp(3.0, 12.0) };
         commands.spawn((Transform::from_translation(at), lamp));
+    }
+    // Spot lights in a ring over the middle of the field, each leaning outward a little, so
+    // that the things under them throw shadows away from it.
+    for i in 0..asked.spots {
+        let turn = i as f32 / asked.spots as f32 * std::f32::consts::TAU;
+        let out = Vec3::new(turn.cos(), 0.0, turn.sin());
+        let at = out * 4.0 + Vec3::new(0.0, 7.0, 0.0);
+        let lamp = SpotLight { color: colours[i % colours.len()], intensity: 400.0, range: 22.0, inner: 0.5, outer: 0.75, shadows: true };
+        commands.spawn((Transform::from_translation(at).looking_at(out * 10.0, Vec3::Y), lamp));
     }
     let ground = server.plane(&mut meshes, half * 2.0 + 20.0);
     commands.spawn((Transform::IDENTITY, Mesh3d(ground), Material { color: Color::rgb(0.3, 0.32, 0.35), roughness: 0.9, ..Default::default() }));
