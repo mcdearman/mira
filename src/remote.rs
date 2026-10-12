@@ -827,6 +827,23 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 .collect();
             Ok(Value::Map(stages))
         }
+        "passes" => {
+            let graph = app
+                .world
+                .get_resource_mut::<crate::render::RenderGraph>()
+                .ok_or("this game has no renderer")?;
+            let passes = graph.describe().map_err(|circle| circle.to_string())?;
+            let slots = |slots: Vec<&'static str>| texts(slots.into_iter().map(str::to_owned));
+            let passes = passes.into_iter().map(|pass| {
+                map([
+                    ("name", Value::Text(pass.name.to_owned())),
+                    ("reads", slots(pass.reads)),
+                    ("writes", slots(pass.writes)),
+                    ("micros", pass.took.map_or(Value::Null, |took| Value::Int(took.as_micros() as i64))),
+                ])
+            });
+            Ok(map([("passes", Value::List(passes.collect()))]))
+        }
         "assets" => {
             let server = app
                 .world
@@ -2026,6 +2043,32 @@ mod tests {
             "{blind}"
         );
     }
+    #[test]
+    fn the_passes_that_draw_a_frame_are_told_in_order() {
+        use crate::render::{Pass, RenderGraph};
+        fn nothing(_: &mut crate::ecs::World, _: &mut crate::render::PassContext) {}
+
+        let mut app = app();
+        // Without a renderer there is nothing to tell.
+        assert!(refused(&mut app, "{'cmd': 'passes'}").contains("no renderer"));
+
+        let mut graph = RenderGraph::default();
+        graph
+            .add(Pass::new("post", nothing).reads(&["scene"]).writes(&["frame"]))
+            .add(Pass::new("main", nothing).writes(&["scene"]));
+        graph.timed([("main", std::time::Duration::from_micros(250))]);
+        app.world.insert_resource(graph);
+        let told = ask(&mut app, "{'cmd': 'passes'}");
+        let Some(Value::List(passes)) = told.field("passes") else {
+            panic!("passes: {told:?}");
+        };
+        let names: Vec<_> = passes.iter().map(|pass| pass.field("name").cloned()).collect();
+        assert_eq!(names, [Some(Value::Text("main".into())), Some(Value::Text("post".into()))]);
+        assert_eq!(passes[0].field("micros"), Some(&Value::Int(250)));
+        assert_eq!(passes[1].field("micros"), Some(&Value::Null));
+        assert_eq!(passes[1].field("reads"), Some(&Value::List(vec![Value::Text("scene".into())])));
+    }
+
     #[test]
     fn state_that_cannot_be_seen_is_reported() {
         struct Secret(#[allow(dead_code)] u32);

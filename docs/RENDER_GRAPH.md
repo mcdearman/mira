@@ -33,7 +33,9 @@ app.world.resource_mut::<RenderGraph>().add(
 
 Passes that wait on each other in a circle are refused: the error names them, and nothing is
 drawn until one is taken out. `RenderGraph::describe` gives the passes in the order they
-run, with what each reads and writes.
+run, with what each reads and writes and how long it last took to record its work. A
+running game tells the same over the debug connection (`mira-debug passes`) and to an agent
+(`mira_passes`); the time is the engine's own, not the graphics card's.
 
 Adding a pass with the name of one that is there replaces it, so a plugin can put its own
 `"post"` in place of the engine's. `remove` takes one out.
