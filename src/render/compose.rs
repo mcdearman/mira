@@ -250,6 +250,32 @@ mod tests {
         assert_eq!((inside.module.as_str(), inside.line), ("broken", 2));
     }
 
+    /// No one machine builds both: a device either traces rays or does not. So both are
+    /// read here, by the same reader the device uses.
+    #[test]
+    fn every_engine_shader_that_imports_the_lighting_reads_as_wgsl_both_ways() {
+        let library = ShaderLibrary::engine();
+        let shaders = [
+            crate::shader!("mesh.wgsl"),
+            crate::shader!("sky.wgsl"),
+            crate::shader!("volumetric.wgsl"),
+            crate::shader!("../voxel/voxel.wgsl"),
+        ];
+        for shader in shaders {
+            for defines in [&[][..], &[RAY_TRACING][..]] {
+                let whole = library.compose(shader.embedded, defines).unwrap_or_else(|mistake| panic!("{}: {mistake}", shader.name));
+                if let Err(wrong) = wgpu::naga::front::wgsl::parse_str(&whole) {
+                    panic!("{} with {defines:?}:\n{}", shader.name, wrong.emit_to_string(&whole));
+                }
+            }
+        }
+        // The probes are baked only where rays are traced.
+        let probes = library.compose(crate::shader!("probes.wgsl").embedded, &[RAY_TRACING]).unwrap();
+        if let Err(wrong) = wgpu::naga::front::wgsl::parse_str(&probes) {
+            panic!("probes.wgsl:\n{}", wrong.emit_to_string(&probes));
+        }
+    }
+
     #[test]
     fn the_engines_lighting_comes_with_and_without_ray_tracing() {
         let library = ShaderLibrary::engine();
