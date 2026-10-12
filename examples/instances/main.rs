@@ -9,8 +9,9 @@
 //! ```
 //!
 //! With `frames=N` it runs that many frames, prints where the time of a frame went (the
-//! stages, the costliest systems, and the passes that draw it) and stops. The times are the
-//! engine's own on the processor, not the graphics card's and not the wait for the display.
+//! stages, and the passes that draw it) and stops. Two times are told apart: the engine's
+//! own on the processor, and the graphics card's drawing what it was handed. The slower of
+//! the two is what the frame rate can reach.
 //! Without it the field is there to look at: `mira-debug profile` and `mira-debug passes` say
 //! the same of it while it runs.
 
@@ -128,7 +129,15 @@ fn report(world: &mut World) {
     let stats = world.resource::<FrameStats>();
     let (mean, worst) = (stats.mean(), stats.worst());
     println!("\n{} things, over the last {} frames:", world.resource::<Asked>().count, stats.frames().count());
-    println!("  a frame   {:8.3} ms mean, {:8.3} ms worst  ({:.0} a second could be reached)", millis(mean), millis(worst), 1.0 / mean.as_secs_f64().max(1e-9));
+    let on_card = world.resource::<RenderGraph>().on_card();
+    let slower = mean.max(on_card.unwrap_or_default());
+    println!("  on the processor {:8.3} ms mean, {:8.3} ms worst", millis(mean), millis(worst));
+    match on_card {
+        Some(on_card) => println!("  on the card      {:8.3} ms", millis(on_card)),
+        None => println!("  on the card      not told: this card does not time its passes"),
+    }
+    println!("  so {:.0} frames a second could be reached", 1.0 / slower.as_secs_f64().max(1e-9));
+    let stats = world.resource::<FrameStats>();
     println!("  by stage, this frame:");
     let mut counted = Duration::ZERO;
     for (stage, took) in stats.stages() {
@@ -140,10 +149,11 @@ fn report(world: &mut World) {
     // The drawing stage is still running, since this is in it.
     println!("    {:<12} {:8.3} ms  (the mean frame, less the stages above)", "Render", millis(mean.saturating_sub(counted)));
     if let Ok(passes) = world.resource_mut::<RenderGraph>().describe() {
-        println!("  by pass, recording its work:");
+        println!("  by pass, recording its work and then the card doing it:");
         for pass in passes {
-            if let Some(took) = pass.took.filter(|took| millis(*took) >= 0.01) {
-                println!("    {:<16} {:8.3} ms", pass.name, millis(took));
+            let (took, on_card) = (pass.took.unwrap_or_default(), pass.on_card.unwrap_or_default());
+            if millis(took) >= 0.01 || millis(on_card) >= 0.01 {
+                println!("    {:<16} {:8.3} ms {:8.3} ms", pass.name, millis(took), millis(on_card));
             }
         }
     }

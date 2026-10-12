@@ -141,11 +141,11 @@ answered at the start of a frame, whether or not the game is paused.
 | `record` | `on`, `every` (frames), `keep` | what recording is set to |
 | `history` | | the moments that can be gone back to |
 | `rewind` | `frames` (60) or `to_frame` | steps back, pauses, and says where it landed |
-| `profile` | `systems` (10) | frame times, what each stage took, and the costliest systems |
+| `profile` | `systems` (10) | frame times on the processor and on the graphics card, what each stage took, and the costliest systems |
 | `failures` | | every caught failure, with its stack |
 | `watch` | `on` (true) | from then on, events are sent to this connection as they happen |
 | `systems` | `stage` (all) | each stage's systems in order, with constraints and timings |
-| `passes` | | the passes that draw a frame, in order: what each reads and writes, and how long it last took (see [RENDER_GRAPH.md](RENDER_GRAPH.md)) |
+| `passes` | | the passes that draw a frame, in order: what each reads and writes, how long it last took to record (`micros`) and how long the graphics card took to draw it (`card_micros`) (see [RENDER_GRAPH.md](RENDER_GRAPH.md)) |
 | `assets` | | every asset known by name: loading, loaded or failed, what it needs, and whether it and all it needs are ready |
 | `types` | | the names of registered components and resources |
 | `schema` | `name` | the shape of a registered type |

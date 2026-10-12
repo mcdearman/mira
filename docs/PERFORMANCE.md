@@ -9,52 +9,74 @@ MIRA_HIDDEN=1 cargo run --release --example instances -- count=20000 moving=0.5 
 
 `examples/instances` lays out a field of cubes and balls (`count`, 100,000 unless told), a
 part of them moving (`moving`, a tenth), runs the frames asked for, and prints what a frame
-cost: the mean and the worst, each stage, and each pass that draws it. Without `frames=` it
-runs on, to be looked at.
+cost. Without `frames=` it runs on, to be looked at. `rays=off`, `shadows=off` and
+`lights=N` take a part of the frame away or add to it, to see what it costs.
 
-Any running game says the same over its debug connection: `mira-debug profile` for frames,
-stages and the costliest systems, `mira-debug passes` for the passes (see
-[LIVE.md](LIVE.md) and [RENDER_GRAPH.md](RENDER_GRAPH.md)).
+A frame is paid for twice, and the two are told apart:
 
-The times are the engine's own on the processor: gathering the frame, and recording and
-handing over its work. They are not the graphics card's time drawing it, nor the wait for
-the display. `Render` in the example's report is what is left of the mean frame once the
-other stages are taken away, since the report is made inside that stage.
+- **On the processor**: the engine's own work, gathering the frame, recording it and handing
+  it over, with what the graphics library does when it is handed over. `FrameStats` times
+  it, by frame, by stage and by system.
+- **On the card**: the graphics card drawing what it was handed. The card stamps the time at
+  the end of each pass and the engine reads the stamps back a few frames later
+  (`src/render/card_clock.rs`), so each pass has two times: recording its work, and the
+  card doing it. A card that cannot stamp the time between passes says nothing.
+
+The slower of the two is what the frame rate can reach. Any running game says both over its
+debug connection: `mira-debug profile` for frames (`mean_millis` on the processor,
+`card_millis` on the card), stages and the costliest systems, `mira-debug passes` for the
+passes (see [LIVE.md](LIVE.md) and [RENDER_GRAPH.md](RENDER_GRAPH.md)).
+
+Two things to know when reading the processor's figure:
+
+- A hidden window runs its frames at about sixty a second, and a shown one at the display's
+  pace. While the card keeps up, its time does not show on the processor at all. Once it
+  takes longer than the frames are apart, the engine waits for it, and the wait is counted
+  in the frame. So a processor figure near 17 ms may be the card's, not the engine's.
+- `Render` in the example's report is what is left of the mean frame once the other stages
+  are taken away, since the report is made inside that stage.
 
 ## Where it stands
 
-The roadmap's test for the renderer is 100,000 mesh instances at sixty frames a second,
-which is 16.7 ms a frame.
+The roadmap's test for the renderer is 100,000 mesh instances and 1,000 lights at sixty
+frames a second, which is 16.7 ms a frame.
 
-Measured on Windows 11 with an Intel Core i7-14700KF and an RTX 5070, Vulkan, the window
-hidden, a tenth of the things moving unless said. The roadmap's test names the M2 Pro, which
-has not been measured.
+Measured on Windows 11 with an Intel Core i7-14700KF and an RTX 5070, at 1280 by 720, the
+window hidden, a tenth of the things moving unless said. The roadmap's test names the M2
+Pro, which has not been measured.
+
+Without ray tracing (`rays=off`), as a machine that cannot trace rays runs:
+
+| Things | Moving | Lights | On the processor | On the card | Shadows | Main pass | Frames a second |
+|---|---|---|---|---|---|---|---|
+| 1,000 | a tenth | | 0.9 ms | 1.4 ms | 0.2 ms | 0.8 ms | 707 |
+| 20,000 | a tenth | | 3.1 ms | 6.0 ms | 2.1 ms | 3.4 ms | 166 |
+| 100,000 | none | | 5.3 ms | 13.4 ms | 5.5 ms | 7.5 ms | 75 |
+| 100,000 | a tenth | | 13.1 ms | 13.6 ms | 5.6 ms | 7.4 ms | 74 |
+| 100,000 | a tenth | 1,000 | 13.2 ms | 15.3 ms | 5.7 ms | 9.1 ms | 65 |
 
 With ray tracing, as that machine runs by default:
 
-| Things | | A frame (mean) | Extract | Prepare | Render | Frames a second |
+| Things | Moving | On the processor | On the card | Shadows | Main pass | Frames a second |
 |---|---|---|---|---|---|---|
-| 1,000 | before | 3.5 ms | 0.1 ms | 0.1 ms | 3.1 ms | 286 |
-| | now | 3.2 ms | 0.05 ms | 0.1 ms | 2.8 ms | 311 |
-| 20,000 | before | 12.4 ms | 2.7 ms | 2.0 ms | 7.0 ms | 81 |
-| | now | 8.3 ms | 0.9 ms | 1.2 ms | 5.5 ms | 120 |
-| 100,000 | before | 46.2 ms | 16.6 ms | 11.2 ms | 15.3 ms | 22 |
-| | now | 26.8 ms | 3.2 ms | 6.4 ms | 14.1 ms | 37 |
+| 1,000 | a tenth | 3.1 ms | 2.3 ms | 0.2 ms | 1.5 ms | 323 |
+| 20,000 | a tenth | 8.1 ms | 9.0 ms | 2.1 ms | 6.2 ms | 111 |
+| 100,000 | none | 6.5 ms | 16.1 ms | 5.6 ms | 10.1 ms | 62 |
+| 100,000 | a hundredth | 18.6 ms | 16.4 ms | 5.6 ms | 10.0 ms | 54 |
+| 100,000 | a tenth | 24.5 ms | 16.7 ms | 5.5 ms | 10.4 ms | 41 |
 
-Without it (`rays=off`), as a machine that cannot trace rays runs, at 100,000:
+What that says:
 
-| Moving | | A frame (mean) | Extract | Prepare | Render | Frames a second |
-|---|---|---|---|---|---|---|
-| a tenth | instances kept | 21.0 ms | 3.4 ms | 3.9 ms | 10.5 ms | 48 |
-| | and shadows by cascade | 13.4 ms | 3.2 ms | 4.2 ms | 3.0 ms | 74 |
-| none | instances kept | 21.1 ms | 0.4 ms | 1.0 ms | 16.9 ms | 47 |
-| | and shadows by cascade | 5.4 ms | 0.4 ms | 2.0 ms | 0.1 ms | 185 |
+- **The roadmap's test is met on this machine without ray tracing**, at 65 frames a second,
+  and by little: the card takes 15.3 ms of the 16.7.
+- **The card is what holds the frame back**, not the engine, wherever nothing much moves. At
+  100,000 it spends 5.5 ms drawing the sun's shadow maps and 7.5 to 10 ms on the main pass.
+- **With ray tracing and things moving, the processor is**, and the time is in the traced
+  scene (below).
 
-Without ray tracing the roadmap's 16.7 ms is met on this machine, with a tenth of the
-things moving. With it, 100,000 is still 26.7 ms.
-
-"Before" is 2026-10-12, when every instance was gathered and sent again each frame. "Now" is
-with instances kept on the card (below).
+Until 2026-10-12 the figures in this document were the processor's alone, and some of what
+was said of the card from them was wrong. They are replaced above; what was wrong is said
+where it belongs below.
 
 ## Instances kept on the card
 
@@ -68,17 +90,9 @@ bytes for each, and the mesh shaders read an instance through its number.
 A level of detail is an instance of its own, seen over its own range of distances, so
 choosing the level is part of deciding what is seen.
 
-What the second table says:
-
-- **Gathering no longer grows with what stands still.** With nothing moving, Extract and
-  Prepare together are 1.4 ms at 100,000, where they were 28.
-- **With instances kept and nothing else, the frame was the same 21 ms whether a tenth moved
-  or nothing did**, and what Extract and Prepare gave up, Render took. That is the mark of
-  the card being what is waited for. Turning the sun's shadows off (`shadows=off`) took the
-  frame from 21.2 ms to 4.6: every caster was drawn into every one of the four shadow
-  cascades, so the card drew the field five times.
-- **With ray tracing the traced scene is the next cost**: every instance is put into it
-  again each frame, moved or not.
+Gathering no longer grows with what stands still. Before it, at 100,000 things, gathering
+and preparing a frame took 28 ms on the processor whether anything moved or not; with
+nothing moving they now take 1.4 ms.
 
 ## Shadows by cascade
 
@@ -87,24 +101,20 @@ into it. A caster is now drawn into the cascades whose box it falls in, where it
 into all four: the near cascades are small, so most of a wide scene is in one or two.
 Deciding it is part of deciding what the view sees, from the same small record.
 
+Before it, with every caster drawn into all four, the card fell behind the frames and the
+processor's figure at 100,000 was 21 ms, moving or not; `shadows=off` took it to 4.6 ms.
+The shadows are still the card's second largest cost: 5.5 ms at 100,000, and with
+`shadows=off` the card's whole frame goes from 13.6 ms to 7.4.
+
 ## A thousand lights
 
 `lights=N` stands that many lamps over the field, each reaching the things about it (see
-[LIGHTS.md](LIGHTS.md)). At 100,000 things without ray tracing:
+[LIGHTS.md](LIGHTS.md)). On the processor a thousand cost a tenth of a millisecond: sorting
+them into the view's cells. On the card they cost 1.7 ms in the main pass at 100,000
+things, where each fragment goes through the few lamps in its own cell.
 
-| Moving | Lights | A frame (mean) | Frames a second |
-|---|---|---|---|
-| a tenth | none | 14.3 ms | 70 |
-| a tenth | 1,000 | 14.2 ms | 70 |
-| none | 1,000 | 5.7 ms | 175 |
-
-A thousand lamps cost nothing that shows in the frame: sorting them into the view's cells
-is a fraction of a millisecond, and a fragment goes through only the few in its own cell.
-With 4,000 over 20,000 things a frame is 3.6 ms.
-
-That is the roadmap's test for the renderer, 100,000 mesh instances and 1,000 shadow-less
-lights at sixty frames a second, met on the machine measured, without ray tracing. The
-machine the roadmap names, the M2 Pro, has still not been measured.
+(This document said before that a thousand lamps cost nothing that shows. That was the
+processor's figure.)
 
 ## The traced scene
 
@@ -118,34 +128,40 @@ changed and at those the camera's moving has brought within the rays' reach, tak
 it, or changed the level of detail of. Their materials are sent, their places told to the
 structure, and nothing else is touched. Where nothing changed, nothing is built.
 
-At 100,000 things with ray tracing:
+What tracing costs, at 100,000 things:
 
-| Moving | Gathered every frame | Kept |
-|---|---|---|
-| none | about 20 ms | 6.6 ms |
-| a hundredth | | 18.6 ms |
-| a tenth | 27.5 ms | 24.5 ms |
+- **On the card, about 2.6 ms at rest**: the main pass is 10.1 ms with rays against 7.5
+  without.
+- **When anything within the rays' reach moves, the structure is built again, whole**, from
+  every instance in it (65,536 at most, which is what it holds at 100,000 things). The
+  graphics library does that whenever any one of them has changed.
+- **Building it costs the card 0.3 ms.** It costs the processor about 12 ms, however little
+  moved, which is the difference between 6.5 ms at rest and 18.6 ms with a hundredth of the
+  things moving: 2.7 ms recording the build, and most of the rest when the frame's work is
+  handed over (8.5 ms, against 1.5 without rays), where the library goes through every
+  instance of the structure.
 
-What that says:
-
-- **At rest the rays cost a millisecond**: 6.6 ms against 5.6 without them.
-- **Anything moving within the rays' reach costs about 12 ms, however little moves.** That is
-  not the engine's work any longer, which is a few hundred microseconds for a thousand
-  changed instances. It is the structure being built again, whole, from every instance in
-  it, which the graphics library does whenever any one of them has changed.
-- So the cost goes with how many instances are in the structure, not with how many moved.
-  It holds 65,536 at most, and at 100,000 things that is what it holds.
+(This document said before that the 12 ms was the card building the structure. The time was
+found by taking the stages away from the frame, which could not tell the card's work from
+the library's on the processor. The card's clock says it is the library's.)
 
 What would cut it is fewer instances in what has to be built again: a structure of the
 things that move, kept apart from one of the things that stand still, with rays traced
-against both; or tracing against less than is drawn.
+against both. That was tried. It does cut the processor's cost (at 60,000 things with a tenth
+moving, 18.3 ms became 10.9), and it costs the card 1.5 to 2 ms in the main pass, at rest as
+well, since every ray is traced twice. It is kept on a branch (`traced-two-structures`)
+until it costs a scene at rest nothing.
 
-(In the tables further up, the figures for "none moving" before this section were taken
-with one thing moving, by a mistake in the example since put right; without ray tracing it
-made no difference to them. And `moving=0.00001` at 100,000 moves one thing that is 490 m
-from the camera, beyond the rays' reach of 400, so it measures the same as nothing moving.)
+(`moving=0.00001` at 100,000 moves one thing that is 490 m from the camera, beyond the
+rays' reach of 400, so it measures the same as nothing moving.)
 
-So the next work, where rays are traced, is those two structures. Without rays it is to
-decide on the card what each view and each cascade sees, with meshes in shared buffers so
-that a pipeline's draws are one call, which wants a benchmark of many different meshes and
-materials first.
+## What is next
+
+On the card, which is what holds most frames back: the sun's shadows (5.5 ms) and the main
+pass (7.5 ms and up), at a size of picture that is small. What to try: distant things drawn
+with fewer triangles, the far cascades drawn less often than every frame, and a main pass
+that shades each pixel once.
+
+On the processor, with things moving: deciding on the card what each view and each cascade
+sees, with meshes in shared buffers so that a pipeline's draws are one call, which wants a
+benchmark of many different meshes and materials first.

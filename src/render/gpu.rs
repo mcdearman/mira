@@ -119,9 +119,14 @@ impl Gpu {
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("mira device"),
                 // Lines for polygons, where there are any, are for the wireframe view; block
-                // compression, for pictures processed ahead of time.
+                // compression, for pictures processed ahead of time; the card's clock, to
+                // say how long it takes over each pass.
                 required_features: (if traced { rt_features } else { wgpu::Features::empty() })
-                    | (adapter.features() & (wgpu::Features::POLYGON_MODE_LINE | wgpu::Features::TEXTURE_COMPRESSION_BC)),
+                    | (adapter.features()
+                        & (wgpu::Features::POLYGON_MODE_LINE
+                            | wgpu::Features::TEXTURE_COMPRESSION_BC
+                            | wgpu::Features::TIMESTAMP_QUERY
+                            | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)),
                 required_limits: wgpu::Limits {
                     // Big merged scenery meshes.
                     max_buffer_size: available.max_buffer_size,

@@ -24,7 +24,7 @@ A phase is not done until its exit test passes. Tick items off here as they land
 | Animation | Clips, cross-fades, masks, two-bone IK, procedural gait, skins loaded from glTF | State machines, blend trees, retargeting, compression |
 | Runtime | Keyboard and mouse; text and panels in the game, with a first set of controls | Audio, gamepad, input mapping, navigation, AI, networking, save games |
 | Plugins | Native plugins over a C interface (`include/mira.h`) in any language, hot-reloaded with their data intact; Rust and Haskell bindings; a whole game as a plugin | Animation, joints and much else of the engine from a plugin (see Phase 1A) |
-| Tools | The engine app: the game in a window with its entities, an inspector, signals, assets and an agent beside it; a debug connection and an MCP server; screenshots and image-diff tests; CI on Linux and macOS with clippy, Miri and ThreadSanitizer | Play in editor, material editor, a profiler's timeline, GPU timings |
+| Tools | The engine app: the game in a window with its entities, an inspector, signals, assets and an agent beside it; a debug connection and an MCP server; screenshots and image-diff tests; CI on Linux and macOS with clippy, Miri and ThreadSanitizer | Play in editor, material editor, a profiler's timeline |
 
 ## Principles
 
@@ -58,8 +58,10 @@ Make the project safe to change quickly.
       have no graphics card set up)
 - [x] CPU frame timings: per frame, per stage and per system, from the running game
       (`FrameStats`, `mira-debug profile`)
-- [ ] A timeline of a frame across threads; GPU timings (timestamp queries per pass); shown
-      on screen
+- [x] GPU timings: what the graphics card takes over each pass, read back from its own
+      clock (`mira-debug passes`, `card_millis` in `mira-debug profile`; see
+      [PERFORMANCE.md](PERFORMANCE.md))
+- [ ] A timeline of a frame across threads; the timings shown on screen
 - [x] A benchmark of a frame as the number of things in it grows (`examples/instances`;
       what it shows is in [PERFORMANCE.md](PERFORMANCE.md))
 - [ ] Benchmarks for ECS iteration and chunk meshing, and any of them run in CI
@@ -347,7 +349,9 @@ dying in any order; the timer is right in every case because no code ever sets i
 - [ ] The rest of the scene on the GPU: shared vertex and index buffers, bindless textures,
       and a structure of what moves apart from one of what stands still for rays to be
       traced against (the traced scene keeps its instances now, but is built again whole
-      whenever one of them moves)
+      whenever one of them moves, which costs the processor 12 ms at 65,536 instances;
+      two structures were tried and cost the card 2 ms at rest, see
+      [PERFORMANCE.md](PERFORMANCE.md))
 - [ ] Culling in compute against the frustum and a depth pyramid; multi-draw indirect
 - [ ] Visibility buffer or deferred shading, replacing forward + MSAA
 - [x] Point and spot lights, clustered: sorted each frame into cells of the view, so a
