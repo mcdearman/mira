@@ -937,9 +937,13 @@ fn render(world: &mut World) {
     views.insert(slots::HDR_MSAA, gpu.targets.hdr_msaa.clone());
     views.insert(slots::DEPTH, gpu.targets.depth.clone());
     let mut context = PassContext::new(&mut encoder, views);
-    for (_, pass) in passes {
+    let mut took = Vec::with_capacity(passes.len());
+    for (name, pass) in passes {
+        let began = std::time::Instant::now();
         pass(world, &mut context);
+        took.push((name, began.elapsed()));
     }
+    world.resource_mut::<RenderGraph>().timed(took);
 
     // The frame itself is done; overlays draw on top of it, and a screenshot is taken of
     // the two together.

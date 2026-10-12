@@ -201,6 +201,9 @@ pub struct PassInfo {
     pub name: &'static str,
     pub reads: Vec<Slot>,
     pub writes: Vec<Slot>,
+    /// How long the pass took to record its work the last time it ran, if it has run. This
+    /// is the engine's time on the processor, not the graphics card's time drawing it.
+    pub took: Option<std::time::Duration>,
 }
 
 /// The passes of a frame and the targets made for them.
@@ -210,6 +213,8 @@ pub struct RenderGraph {
     targets: Vec<Target>,
     /// The order worked out for the passes as they stand.
     order: Option<Vec<usize>>,
+    /// How long each pass took when the passes last ran.
+    took: HashMap<&'static str, std::time::Duration>,
 }
 
 impl RenderGraph {
@@ -251,8 +256,16 @@ impl RenderGraph {
         let order = self.order()?;
         Ok(order
             .iter()
-            .map(|&i| PassInfo { name: self.passes[i].name, reads: self.passes[i].reads.clone(), writes: self.passes[i].writes.clone() })
+            .map(|&i| {
+                let pass = &self.passes[i];
+                PassInfo { name: pass.name, reads: pass.reads.clone(), writes: pass.writes.clone(), took: self.took.get(pass.name).copied() }
+            })
             .collect())
+    }
+
+    /// Notes how long each pass took, the last time the frame's passes were run.
+    pub(crate) fn timed(&mut self, took: impl IntoIterator<Item = (&'static str, std::time::Duration)>) {
+        self.took = took.into_iter().collect();
     }
 
     /// What each pass does, in the order they run.
@@ -420,7 +433,9 @@ mod tests {
         let mut graph = RenderGraph::default();
         graph.add(Pass::new("a", nothing).writes(&["x"])).add(Pass::new("b", nothing).reads(&["x"]));
         graph.add(Pass::new("a", nothing).reads(&["y"]).writes(&["x"]));
-        assert_eq!(graph.describe().unwrap()[0], PassInfo { name: "a", reads: vec!["y"], writes: vec!["x"] });
+        assert_eq!(graph.describe().unwrap()[0], PassInfo { name: "a", reads: vec!["y"], writes: vec!["x"], took: None });
+        graph.timed([("a", std::time::Duration::from_micros(40))]);
+        assert_eq!(graph.describe().unwrap()[0].took, Some(std::time::Duration::from_micros(40)));
         assert!(graph.remove("a"));
         assert!(!graph.remove("a"));
         assert_eq!(names(&mut graph), ["b"]);
