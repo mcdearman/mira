@@ -159,6 +159,9 @@ pub(crate) struct Instances {
     stale: Vec<u32>,
     /// The frame entities were last brought up to date in.
     frame: u64,
+    /// Counts every change made to an instance: what was made from them is out of date when
+    /// this has moved on.
+    changes: u64,
     /// None until instances are first sent.
     buffer: Option<wgpu::Buffer>,
     /// How many instances the buffer has room for.
@@ -248,6 +251,7 @@ impl Instances {
         };
         self.batches.entry(part.key).or_default().push(number);
         self.stale.push(number);
+        self.changes += 1;
         number
     }
 
@@ -275,12 +279,16 @@ impl Instances {
             self.batches.entry(part.key).or_default().push(number);
         }
         self.stale.push(number);
+        self.changes += 1;
     }
 
     fn release(&mut self, number: u32) {
         if let Some(slot) = self.slots[number as usize].take() {
             Self::unlist(&mut self.batches, slot.part.key, number);
             self.free.push(number);
+            // Seen from nowhere, until the number is taken again.
+            self.sight[number as usize].seen = (f32::INFINITY, f32::INFINITY);
+            self.changes += 1;
         }
     }
 
@@ -380,6 +388,21 @@ impl Instances {
             seen.numbers.extend(numbers);
         }
         seen
+    }
+
+    /// Says whether the parts rays are traced against are the same as when this gave the
+    /// same answer before: it changes when any instance has changed, and when the camera has
+    /// moved so that a part has come within `reach` or left it, or changed its level of
+    /// detail. Cheap beside going through the parts themselves.
+    pub fn traced_key(&self, camera: Vec3, reach: f32) -> (u64, u64) {
+        let mut within = 0xcbf29ce484222325u64;
+        for (number, sight) in self.sight.iter().enumerate() {
+            let away = camera.distance(sight.origin);
+            if away >= sight.seen.0 && away < sight.seen.1 && away <= reach {
+                within = (within ^ number as u64).wrapping_mul(0x100000001b3);
+            }
+        }
+        (self.changes, within)
     }
 
     /// The parts rays are traced against: every one near enough to the camera for its level
@@ -563,6 +586,26 @@ mod tests {
         let meshes: Vec<u32> = scene.batches.keys().map(BatchKey::mesh).collect();
         assert_eq!(meshes, [2]);
         assert_eq!(scene.len(), 1);
+    }
+
+    #[test]
+    fn what_is_traced_is_known_to_be_the_same_or_not() {
+        let mut world = World::new();
+        let (near, far) = (world.spawn(()), world.spawn(()));
+        let mut scene = Instances::default();
+        scene.set(near, &[part(1, Vec3::new(0.0, 0.0, -10.0))]);
+        scene.set(far, &[part(1, Vec3::new(0.0, 0.0, -100.0))]);
+        let key = scene.traced_key(Vec3::ZERO, 50.0);
+        // The same from the same place, and from a place where the same parts are in reach.
+        assert_eq!(scene.traced_key(Vec3::ZERO, 50.0), key);
+        assert_eq!(scene.traced_key(Vec3::new(1.0, 0.0, 0.0), 50.0), key);
+        // Not the same once the far one comes within reach, or an instance changes, or goes.
+        assert_ne!(scene.traced_key(Vec3::new(0.0, 0.0, -60.0), 50.0), key);
+        scene.set(near, &[part(1, Vec3::new(0.0, 0.0, -11.0))]);
+        let moved = scene.traced_key(Vec3::ZERO, 50.0);
+        assert_ne!(moved, key);
+        scene.forget(near);
+        assert_ne!(scene.traced_key(Vec3::ZERO, 50.0), moved);
     }
 
     #[test]
