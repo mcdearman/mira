@@ -10,6 +10,7 @@ mod gpu;
 pub mod graph;
 mod image;
 mod instances;
+mod lights;
 mod mesh;
 mod motion;
 mod post;
@@ -38,6 +39,7 @@ pub use gpu::{
 pub use compose::{ComposeError, ShaderLibrary};
 pub use graph::{slots, Pass, PassContext, PassInfo, RenderGraph, TargetDesc};
 pub use image::{Image, Processed};
+pub use lights::{PointLight, SpotLight};
 pub use mesh::{Mesh, Mesh3d, Vertex};
 pub use post::PostProcess;
 pub use shaders::{Install, Rebuild, Shader, ShaderReload};
@@ -459,6 +461,8 @@ pub struct RenderFrame {
     pub sh: [Vec3; 9],
     pub fog: Fog,
     pub cascades: CascadeData,
+    /// The lamps, fires and torches there are, wherever they are.
+    pub(crate) lights: Vec<lights::LocalLight>,
     /// How far from the camera something may be and still cast a shadow that matters.
     pub(crate) shadow_reach: f32,
     /// Skinned meshes to pose this frame.
@@ -632,6 +636,8 @@ fn extract(
     post: Res<PostProcess>,
     cameras: Query<(&Camera, &GlobalTransform, Option<&ViewTarget>)>,
     lights: Query<(&DirectionalLight, &GlobalTransform)>,
+    lamps: Query<(&PointLight, &GlobalTransform)>,
+    spots: Query<(&SpotLight, &GlobalTransform)>,
 ) {
     let frame = &mut *frame;
     frame.time = time.elapsed_secs();
@@ -686,6 +692,9 @@ fn extract(
         );
     }
 
+    frame.lights.clear();
+    frame.lights.extend(lamps.iter().map(|(lamp, at)| lights::LocalLight::point(at.translation(), lamp)));
+    frame.lights.extend(spots.iter().map(|(spot, at)| lights::LocalLight::spot(at.translation(), at.forward(), spot)));
     frame.moved.clear();
     // Casters beyond this can't shadow anything the cascades cover.
     frame.shadow_reach = shadow_settings.max_distance * 1.2 + 40.0;
@@ -784,6 +793,11 @@ fn prepare(    gpu: Res<Gpu>,
     let mut rt = rt;
     if sky.gpu_environment.generation != environment.generation {
         sky.gpu_environment = GpuEnvironment::new(&gpu.device, &gpu.queue, &environment);
+        view.rebind(&gpu, &shadows, &sky.gpu_environment, rt.as_deref());
+    }
+    // The lights with a place, sorted into the cells of this view.
+    let lookout = lights::Lookout { view_proj: frame.view_proj, camera: frame.camera_position, forward: frame.camera_forward };
+    if view.write_lights(&gpu, &lights::LightGrid::build(&frame.lights, &lookout)) {
         view.rebind(&gpu, &shadows, &sky.gpu_environment, rt.as_deref());
     }
     let probes = rt.as_deref().map_or([[0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0]], |rt| rt.probes.uniform());
@@ -1264,6 +1278,8 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<Camera>()
             .register_type::<DirectionalLight>()
+            .register_type::<PointLight>()
+            .register_type::<SpotLight>()
             .register_type::<Mesh3d>()
             .register_type::<crate::asset_server::Model>()
             .register_type::<Playing>()

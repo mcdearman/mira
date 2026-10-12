@@ -47,6 +47,26 @@ struct View {
 @group(0) @binding(3) var sky_texture: texture_2d<f32>;
 @group(0) @binding(4) var sky_sampler: sampler;
 
+// Lights with a place (see `lights.rs`). The view is cut into cells, and a fragment goes
+// through the lights of its own cell alone.
+struct Light {
+    // xyz: where it is, w: how far it reaches
+    position: vec4<f32>,
+    // rgb: colour times brightness, w: the cosine of the cone's outer angle
+    light: vec4<f32>,
+    // xyz: the way it faces, w: the cosine of the cone's inner angle
+    direction: vec4<f32>,
+};
+
+@group(0) @binding(16) var<storage, read> lights: array<Light>;
+// For each cell, where its lights begin in the list and how many there are; then the list.
+@group(0) @binding(17) var<storage, read> light_grid: array<u32>;
+
+// Cells across, down and through the view's depth, and where the depth begins and ends.
+const LIGHT_CELLS: vec3<u32> = vec3<u32>(16u, 9u, 24u);
+const LIGHT_NEAR: f32 = 0.5;
+const LIGHT_FAR: f32 = 250.0;
+
 fn saturate(x: f32) -> f32 {
     return clamp(x, 0.0, 1.0);
 }
@@ -204,6 +224,51 @@ fn env_brdf(f0: vec3<f32>, roughness: f32, n_dot_v: f32) -> vec3<f32> {
     return f0 * ab.x + ab.y;
 }
 
+// ---- Lights with a place --------------------------------------------------------------------
+
+// The lights of the cell a point falls in: where they begin in the list, and how many.
+fn light_cell(world_position: vec3<f32>) -> vec2<u32> {
+    let clip = view.view_proj * vec4<f32>(world_position, 1.0);
+    let place = clamp(clip.xy / max(clip.w, 1e-6) * 0.5 + 0.5, vec2<f32>(0.0), vec2<f32>(0.999999));
+    let through = log(max(view_depth(world_position), LIGHT_NEAR) / LIGHT_NEAR) / log(LIGHT_FAR / LIGHT_NEAR);
+    let x = u32(place.x * f32(LIGHT_CELLS.x));
+    let y = u32(place.y * f32(LIGHT_CELLS.y));
+    let z = min(u32(through * f32(LIGHT_CELLS.z)), LIGHT_CELLS.z - 1u);
+    let cell = ((z * LIGHT_CELLS.y + y) * LIGHT_CELLS.x + x) * 2u;
+    let list = LIGHT_CELLS.x * LIGHT_CELLS.y * LIGHT_CELLS.z * 2u;
+    return vec2<u32>(list + light_grid[cell], light_grid[cell + 1u]);
+}
+
+// What the lamps, fires and torches near a surface add to it. They cast no shadows.
+fn local_lights(world_position: vec3<f32>, n: vec3<f32>, v: vec3<f32>, diffuse_color: vec3<f32>, f0: vec3<f32>, a: f32, n_dot_v: f32) -> vec3<f32> {
+    let cell = light_cell(world_position);
+    var sum = vec3<f32>(0.0);
+    for (var i = cell.x; i < cell.x + cell.y; i++) {
+        let light = lights[light_grid[i]];
+        let to_light = light.position.xyz - world_position;
+        let distance_squared = dot(to_light, to_light);
+        let reach = light.position.w;
+        if distance_squared >= reach * reach {
+            continue;
+        }
+        let l = to_light * inverseSqrt(max(distance_squared, 1e-8));
+        let n_dot_l = saturate(dot(n, l));
+        // The cone of a spot light; every direction is inside a point light's.
+        let cone = smoothstep(light.light.w, light.direction.w, dot(-l, light.direction.xyz));
+        if n_dot_l <= 0.0 || cone <= 0.0 {
+            continue;
+        }
+        // Weaker with the square of the distance, and brought to nothing at its reach.
+        let edge = saturate(1.0 - distance_squared * distance_squared / (reach * reach * reach * reach));
+        let falloff = edge * edge / max(distance_squared, 0.01);
+        let h = normalize(l + v);
+        let f = fresnel(f0, saturate(dot(h, v)));
+        let specular = d_ggx(saturate(dot(n, h)), a) * v_smith(n_dot_v, n_dot_l, a) * f;
+        sum += (diffuse_color / PI * (1.0 - f) + specular) * n_dot_l * light.light.rgb * falloff * cone;
+    }
+    return sum;
+}
+
 // Sun, sky and reflections on a surface, before haze.
 fn shade(surface: Surface, world_position: vec3<f32>) -> vec3<f32> {
     var s = surface;
@@ -252,6 +317,7 @@ fn shade(surface: Surface, world_position: vec3<f32>) -> vec3<f32> {
     let back = saturate(dot(-n, l)) * 0.6 + pow(saturate(dot(-v, l)), 4.0) * 0.4;
     let transmitted = diffuse_color / PI * back * s.translucency;
     var color = (direct + transmitted) * view.sun_color.rgb * shadow;
+    color += local_lights(world_position, n, v, diffuse_color, f0, a, n_dot_v);
 
     // Skylight, and the sky mirrored in the surface, blurrier the rougher it is.
     let brdf = env_brdf(f0, s.roughness, n_dot_v);

@@ -273,6 +273,15 @@ pub fn scene(mut commands: Commands, mut server: ResMut<AssetServer>, mut meshes
         loose(format!("Ball {}", index + 1), Vec3::new(x, 0.5, z), 1.0, true, blue);
     }
 
+    // Lamps, which light what is near them and cast no shadow: a warm one over the platform
+    // and a cool one under the arch.
+    for (name, at, color, intensity, range) in [
+        ("Lamp", Vec3::new(-9.0, 3.4, -7.0), Color::rgb(1.0, 0.55, 0.2), 40.0, 10.0),
+        ("Arch lamp", Vec3::new(-8.0, 2.4, 8.0), Color::rgb(0.3, 0.55, 1.0), 30.0, 9.0),
+    ] {
+        commands.spawn((Transform::from_translation(at), PointLight { color, intensity, range }, Name::new(name)));
+    }
+
     // The player: a capsule that walks, the camera at its eyes, the gun in front of that.
     let walker = Walker::default();
     let player = commands
