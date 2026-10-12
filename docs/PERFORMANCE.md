@@ -216,6 +216,38 @@ its own: 16.5 ms against 13.1 with a tenth moving.
 
 The engine does not make the coarser meshes: they are the scene's to give.
 
+## Things that move, on the processor
+
+With levels of detail the card keeps up, and what a frame costs is the processor's work
+for the things that moved. Two parts of it went with how much there was, not how much
+moved:
+
+- **Working out where things are** (`src/transform.rs`) walked every entity every frame,
+  2.7 ms at 100,000 with nothing moving. An entity with no parent and no children is now
+  looked at only when its `Transform` has been written; trees are walked as before.
+- **Sending a moved instance** sent all of it, 192 bytes, and its neighbours with it. Where
+  an instance is and how it looks are now kept apart on the card
+  (`src/render/instances.rs`): a thing that moves sends 48 bytes, and its normals' matrix
+  is worked out in the vertex shader from the model's.
+
+At 100,000 things with levels of detail, without ray tracing unless said:
+
+| Moving | | On the processor | On the card | Frames a second |
+|---|---|---|---|---|
+| none | before | 5.9 ms | 3.5 ms | 170 |
+| | now | 3.4 ms | 3.6 ms | 280 |
+| a tenth | before | 16.5 ms | 3.6 ms | 61 |
+| | now | 11.6 ms | 3.6 ms | 86 |
+| a tenth, 1,000 lights | before | 16.2 ms | 4.6 ms | 62 |
+| | now | 11.6 ms | 4.6 ms | 87 |
+| a tenth, with rays | before | 19.8 ms | 7.5 ms | 51 |
+| | now | 14.8 ms | 7.3 ms | 68 |
+
+The tables further up were measured before this, and their processor's figures are that
+much too high.
+
+What is left, with a tenth moving: gathering what changed (Extract, 3.6 ms), and deciding
+what the view and the cascades see and sending it (Prepare, 4.5 ms).
 ## What is next
 
 On the processor, with things moving, where the time now is:
