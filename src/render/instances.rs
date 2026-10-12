@@ -10,20 +10,35 @@
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
-use glam::{Mat3, Mat4, Vec3, Vec4};
+use glam::{Mat4, Vec3, Vec4};
 
 use super::{gpu::Gpu, motion, renderer::BatchKey, Material};
 use crate::ecs::Entity;
 
-/// An instance as the mesh shaders read it. Must match `Instance` in `mesh.wgsl` and
+/// Where an instance is, as the mesh shaders read it: the first three rows of its model
+/// matrix, the fourth being 0 0 0 1. Must match `Place` in `mesh.wgsl` and
 /// `mesh_shadow.wgsl`.
+///
+/// It is kept apart from the material's values because it is what changes when a thing
+/// moves, and a thing that moves is sent again: this is a quarter of the whole instance.
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct InstanceRaw {
-    model: [[f32; 4]; 4],
-    /// The rows of a 3 by 3 matrix, each with a fourth number that is not used: the card
-    /// lays a `mat3x3` out that way in a buffer.
-    normal: [[f32; 4]; 3],
+#[derive(Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct PlaceRaw {
+    rows: [[f32; 4]; 3],
+}
+
+impl PlaceRaw {
+    fn new(model: Mat4) -> Self {
+        let rows = model.transpose();
+        Self { rows: [rows.x_axis.to_array(), rows.y_axis.to_array(), rows.z_axis.to_array()] }
+    }
+}
+
+/// An instance's material, as the mesh shaders read it. Must match `Look` in `mesh.wgsl`
+/// and `mesh_shadow.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct LookRaw {
     color: [f32; 4],
     params: [f32; 4],
     emissive: [f32; 4],
@@ -31,13 +46,9 @@ pub(crate) struct InstanceRaw {
     more: [f32; 4],
 }
 
-impl InstanceRaw {
-    fn new(model: Mat4, m: &Material) -> Self {
-        // Inverse-transpose keeps normals perpendicular under non-uniform scale.
-        let normal = Mat3::from_mat4(model).inverse().transpose();
+impl LookRaw {
+    fn new(m: &Material) -> Self {
         Self {
-            model: model.to_cols_array_2d(),
-            normal: [normal.x_axis.extend(0.0).to_array(), normal.y_axis.extend(0.0).to_array(), normal.z_axis.extend(0.0).to_array()],
             color: m.color.to_array(),
             params: [
                 m.roughness,
@@ -152,39 +163,45 @@ pub(crate) struct Instances {
     batches: BTreeMap<BatchKey, Vec<u32>>,
     /// What deciding whether each instance is seen needs of it.
     sight: Vec<Sight>,
-    /// What the card holds for each instance, kept here too so that a stretch of them can be
-    /// sent again without working any of it out.
-    on_card: Vec<InstanceRaw>,
-    /// Instances changed since they were last sent to the card.
+    /// What the card holds for each instance, where it is and how it looks, kept here too so
+    /// that a stretch of them can be sent again without working any of it out.
+    on_card: Vec<PlaceRaw>,
+    looks: Vec<LookRaw>,
+    /// Instances moved, and instances whose look changed, since they were last sent.
     stale: Vec<u32>,
+    stale_looks: Vec<u32>,
     /// The frame entities were last brought up to date in.
     frame: u64,
     /// Whether the traced scene has asked what changed, and the instances that have since.
     traced: bool,
     for_tracing: Vec<u32>,
-    /// None until instances are first sent.
+    /// Where the instances are and how they look: none until they are first sent.
     buffer: Option<wgpu::Buffer>,
+    looks_buffer: Option<wgpu::Buffer>,
     /// How many instances the buffer has room for.
     room: usize,
     /// Counts the buffers made, so that what binds one knows when there is another.
     pub generation: u64,
 }
 
-const STRIDE: u64 = std::mem::size_of::<InstanceRaw>() as u64;
-
 impl Instances {
-    fn make(device: &wgpu::Device, room: usize) -> wgpu::Buffer {
+    fn make(device: &wgpu::Device, label: &str, size: usize) -> wgpu::Buffer {
         device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("instances"),
-            size: room as u64 * STRIDE,
+            label: Some(label),
+            size: size as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         })
     }
 
-    /// The instances on the card. They must have been sent once.
+    /// Where the instances are, on the card. They must have been sent once.
     pub fn buffer(&self) -> &wgpu::Buffer {
         self.buffer.as_ref().expect("instances are sent before they are drawn")
+    }
+
+    /// How the instances look, on the card. They must have been sent once.
+    pub fn looks(&self) -> &wgpu::Buffer {
+        self.looks_buffer.as_ref().expect("instances are sent before they are drawn")
     }
 
     /// How many instances there are.
@@ -234,23 +251,26 @@ impl Instances {
 
     fn take(&mut self, part: Part) -> u32 {
         let slot = Slot { part, was: part.model };
-        let (raw, sight) = (InstanceRaw::new(part.model, &part.material), Sight::of(&part));
+        let (place, look, sight) = (PlaceRaw::new(part.model), LookRaw::new(&part.material), Sight::of(&part));
         let number = match self.free.pop() {
             Some(number) => {
                 self.slots[number as usize] = Some(slot);
-                self.on_card[number as usize] = raw;
+                self.on_card[number as usize] = place;
+                self.looks[number as usize] = look;
                 self.sight[number as usize] = sight;
                 number
             }
             None => {
                 self.slots.push(Some(slot));
-                self.on_card.push(raw);
+                self.on_card.push(place);
+                self.looks.push(look);
                 self.sight.push(sight);
                 self.slots.len() as u32 - 1
             }
         };
         self.batches.entry(part.key).or_default().push(number);
         self.stale.push(number);
+        self.stale_looks.push(number);
         self.changed_for_tracing(number);
         number
     }
@@ -273,12 +293,19 @@ impl Instances {
         }
         self.sight[number as usize] = sight;
         slot.part = part;
-        self.on_card[number as usize] = InstanceRaw::new(part.model, &part.material);
+        // Only what is different is sent again: a thing that moves keeps its look, and one
+        // that changes colour stays where it is.
+        let (place, look) = (PlaceRaw::new(part.model), LookRaw::new(&part.material));
+        if std::mem::replace(&mut self.on_card[number as usize], place) != place {
+            self.stale.push(number);
+        }
+        if std::mem::replace(&mut self.looks[number as usize], look) != look {
+            self.stale_looks.push(number);
+        }
         if before.key != part.key {
             Self::unlist(&mut self.batches, before.key, number);
             self.batches.entry(part.key).or_default().push(number);
         }
-        self.stale.push(number);
         self.changed_for_tracing(number);
     }
 
@@ -315,18 +342,24 @@ impl Instances {
         if self.buffer.is_none() || self.slots.len() > self.room {
             // Everything goes into the new buffer, so nothing is left stale.
             self.room = self.slots.len().next_power_of_two().max(256);
-            let buffer = Self::make(&gpu.device, self.room);
+            let places = Self::make(&gpu.device, "instances", self.room * std::mem::size_of::<PlaceRaw>());
+            let looks = Self::make(&gpu.device, "instances' looks", self.room * std::mem::size_of::<LookRaw>());
             self.generation += 1;
             self.stale.clear();
-            gpu.queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&self.on_card));
-            self.buffer = Some(buffer);
+            self.stale_looks.clear();
+            gpu.queue.write_buffer(&places, 0, bytemuck::cast_slice(&self.on_card));
+            gpu.queue.write_buffer(&looks, 0, bytemuck::cast_slice(&self.looks));
+            (self.buffer, self.looks_buffer) = (Some(places), Some(looks));
             return true;
         }
-        let buffer = self.buffer.as_ref().unwrap();
-        for run in runs(std::mem::take(&mut self.stale), NEAR) {
-            let stretch = &self.on_card[run.start as usize..run.end as usize];
-            gpu.queue.write_buffer(buffer, run.start as u64 * STRIDE, bytemuck::cast_slice(stretch));
+        fn send<T: bytemuck::Pod>(gpu: &Gpu, buffer: &wgpu::Buffer, kept: &[T], stale: Vec<u32>) {
+            for run in runs(stale, NEAR) {
+                let stretch = &kept[run.start as usize..run.end as usize];
+                gpu.queue.write_buffer(buffer, run.start as u64 * std::mem::size_of::<T>() as u64, bytemuck::cast_slice(stretch));
+            }
         }
+        send(gpu, self.buffer.as_ref().unwrap(), &self.on_card, std::mem::take(&mut self.stale));
+        send(gpu, self.looks_buffer.as_ref().unwrap(), &self.looks, std::mem::take(&mut self.stale_looks));
         false
     }
 

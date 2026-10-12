@@ -240,7 +240,7 @@ impl MeshRenderer {
         };
         let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("instances layout"),
-            entries: &[storage(0), storage(1)],
+            entries: &[storage(0), storage(1), storage(2)],
         });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -573,6 +573,7 @@ impl MeshRenderer {
                 entries: &[
                     wgpu::BindGroupEntry { binding: 0, resource: self.scene.buffer().as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 1, resource: numbers.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: self.scene.looks().as_entire_binding() },
                 ],
             });
             *bound = Some((self.scene.generation, group));

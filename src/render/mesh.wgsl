@@ -16,10 +16,14 @@ struct VertexInput {
 
 // One thing drawn: a mesh somewhere, with its material's values. The instances stay on the
 // card from frame to frame; `seen` holds the numbers of those the view being drawn sees, and
-// a draw's instances are a run of that list.
-struct Instance {
-    model: mat4x4<f32>,
-    normal: mat3x3<f32>,
+// a draw's instances are a run of that list. Where an instance is and how it looks are kept
+// apart, since a thing that moves sends only where it is.
+struct Place {
+    // The first three rows of the model matrix; the fourth is 0 0 0 1.
+    rows: array<vec4<f32>, 3>,
+};
+
+struct Look {
     color: vec4<f32>,
     // x: roughness, y: metallic, z: normal map strength, w: alpha cutoff (0 = opaque)
     params: vec4<f32>,
@@ -32,8 +36,9 @@ struct Instance {
     more: vec4<f32>,
 };
 
-@group(2) @binding(0) var<storage, read> instances: array<Instance>;
+@group(2) @binding(0) var<storage, read> places: array<Place>;
 @group(2) @binding(1) var<storage, read> seen: array<u32>;
+@group(2) @binding(2) var<storage, read> looks: array<Look>;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -49,13 +54,21 @@ struct VertexOutput {
 
 @vertex
 fn vs_main(vertex: VertexInput, @builtin(instance_index) at: u32) -> VertexOutput {
-    let instance = instances[seen[at]];
-    let world_position = instance.model * vec4<f32>(vertex.position, 1.0);
+    let rows = places[seen[at]].rows;
+    let instance = looks[seen[at]];
+    let model = transpose(mat4x4<f32>(rows[0], rows[1], rows[2], vec4<f32>(0.0, 0.0, 0.0, 1.0)));
+    let world_position = model * vec4<f32>(vertex.position, 1.0);
+    // The inverse of the transpose, which keeps normals perpendicular under a scale that is
+    // not the same every way: the cross products of the columns, over the determinant.
+    let x = model[0].xyz;
+    let y = model[1].xyz;
+    let z = model[2].xyz;
+    let normal = mat3x3<f32>(cross(y, z), cross(z, x), cross(x, y)) * (1.0 / dot(x, cross(y, z)));
 
     var out: VertexOutput;
     out.clip_position = view.view_proj * world_position;
     out.world_position = world_position.xyz;
-    out.world_normal = instance.normal * vertex.normal;
+    out.world_normal = normal * vertex.normal;
     out.uv = vertex.uv;
     out.color = instance.color * vec4<f32>(vertex.color, 1.0);
     out.params = instance.params;

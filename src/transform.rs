@@ -2,7 +2,7 @@ use glam::{Mat3, Mat4, Quat, Vec3};
 
 use crate::{
     app::{App, Plugin, Stage},
-    ecs::{Commands, Component, Entity, EntityCommands, Local, Query, Res, With, Without, World},
+    ecs::{Changed, Commands, Component, Entity, EntityCommands, Local, Query, Res, ResMut, With, Without, World},
     reflect::Reflect,
     relation::{self, Related, Relation},
     time::FixedTime,
@@ -242,24 +242,58 @@ impl HierarchyCommands for EntityCommands<'_> {
 
 fn add_global_transforms(
     mut commands: Commands,
+    mut unsettled: ResMut<Unsettled>,
     query: Query<Entity, (With<Transform>, Without<GlobalTransform>)>,
 ) {
     for entity in &query {
         commands.entity(entity).insert(GlobalTransform::default());
+        // Its matrix is to be worked out once it has one, written to or not.
+        unsettled.0.push((entity, 0));
     }
 }
 
-/// Works out every world-space matrix by walking down from the roots, so each entity costs
-/// one matrix multiply however deep it is. An entity whose parent is gone, or has no
-/// transform, is treated as a root.
+/// Entities whose matrix is to be worked out though their `Transform` was not written: one
+/// just given a `GlobalTransform`, or one a `Parent` was taken from, which stands on its own
+/// now. With each, how many times it has been looked for without its matrix being there.
+#[derive(Default)]
+struct Unsettled(Vec<(Entity, u8)>);
+
+fn unparented(world: &mut World, entity: Entity) {
+    if let Some(unsettled) = world.get_resource_mut::<Unsettled>() {
+        unsettled.0.push((entity, 0));
+    }
+}
+
+type RootOfATree = (With<GlobalTransform>, Without<Parent>, With<Children>);
+type WrittenOnItsOwn = (Changed<Transform>, Without<Parent>, Without<Children>);
+
+/// Works out the world-space matrices. A tree is walked down from its root, so each entity
+/// in one costs one matrix multiply however deep it is; an entity whose parent is gone, or
+/// has no transform, is treated as a root. An entity that stands on its own, with no parent
+/// and no children, is looked at only when its `Transform` has been written: most of a big
+/// scene is such entities, and most of them at rest.
 fn propagate_transforms(
-    roots: Query<Entity, (With<GlobalTransform>, Without<Parent>)>,
+    roots: Query<Entity, RootOfATree>,
     parented: Query<(Entity, &Parent), With<GlobalTransform>>,
+    alone: Query<Entity, WrittenOnItsOwn>,
+    mut unsettled: ResMut<Unsettled>,
     mut nodes: Query<(&Transform, &mut GlobalTransform, Option<&Children>)>,
     mut pending: Local<Vec<(Entity, Mat4)>>,
 ) {
     pending.clear();
-    pending.extend(roots.iter().map(|entity| (entity, Mat4::IDENTITY)));
+    pending.extend(roots.iter().chain(alone.iter()).map(|entity| (entity, Mat4::IDENTITY)));
+    unsettled.0.retain_mut(|(entity, looked)| {
+        // One in a tree is reached from its root. One whose matrix is not there yet is looked
+        // for once more, and after that is taken to be gone.
+        if nodes.contains(*entity) {
+            if !parented.contains(*entity) {
+                pending.push((*entity, Mat4::IDENTITY));
+            }
+            return false;
+        }
+        *looked += 1;
+        *looked < 2
+    });
     for (entity, parent) in &parented {
         if !nodes.contains(parent.0) {
             pending.push((entity, Mat4::IDENTITY));
@@ -293,6 +327,8 @@ impl Plugin for TransformPlugin {
         } else {
             log::warn!("Transform has an unexpected layout here; native plugins can't use it");
         }
+        app.world.init_resource::<Unsettled>();
+        app.world.on_remove::<Parent>(unparented);
         app.add_systems(Stage::FixedFirst, restore_simulated_transforms)
             .add_systems(Stage::FixedLast, record_simulated_transforms)
             .add_systems(
@@ -310,7 +346,7 @@ impl Plugin for TransformPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{app::App, ecs::Changed, ecs::ResMut};
+    use crate::app::App;
 
     fn app() -> App {
         let mut app = App::new();
@@ -446,6 +482,42 @@ mod tests {
         app.world.despawn(parent);
         app.update();
         assert_eq!(global(&app, child).x, 1.0);
+    }
+
+    #[test]
+    fn an_entity_on_its_own_is_worked_out_only_when_it_is_written() {
+        #[derive(Default)]
+        struct Written(usize);
+        let mut app = app();
+        app.world.init_resource::<Written>();
+        app.add_systems(Stage::Last, |written: Query<Entity, crate::ecs::Changed<GlobalTransform>>, mut count: ResMut<Written>| {
+            count.0 += written.count();
+        });
+        let alone = app.world.spawn(Transform::from_xyz(3.0, 0.0, 0.0));
+        let parent = app.world.spawn(Transform::from_xyz(5.0, 0.0, 0.0));
+        let child = app.world.spawn((Transform::from_xyz(1.0, 0.0, 0.0), Parent(parent)));
+        // Its matrix comes a frame after it does, and is worked out though nothing wrote to it.
+        app.update();
+        app.update();
+        assert_eq!(global(&app, alone).x, 3.0);
+        // At rest, nothing is written.
+        app.world.resource_mut::<Written>().0 = 0;
+        app.update();
+        assert_eq!(app.world.resource::<Written>().0, 0);
+        // Written, it follows.
+        app.world.get_mut::<Transform>(alone).unwrap().translation.x = 4.0;
+        app.update();
+        assert_eq!(global(&app, alone).x, 4.0);
+        assert_eq!(app.world.resource::<Written>().0, 1);
+        // A child whose parent is taken from it stands on its own, though it was not written.
+        assert_eq!(global(&app, child).x, 6.0);
+        app.world.remove::<Parent>(child);
+        app.update();
+        assert_eq!(global(&app, child).x, 1.0);
+        // And is one of those on its own from then on.
+        app.world.get_mut::<Transform>(child).unwrap().translation.x = 2.0;
+        app.update();
+        assert_eq!(global(&app, child).x, 2.0);
     }
 
     #[test]
