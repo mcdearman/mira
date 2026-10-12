@@ -144,7 +144,7 @@ impl MotionRenderer {
 
     /// Draws how far each moved mesh has come. Returns whether anything was drawn: if not,
     /// the target was left alone and holds nothing to read.
-    pub(crate) fn render(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, meshes: &MeshRenderer, frame: &RenderFrame) -> bool {
+    pub(crate) fn render(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, meshes: &MeshRenderer, frame: &RenderFrame) -> bool {
         if frame.moved.is_empty() {
             return false;
         }
@@ -170,7 +170,7 @@ impl MotionRenderer {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("motion"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &gpu.targets.motion,
+                view: target,
                 resolve_target: None,
                 depth_slice: None,
                 ops: wgpu::Operations { load: wgpu::LoadOp::Clear(MOTION_CLEAR), store: wgpu::StoreOp::Store },

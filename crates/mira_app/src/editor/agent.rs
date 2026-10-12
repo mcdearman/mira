@@ -316,7 +316,10 @@ impl Agent for ClaudeCode {
             let _ = heard.send(Heard::Failed("Can't hear the agent.".to_owned()));
             return;
         };
-        *self.running.lock().unwrap_or_else(|p| p.into_inner()) = Some(child);
+        // A place of this question's own. The thread that heard the last one may not have
+        // looked in its place yet, and from a place they shared it would take this program
+        // for its own: its failure would go unsaid, and it could no longer be stopped.
+        self.running = Arc::new(Mutex::new(Some(child)));
         let (session, running) = (self.session.clone(), self.running.clone());
         std::thread::spawn(move || {
             let mut reading = Reading::default();

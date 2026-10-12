@@ -147,7 +147,7 @@ impl Taa {
 
     /// Blends this frame into the history and returns the result, which post-processing reads.
     /// `view_proj` is this frame's camera without the jitter.
-    pub(crate) fn resolve<'a>(&'a mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, view_proj: Mat4, moving: bool) -> &'a wgpu::TextureView {
+    pub(crate) fn resolve<'a>(&'a mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, view_proj: Mat4, motion: &wgpu::TextureView, moving: bool) -> &'a wgpu::TextureView {
         let (w, h) = (gpu.config.width, gpu.config.height);
         if !matches!(&self.history, Some((hw, hh, _)) if *hw == w && *hh == h) {
             let make = || {
@@ -208,7 +208,7 @@ impl Taa {
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(&gpu.targets.motion),
+                    resource: wgpu::BindingResource::TextureView(motion),
                 },
             ],
         });
