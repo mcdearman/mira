@@ -3,7 +3,8 @@
 struct Taa {
     // This frame's clip space to the last frame's, both without jitter.
     reproject: mat4x4<f32>,
-    // x: 1 if the history is valid, y: weight of this frame, zw: 1 / size
+    // x: 1 if the history is valid, y: weight of this frame, zw: 1 / the size of the picture
+    // made, which the history is and which this frame's scene may be smaller than
     params: vec4<f32>,
     // x: 1 if things that moved wrote how far into `moved` this frame
     motion: vec4<f32>,
@@ -80,8 +81,13 @@ fn clip_to_box(color: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    // This frame's scene may be drawn smaller than the picture made here: `p` is the point of
+    // it this pixel falls in. Each frame's points fall elsewhere among the picture's pixels,
+    // by the frame's jitter, so over frames the history gathers more than any one frame has.
     let size = vec2<i32>(textureDimensions(current));
-    let p = vec2<i32>(position.xy);
+    let uv = position.xy * taa.params.zw;
+    let p = clamp(vec2<i32>(uv * vec2<f32>(size)), vec2<i32>(0), size - 1);
+    let enlarged = f32(size.x) * taa.params.z < 0.999;
 
     // The colours around this pixel, and the nearest surface among them: re-projecting by the
     // nearest keeps the edges of things in front sharp as the camera moves.
@@ -111,8 +117,11 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
             }
         }
     }
-    let uv = (vec2<f32>(p) + 0.5) * taa.params.zw;
-    let at = (vec2<f32>(nearest_at) + 0.5) * taa.params.zw;
+    if enlarged {
+        // Between this frame's points, what they come to there.
+        center = to_ycocg(squash(textureSampleLevel(current, linear_sampler, uv, 0.0).rgb));
+    }
+    let at = (vec2<f32>(nearest_at) + 0.5) / vec2<f32>(size);
     let ndc = vec4<f32>(at.x * 2.0 - 1.0, 1.0 - at.y * 2.0, nearest, 1.0);
     let previous = taa.reproject * ndc;
     var motion = vec2<f32>(previous.x / previous.w * 0.5 + 0.5, 0.5 - previous.y / previous.w * 0.5) - at;

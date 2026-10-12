@@ -68,7 +68,8 @@ fn fs_main(in: Out) -> @location(0) vec4<f32> {
     let cover = clamp(in.across.y + 0.5 - abs(in.across.x), 0.0, 1.0);
     // Reversed depth: nearer is greater. A line a little behind a surface still counts as on
     // it, so shapes drawn where meshes are don't flicker.
-    let scene = textureLoad(depth, vec2<i32>(in.position.xy), 0);
+    // The scene's depth may be drawn smaller than the frame the lines are drawn onto.
+    let scene = textureLoad(depth, vec2<i32>(in.position.xy / view.size.xy * vec2<f32>(textureDimensions(depth))), 0);
     let mine = in.deep.x / in.deep.y;
     var seen = 1.0;
     if mine < scene * 0.98 - 0.0005 {

@@ -166,6 +166,9 @@ pub struct TargetDesc {
     pub samples: u32,
     pub usage: wgpu::TextureUsages,
     pub scale: f32,
+    /// Whether the size is counted from the size the scene is drawn at, which may be less
+    /// than the picture's (`PostProcess::render_scale`), and not from the picture's.
+    pub of_scene: bool,
 }
 
 impl TargetDesc {
@@ -176,7 +179,14 @@ impl TargetDesc {
             samples: 1,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             scale: 1.0,
+            of_scene: false,
         }
+    }
+
+    /// The size of the scene as it is drawn, not of the picture it is made into.
+    pub fn of_scene(mut self) -> Self {
+        self.of_scene = true;
+        self
     }
 
     pub fn samples(mut self, samples: u32) -> Self {
@@ -327,10 +337,10 @@ impl RenderGraph {
 
     /// The views of the graph's own targets for a frame of this size, made where there are
     /// none yet.
-    pub(crate) fn views(&mut self, device: &wgpu::Device, width: u32, height: u32) -> HashMap<Slot, wgpu::TextureView> {
+    pub(crate) fn views(&mut self, device: &wgpu::Device, (width, height): (u32, u32), scene: (u32, u32)) -> HashMap<Slot, wgpu::TextureView> {
         let mut views = HashMap::new();
         for target in &mut self.targets {
-            let size = target.desc.size(width, height);
+            let size = if target.desc.of_scene { target.desc.size(scene.0, scene.1) } else { target.desc.size(width, height) };
             let view = match target.made.iter().position(|(made, _)| *made == size) {
                 Some(at) => {
                     let found = target.made.remove(at);
@@ -525,5 +535,13 @@ mod tests {
         assert_eq!(half.size(1920, 1080), (960, 540));
         assert_eq!(half.size(1, 1), (1, 1));
         assert_eq!(TargetDesc::new(wgpu::TextureFormat::Rgba16Float).size(801, 600), (801, 600));
+        // The scene may be drawn smaller than the picture: a target of the scene's size is
+        // counted from that.
+        let post = crate::render::PostProcess { render_scale: 0.5, ..Default::default() };
+        assert_eq!(post.scene_size(1920, 1080), (960, 540));
+        assert_eq!(crate::render::PostProcess { render_scale: 0.1, ..Default::default() }.scene_size(1920, 1080), (960, 540), "never less than half");
+        assert_eq!(crate::render::PostProcess { render_scale: f32::NAN, ..Default::default() }.scene_size(1920, 1), (1920, 1));
+        assert_eq!(crate::render::PostProcess::default().scene_size(1921, 1081), (1921, 1081));
+        assert!(TargetDesc::new(wgpu::TextureFormat::Rgba16Float).of_scene().of_scene && !half.of_scene);
     }
 }

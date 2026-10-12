@@ -352,7 +352,8 @@ impl ViewBinding {
             *dst = v4(src, 0.0);
         }
         let cascades = &frame.cascades;
-        let (w, h) = (gpu.config.width as f32, gpu.config.height as f32);
+        // The size the scene is drawn at: what a fragment's place in the picture is counted in.
+        let (w, h) = (frame.scene_size.0.max(1) as f32, frame.scene_size.1.max(1) as f32);
         let view = ViewUniform {
             view_proj: frame.view_proj.to_cols_array_2d(),
             inverse_view_proj: frame.view_proj.inverse().to_cols_array_2d(),

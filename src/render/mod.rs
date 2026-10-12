@@ -470,6 +470,9 @@ pub struct RenderFrame {
     pub(crate) light_shadows: Vec<Mat4>,
     /// How far from the camera something may be and still cast a shadow that matters.
     pub(crate) shadow_reach: f32,
+    /// The size the scene is drawn at, which is the picture's or less: see
+    /// [`PostProcess::render_scale`].
+    pub(crate) scene_size: (u32, u32),
     /// Skinned meshes to pose this frame.
     pub(crate) skinned: Vec<skin::SkinJob>,
     pub has_camera: bool,
@@ -682,7 +685,8 @@ fn extract(
         frame.frame_index = frame.frame_index.wrapping_add(1);
         frame.jitter = if post.taa { taa::jitter(frame.frame_index) } else { Vec2::ZERO };
         // A shift of the whole image by the jitter, in clip space.
-        let size = Vec2::new(gpu.config.width as f32, gpu.config.height as f32);
+        frame.scene_size = post.scene_size(gpu.config.width, gpu.config.height);
+        let size = Vec2::new(frame.scene_size.0 as f32, frame.scene_size.1 as f32);
         let shift = frame.jitter * 2.0 / size;
         frame.view_proj = Mat4::from_translation(Vec3::new(shift.x, -shift.y, 0.0)) * projection * view;
         frame.camera_position = transform.translation();
@@ -946,7 +950,8 @@ fn render(world: &mut World) {
     // The order the frame's passes run in, and the targets the graph makes for them.
     let (passes, mut views) = world.resource_scope(|world, graph: &mut RenderGraph| {
         let gpu = world.resource::<Gpu>();
-        (graph.ordered(), graph.views(&gpu.device, gpu.config.width, gpu.config.height))
+        let scene = world.resource::<RenderFrame>().scene_size;
+        (graph.ordered(), graph.views(&gpu.device, (gpu.config.width, gpu.config.height), scene))
     });
     let passes = match passes {
         Ok(passes) => passes,
@@ -1062,10 +1067,12 @@ fn frame_graph() -> RenderGraph {
     let mut graph = RenderGraph::default();
     graph
         // Depth is read after the main pass, by the light shafts and the blend over time.
-        .target(DEPTH, TargetDesc::new(DEPTH_FORMAT).samples(MSAA_SAMPLES))
-        .target(HDR_MSAA, TargetDesc::new(HDR_FORMAT).samples(MSAA_SAMPLES).usage(wgpu::TextureUsages::RENDER_ATTACHMENT))
-        .target(HDR, TargetDesc::new(HDR_FORMAT))
-        .target(MOTION, TargetDesc::new(gpu::MOTION_FORMAT).samples(MSAA_SAMPLES))
+        // The scene is drawn at its own size, and made into a picture of the frame's size
+        // after: by the blend over time where there is one.
+        .target(DEPTH, TargetDesc::new(DEPTH_FORMAT).samples(MSAA_SAMPLES).of_scene())
+        .target(HDR_MSAA, TargetDesc::new(HDR_FORMAT).samples(MSAA_SAMPLES).usage(wgpu::TextureUsages::RENDER_ATTACHMENT).of_scene())
+        .target(HDR, TargetDesc::new(HDR_FORMAT).of_scene())
+        .target(MOTION, TargetDesc::new(gpu::MOTION_FORMAT).samples(MSAA_SAMPLES).of_scene())
         .add(Pass::new("skinning", pose_skins).writes(&[SKINNED]))
         .add(Pass::new("ray tracing", build_traced_scene).reads(&[SKINNED]).writes(&[TRACED_SCENE]))
         .add(Pass::new("culling", cull_scene).writes(&[SEEN]))
