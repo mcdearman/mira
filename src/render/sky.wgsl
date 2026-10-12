@@ -1,4 +1,5 @@
-// The sky behind everything. Prepended with pbr.wgsl.
+// The sky behind everything.
+#import mira::pbr
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,

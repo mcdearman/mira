@@ -1,4 +1,5 @@
-// Standard meshes. Prepended with pbr.wgsl.
+// Standard meshes.
+#import mira::pbr
 
 @group(1) @binding(0) var base_color_texture: texture_2d<f32>;
 @group(1) @binding(1) var normal_texture: texture_2d<f32>;

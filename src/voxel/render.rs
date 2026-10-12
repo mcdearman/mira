@@ -34,12 +34,7 @@ impl VoxelRenderer {
 
     pub fn new(gpu: &Gpu, view: &ViewBinding, shadows: &ShadowMaps, textures: &TextureArray) -> Self {
         let device = &gpu.device;
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("voxel shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                format!("{}\n{}", gpu.pbr_wgsl(), crate::shader!("voxel.wgsl").source()).into(),
-            ),
-        });
+        let shader = gpu.shader(crate::shader!("voxel.wgsl"));
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("block texture layout"),
             entries: &[

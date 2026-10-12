@@ -1,5 +1,5 @@
 // The ground and everything built on it, in photographic materials. Prepended with
-// render::PBR_WGSL.
+// the engine's lighting (`Gpu::pbr_wgsl`).
 //
 // Terrain vertices carry blend weights for the six ground layers; other vertices name one
 // layer. UVs are in metres; each layer says how many metres one repeat of its texture covers.

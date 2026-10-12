@@ -1,5 +1,5 @@
-
-// ---- Light probe bake. Prepended with pbr.wgsl and rt_on.wgsl. -----------------------------
+// ---- Light probe bake, where rays are traced. ------------------------------------------------
+#import mira::pbr
 
 struct Bake {
     // xyz: the first probe, w: metres between probes
