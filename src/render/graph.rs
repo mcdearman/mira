@@ -231,6 +231,9 @@ pub struct PassInfo {
     /// How long the pass took to record its work the last time it ran, if it has run. This
     /// is the engine's time on the processor, not the graphics card's time drawing it.
     pub took: Option<std::time::Duration>,
+    /// How long the graphics card took to do that work, the last time it said: none where
+    /// the card cannot stamp the time between passes, or before it has first answered.
+    pub on_card: Option<std::time::Duration>,
 }
 
 /// The passes of a frame and the targets made for them.
@@ -242,6 +245,8 @@ pub struct RenderGraph {
     order: Option<Vec<usize>>,
     /// How long each pass took when the passes last ran.
     took: HashMap<&'static str, std::time::Duration>,
+    /// How long the card took over each pass, the last time it said.
+    on_card: HashMap<&'static str, std::time::Duration>,
 }
 
 impl RenderGraph {
@@ -285,7 +290,7 @@ impl RenderGraph {
             .iter()
             .map(|&i| {
                 let pass = &self.passes[i];
-                PassInfo { name: pass.name, reads: pass.reads.clone(), writes: pass.writes.clone(), took: self.took.get(pass.name).copied() }
+                PassInfo { name: pass.name, reads: pass.reads.clone(), writes: pass.writes.clone(), took: self.took.get(pass.name).copied(), on_card: self.on_card.get(pass.name).copied() }
             })
             .collect())
     }
@@ -293,6 +298,16 @@ impl RenderGraph {
     /// Notes how long each pass took, the last time the frame's passes were run.
     pub(crate) fn timed(&mut self, took: impl IntoIterator<Item = (&'static str, std::time::Duration)>) {
         self.took = took.into_iter().collect();
+    }
+
+    /// Notes how long the graphics card took over each pass of a frame it has drawn.
+    pub(crate) fn timed_on_card(&mut self, took: impl IntoIterator<Item = (&'static str, std::time::Duration)>) {
+        self.on_card = took.into_iter().collect();
+    }
+
+    /// How long the graphics card took over a whole frame's passes, the last time it said.
+    pub fn on_card(&self) -> Option<std::time::Duration> {
+        (!self.on_card.is_empty()).then(|| self.on_card.values().sum())
     }
 
     /// What each pass does, in the order they run.
@@ -460,9 +475,13 @@ mod tests {
         let mut graph = RenderGraph::default();
         graph.add(Pass::new("a", nothing).writes(&["x"])).add(Pass::new("b", nothing).reads(&["x"]));
         graph.add(Pass::new("a", nothing).reads(&["y"]).writes(&["x"]));
-        assert_eq!(graph.describe().unwrap()[0], PassInfo { name: "a", reads: vec!["y"], writes: vec!["x"], took: None });
+        assert_eq!(graph.describe().unwrap()[0], PassInfo { name: "a", reads: vec!["y"], writes: vec!["x"], took: None, on_card: None });
         graph.timed([("a", std::time::Duration::from_micros(40))]);
         assert_eq!(graph.describe().unwrap()[0].took, Some(std::time::Duration::from_micros(40)));
+        assert_eq!(graph.on_card(), None);
+        graph.timed_on_card([("a", std::time::Duration::from_micros(900)), ("b", std::time::Duration::from_micros(100))]);
+        assert_eq!(graph.describe().unwrap()[0].on_card, Some(std::time::Duration::from_micros(900)));
+        assert_eq!(graph.on_card(), Some(std::time::Duration::from_millis(1)));
         assert!(graph.remove("a"));
         assert!(!graph.remove("a"));
         assert_eq!(names(&mut graph), ["b"]);

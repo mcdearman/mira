@@ -138,12 +138,12 @@ const TOOLS: &[Tool] = &[
     },
     Tool {
         command: "passes",
-        about: "The passes that draw a frame, in the order they run: what each reads and writes (targets and other things, by name), and how long it last took to record its work, in microseconds of the engine's own time. This is the render graph; a pass a plugin added shows where it fell.",
+        about: "The passes that draw a frame, in the order they run: what each reads and writes (targets and other things, by name), how long it last took to record its work, in microseconds of the engine's own time (micros), and how long the graphics card last took to do that work (card_micros, null where the card cannot say). This is the render graph; a pass a plugin added shows where it fell.",
         arguments: &[],
     },
     Tool {
         command: "profile",
-        about: "Where the time goes: how long recent frames took (mean and worst), what each stage took in the last frame, and the systems that cost the most. The frame time is the engine's own work, not the wait for the display.",
+        about: "Where the time goes: how long recent frames took (mean and worst), what each stage took in the last frame, and the systems that cost the most. The frame time is the engine's own work, not the wait for the display; card_millis is what the graphics card took to draw a frame, and the slower of the two is what the frame rate can reach.",
         arguments: &["systems?: integer: how many of the costliest systems to list (default 10)"],
     },
     Tool {

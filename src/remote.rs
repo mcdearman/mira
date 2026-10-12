@@ -846,6 +846,7 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                     ("reads", slots(pass.reads)),
                     ("writes", slots(pass.writes)),
                     ("micros", pass.took.map_or(Value::Null, |took| Value::Int(took.as_micros() as i64))),
+                    ("card_micros", pass.on_card.map_or(Value::Null, |took| Value::Int(took.as_micros() as i64))),
                 ])
             });
             Ok(map([("passes", Value::List(passes.collect()))]))
@@ -901,18 +902,23 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 .and_then(Value::as_f64)
                 .unwrap_or(10.0) as usize;
             let millis = |time: Duration| Value::Float(time.as_secs_f64() * 1e3);
+            // A frame is the engine's work and then the card's: the slower of the two is
+            // what holds the frames back.
+            let card = app.world.get_resource::<crate::render::RenderGraph>().and_then(|graph| graph.on_card());
             let stats = app.world.resource::<FrameStats>();
             let mean = stats.mean();
+            let slower = mean.max(card.unwrap_or_default());
             let frames = map([
                 ("measured", Value::Int(stats.frames().count() as i64)),
                 ("mean_millis", millis(mean)),
                 ("worst_millis", millis(stats.worst())),
+                ("card_millis", card.map_or(Value::Null, millis)),
                 (
                     "could_reach_fps",
-                    Value::Float(if mean.is_zero() {
+                    Value::Float(if slower.is_zero() {
                         0.0
                     } else {
-                        1.0 / mean.as_secs_f64()
+                        1.0 / slower.as_secs_f64()
                     }),
                 ),
             ]);
@@ -2063,6 +2069,7 @@ mod tests {
             .add(Pass::new("post", nothing).reads(&["scene"]).writes(&["frame"]))
             .add(Pass::new("main", nothing).writes(&["scene"]));
         graph.timed([("main", std::time::Duration::from_micros(250))]);
+        graph.timed_on_card([("main", std::time::Duration::from_micros(7000))]);
         app.world.insert_resource(graph);
         let told = ask(&mut app, "{'cmd': 'passes'}");
         let Some(Value::List(passes)) = told.field("passes") else {
@@ -2072,6 +2079,8 @@ mod tests {
         assert_eq!(names, [Some(Value::Text("main".into())), Some(Value::Text("post".into()))]);
         assert_eq!(passes[0].field("micros"), Some(&Value::Int(250)));
         assert_eq!(passes[1].field("micros"), Some(&Value::Null));
+        assert_eq!(passes[0].field("card_micros"), Some(&Value::Int(7000)));
+        assert_eq!(passes[1].field("card_micros"), Some(&Value::Null));
         assert_eq!(passes[1].field("reads"), Some(&Value::List(vec![Value::Text("scene".into())])));
     }
 

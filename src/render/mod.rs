@@ -1,4 +1,5 @@
 mod animation;
+mod card_clock;
 pub mod compose;
 mod debug_lines;
 mod environment;
@@ -37,6 +38,7 @@ pub use gpu::{
     HDR_FORMAT, MSAA_SAMPLES,
 };
 pub use compose::{ComposeError, ShaderLibrary};
+use card_clock::CardClock;
 pub use graph::{slots, Pass, PassContext, PassInfo, RenderGraph, TargetDesc};
 pub use image::{Image, Processed};
 pub use lights::{PointLight, SpotLight};
@@ -975,6 +977,7 @@ fn render(world: &mut World) {
             world.insert_resource(Offscreen(texture));
         }
     }
+    let clock = world.remove_resource::<CardClock>();
     let gpu = world.resource::<Gpu>();
     let frame_texture = match &output {
         Some(output) => output.texture.clone(),
@@ -984,14 +987,24 @@ fn render(world: &mut World) {
     // but the picture that is shown.
     views.insert(slots::FRAME, frame_texture.create_view(&wgpu::TextureViewDescriptor::default()));
     let mut context = PassContext::new(&gpu.device, &gpu.queue, views);
+    // What the passes take is timed twice over: here, recording their work, and on the card,
+    // which says a few frames later how long it took to do it.
+    let mut clock = clock.unwrap_or_else(|| CardClock::new(gpu));
+    let on_card = clock.answer();
+    clock.begin(&mut context.encoder);
     let mut took = Vec::with_capacity(passes.len());
     for (name, pass) in passes {
         let began = std::time::Instant::now();
         pass(world, &mut context);
         took.push((name, began.elapsed()));
+        clock.passed(&mut context.encoder, name);
     }
     context.finish();
-    world.resource_mut::<RenderGraph>().timed(took);
+    let graph = world.resource_mut::<RenderGraph>();
+    graph.timed(took);
+    if let Some(on_card) = on_card {
+        graph.timed_on_card(on_card);
+    }
 
     // The frame is done, with what is drawn over it; a screenshot is of the two together.
     let gpu = world.resource::<Gpu>();
@@ -1004,7 +1017,9 @@ fn render(world: &mut World) {
     let readback = path
         .as_ref()
         .and_then(|_| screenshot::copy_to_buffer(gpu, &mut encoder, &frame_texture));
+    clock.read_back(&mut encoder);
     gpu.queue.submit([encoder.finish()]);
+    clock.sent();
     if let (Some(path), Some(readback)) = (&path, readback) {
         match screenshot::save(gpu, readback, path) {
             Ok(()) => log::info!("saved screenshot to {}", path.display()),
@@ -1017,6 +1032,7 @@ fn render(world: &mut World) {
     if path.is_some() {
         world.resource_mut::<Screenshot>().path = None;
     }
+    world.insert_resource(clock);
 }
 
 /// The engine's own passes, as the frame starts out. A plugin adds to them, or replaces one

@@ -35,7 +35,7 @@ Each tool is one command of the [debug connection](LIVE.md#the-debug-connection)
 | `mira_resource` | game-wide settings, read or set |
 | `mira_types`, `mira_schema`, `mira_unregistered` | what can be read and written, the shape of each type, and what can't be seen at all |
 | `mira_systems`, `mira_failures`, `mira_profile` | what runs, what it touches, what broke and where, and where the time goes |
-| `mira_passes` | the passes that draw a frame, in order, with what each reads and writes and how long it took |
+| `mira_passes` | the passes that draw a frame, in order, with what each reads and writes, how long it took to record and how long the graphics card took over it |
 | `mira_pause`, `mira_resume`, `mira_step`, `mira_time_scale` | time; `mira_step` waits for its frames and answers with the status after them |
 | `mira_run_until` | runs until a [signal](SIGNALS.md) is true, then pauses: getting the game to a moment worth looking at |
 | `mira_approve` | asks the person at the engine app whether something may be done, and waits for the answer: what an agent run from the app is told to use for its permission questions |
