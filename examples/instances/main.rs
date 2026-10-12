@@ -75,13 +75,13 @@ fn field(mut commands: Commands, mut server: ResMut<AssetServer>, mut meshes: Re
     let spacing = 1.2;
     let half = side as f32 * spacing * 0.5;
     // Every so many is one that moves, spread evenly through the field.
-    let every = if asked.moving > 0.0 { (1.0 / asked.moving).round().max(1.0) as usize } else { usize::MAX };
+    let every = (asked.moving > 0.0).then(|| (1.0 / asked.moving).round().max(1.0) as usize);
     for i in 0..asked.count {
         let (column, row) = (i % side, i / side);
         let at = Vec3::new(column as f32 * spacing - half, 0.4, row as f32 * spacing - half);
         let material = Material { color: colours[(column + row * 3) % colours.len()], roughness: 0.6, ..Default::default() };
         let thing = commands.spawn((Transform::from_translation(at), Mesh3d(shapes[(column * 7 + row) % shapes.len()]), material)).id();
-        if i % every == 0 {
+        if every.is_some_and(|every| i % every == 0) {
             commands.entity(thing).insert(Bob { rest: at.y, phase: i as f32 * 0.37 });
         }
     }
@@ -93,7 +93,7 @@ fn field(mut commands: Commands, mut server: ResMut<AssetServer>, mut meshes: Re
         Camera::default(),
     ));
     commands.spawn((Transform::IDENTITY.looking_at(Vec3::new(-0.5, -1.0, -0.35), Vec3::Y), DirectionalLight { shadows: asked.shadows, ..Default::default() }));
-    log::info!("{} things in a field {side} across, {} of them moving", asked.count, asked.count.div_ceil(every.min(asked.count.max(1))));
+    log::info!("{} things in a field {side} across, {} of them moving", asked.count, every.map_or(0, |every| asked.count.div_ceil(every)));
 }
 
 fn bob(time: Res<Time>, mut things: Query<(&Bob, &mut Transform)>) {

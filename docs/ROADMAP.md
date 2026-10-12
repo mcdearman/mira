@@ -345,7 +345,8 @@ dying in any order; the timer is right in every case because no code ever sets i
       entity changes; each view sends the numbers of those it sees, and each shadow cascade
       of those that cast into it (see [PERFORMANCE.md](PERFORMANCE.md))
 - [ ] The rest of the scene on the GPU: shared vertex and index buffers, bindless textures,
-      and the traced scene kept as the instances are
+      and the traced scene kept as the instances are (it is left alone while nothing
+      changes; one thing moving still has all of it gathered and built again)
 - [ ] Culling in compute against the frustum and a depth pyramid; multi-draw indirect
 - [ ] Visibility buffer or deferred shading, replacing forward + MSAA
 - [ ] Point and spot lights, clustered, with a shadow atlas

@@ -87,7 +87,32 @@ into it. A caster is now drawn into the cascades whose box it falls in, where it
 into all four: the near cascades are small, so most of a wide scene is in one or two.
 Deciding it is part of deciding what the view sees, from the same small record.
 
-So the next work is for the traced scene to keep what it was given as the instances now
-do, which is what a frame with ray tracing still pays for; then to decide on the card what
-each view and each cascade sees, with meshes in shared buffers so that a pipeline's draws
-are one call.
+## The traced scene at rest
+
+Where rays are traced, the scene they are traced against was gathered again every frame:
+every instance looked up and listed, its material sent, and the structure the card traces
+against built anew. It is now gathered only when an instance has changed, or the camera
+has moved far enough that something has come within reach of the rays, left it, or changed
+its level of detail; otherwise what was gathered stands, on the card as well.
+
+At 100,000 things with ray tracing:
+
+| Moving | A frame (mean) | Frames a second |
+|---|---|---|
+| none | 6.6 ms | 151 |
+| one thing | 20.6 ms | 49 |
+| a tenth | 27.5 ms | 36 |
+
+So it helps a scene at rest and nothing else: **one thing moving costs the whole 14 ms**.
+About half of that is the engine's (going through every instance again to list it); the
+rest is the structure being built again from all of them, which the graphics library does
+whole whenever any instance in it has changed. The traced scene holds 65,536 instances at
+most, so at 100,000 a third are left out of it.
+
+(The figures above this section for "none moving" were taken with one thing moving, by a
+mistake in the example since put right; without ray tracing it made no difference to them.)
+
+So the next work, where rays are traced, is to keep the list as the instances are kept, an
+entry changed only when its instance is, and to trace against fewer instances than are
+drawn. Without rays it is to decide on the card what each view and each cascade sees, with
+meshes in shared buffers so that a pipeline's draws are one call.

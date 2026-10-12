@@ -101,6 +101,12 @@ pub struct RayTracing {
     /// This frame's instances, fixed ones first.
     frame: Vec<(GeometryId, Mat4, HitMaterial)>,
     used: u32,
+    /// What the instances in `frame` were gathered from, as [`Self::same_as`] was last told:
+    /// while it is the same there is nothing to gather again. None when they must be.
+    gathered: Option<(u64, u64)>,
+    /// Whether the top-level structure holds every instance of `frame`, none left out for
+    /// geometry that was not built yet.
+    placed: bool,
     pub settings: RayTracingSettings,
 
     /// Normals and texture coordinates of every geometry, end to end.
@@ -169,6 +175,8 @@ impl RayTracing {
             fixed: Vec::new(),
             frame: Vec::new(),
             used: 0,
+            gathered: None,
+            placed: false,
             settings,
             hit_vertices: Vec::new(),
             hit_indices: Vec::new(),
@@ -245,6 +253,7 @@ impl RayTracing {
     /// An instance that stays put for the rest of the run, like terrain or a building.
     pub fn add_fixed(&mut self, geometry: GeometryId, transform: Mat4, material: HitMaterial) {
         self.fixed.push((geometry, transform, material));
+        self.gathered = None;
     }
 
     /// The traced copy of an engine mesh, made the first time it's needed.
@@ -346,9 +355,24 @@ impl RayTracing {
         (self.generation, self.frame.len())
     }
 
+    /// Whether the instances are the ones gathered before from the same thing: if so they
+    /// stand, and nothing is to be gathered or sent this frame.
+    pub(crate) fn same_as(&mut self, key: (u64, u64)) -> bool {
+        let same = self.gathered == Some(key);
+        self.gathered = Some(key);
+        same
+    }
+
+    /// Says that what was gathered this frame is not all there is: a mesh or a texture was
+    /// not ready. It is gathered again next frame whatever [`Self::same_as`] is told.
+    pub(crate) fn gather_again(&mut self) {
+        self.gathered = None;
+    }
+
     pub(crate) fn begin_frame(&mut self) {
         self.frame.clear();
         self.frame.extend_from_slice(&self.fixed);
+        self.placed = false;
     }
 
     pub(crate) fn push(&mut self, geometry: GeometryId, transform: Mat4, material: HitMaterial) {
@@ -357,8 +381,8 @@ impl RayTracing {
         }
     }
 
-    /// Uploads this frame's instance materials, and the hit buffers if geometry was added.
-    pub(crate) fn upload(&mut self, gpu: &Gpu) {
+    /// Uploads the hit buffers if geometry was added.
+    pub(crate) fn upload_geometry(&mut self, gpu: &Gpu) {
         if self.buffers_stale {
             self.buffers_stale = false;
             self.vertex_buffer = storage(&gpu.device, "hit vertices", bytemuck::cast_slice(&self.hit_vertices));
@@ -366,6 +390,12 @@ impl RayTracing {
             self.range_buffer = storage(&gpu.device, "hit ranges", bytemuck::cast_slice(&self.hit_ranges));
             self.generation += 1;
         }
+    }
+
+    /// Uploads the instances' materials as they were gathered this frame, and the hit
+    /// buffers if geometry was added.
+    pub(crate) fn upload(&mut self, gpu: &Gpu) {
+        self.upload_geometry(gpu);
         let materials: Vec<HitMaterial> = self
             .frame
             .iter()
@@ -395,11 +425,20 @@ impl RayTracing {
             })
             .chain((0..self.geometry.len()).filter(|i| self.geometry[*i].dynamic))
             .collect();
-        for (i, (geometry, transform, _)) in self.frame.iter().enumerate() {
+        // Every instance is in place and no geometry is to be built or built again: the
+        // structure stands as it is.
+        if self.placed && pending.is_empty() {
+            return;
+        }
+        let mut left_out = false;
+        // In place already, the instances are not gone through again: only the geometry that
+        // moves is built anew under them.
+        for (i, (geometry, transform, _)) in self.frame.iter().enumerate().filter(|_| !self.placed) {
             let g = geometry.0 as usize;
             if !self.geometry[g].built && !pending.contains(&g) {
                 // Not built yet: leave it out this frame.
                 self.tlas[i] = None;
+                left_out = true;
                 continue;
             }
             let t = transform.transpose().to_cols_array();
@@ -408,10 +447,13 @@ impl RayTracing {
             // The custom index finds the instance's material, however many are left out.
             self.tlas[i] = Some(wgpu::TlasInstance::new(&self.geometry[g].blas, rows, i as u32, 0xff));
         }
-        for i in self.frame.len()..self.used as usize {
-            self.tlas[i] = None;
+        if !self.placed {
+            for i in self.frame.len()..self.used as usize {
+                self.tlas[i] = None;
+            }
+            self.used = self.frame.len() as u32;
+            self.placed = !left_out;
         }
-        self.used = self.frame.len() as u32;
 
         let entries: Vec<wgpu::BlasBuildEntry> = pending
             .iter()
