@@ -15,16 +15,16 @@ A phase is not done until its exit test passes. Tick items off here as they land
 
 | Area | Have | Missing |
 |---|---|---|
-| Core | Hand-written sparse-set ECS, function systems, change detection, commands, events, startup access checks, fixed timestep with interpolation | Parallel scheduler, system ordering constraints, run conditions, states, reflection, derive macros |
-| Data | glTF and image loading, typed handles | Serialization, scenes, prefabs, async loading, hot reload, processed assets, handle reference counts |
-| Rendering | Forward HDR + MSAA + TAA, PBR, image-based lighting, cascaded sun shadows, bloom, light shafts, decals, GPU skinning, hand-authored LODs | GPU-driven drawing, occlusion culling, local lights, material system, particles as an engine feature, upscaling, compressed and streamed textures |
+| Core | Hand-written sparse-set ECS, function systems, change detection, commands, events, startup access checks, fixed timestep with interpolation; ordering, run conditions and states; systems and single queries run across threads; hooks, observers and relations; reflection and derive macros; signals | Table storage; hooks, observers and relations from plugins |
+| Data | glTF and image loading, typed handles; JSON scenes and prefabs; an asset server that loads off the main thread, reloads what changes, unloads what nothing refers to, and compresses pictures to BC7 | ASTC, meshes in a binary form, streamed textures |
+| Rendering | Forward HDR + MSAA + TAA with motion vectors, PBR, image-based lighting, cascaded sun shadows, bloom, light shafts, decals, GPU skinning, hand-authored LODs; the frame as a graph of passes | GPU-driven drawing, occlusion culling, local lights, material system, particles as an engine feature, upscaling |
 | Lighting | Ray-traced shadows/AO/reflections (Vulkan only), light probes baked once | Dynamic global illumination, anything ray-traced on Metal |
 | Voxels | Chunked storage, threaded generation and meshing with ambient occlusion, streaming, raycasts, saving edits | Greedy meshing, chunk LOD, transparent blocks, voxel lighting |
 | Simulation | Rigid bodies with sleeping, joints, character controller, fluids; shapes: sphere, box, capsule, plane, static triangle mesh | Convex hulls, continuous collision, ragdolls, vehicles, cloth, destruction |
-| Animation | Clips, cross-fades, masks, two-bone IK, procedural gait | State machines, blend trees, retargeting, skins loaded from glTF, compression |
-| Runtime | Keyboard and mouse | UI, text, audio, gamepad, input mapping, navigation, AI, networking, scripting, save games |
-| Plugins | Native plugins over a C interface (`include/mira.h`) in any language, hot-reloaded with their data intact; Rust bindings | Most of the engine is not reachable from a plugin yet (see Phase 1A) |
-| Tools | Screenshot capture, 62 tests, CI on Linux and macOS with clippy and Miri | Editor, profiler, image-diff tests |
+| Animation | Clips, cross-fades, masks, two-bone IK, procedural gait, skins loaded from glTF | State machines, blend trees, retargeting, compression |
+| Runtime | Keyboard and mouse; text and panels in the game, with a first set of controls | Audio, gamepad, input mapping, navigation, AI, networking, save games |
+| Plugins | Native plugins over a C interface (`include/mira.h`) in any language, hot-reloaded with their data intact; Rust and Haskell bindings; a whole game as a plugin | Animation, joints and much else of the engine from a plugin (see Phase 1A) |
+| Tools | The engine app: the game in a window with its entities, an inspector, signals, assets and an agent beside it; a debug connection and an MCP server; screenshots and image-diff tests; CI on Linux and macOS with clippy, Miri and ThreadSanitizer | Play in editor, material editor, a profiler's timeline, GPU timings |
 
 ## Principles
 
@@ -325,8 +325,11 @@ dying in any order; the timer is right in every case because no code ever sets i
 
 ## Phase 3: GPU-driven renderer (XL)
 
-- [ ] Render graph: passes declare what they read and write; the graph orders them and
-      allocates targets
+- [x] Render graph: passes declare what they read and write; the graph orders them and
+      allocates targets (see [RENDER_GRAPH.md](RENDER_GRAPH.md)). The frame's own passes run
+      through it, and the motion target is the first it makes
+- [ ] The rest of the targets made by the graph (`hdr`, `depth`, the history the blend over
+      time keeps), and overlays as passes
 - [ ] Material system: shader modules with imports, generated variants, material instances
 - [ ] Scene on the GPU: shared vertex and index buffers, a persistent instance buffer updated
       only for changed transforms, bindless textures
