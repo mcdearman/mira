@@ -666,7 +666,8 @@ mod tests {
         scene.set(mover, &[part(1, ahead), part(2, ahead)]);
         assert!(!scene.moved(stranger, Mat4::IDENTITY), "one that draws nothing yet is to be set");
         let _ = scene.take_traced_changes();
-        (scene.stale.clear(), scene.stale_looks.clear());
+        scene.stale.clear();
+        scene.stale_looks.clear();
         scene.begin(4);
         // Where it was already: nothing to send.
         assert!(scene.moved(mover, Mat4::from_translation(ahead)));
