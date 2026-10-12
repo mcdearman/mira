@@ -50,14 +50,13 @@ pub struct Gpu {
     pub ray_tracing: bool,
 }
 
-/// Size-dependent textures, recreated on resize.
+/// Size-dependent textures, recreated on resize. The frame's passes are given them by name
+/// (see `graph::slots`); the targets only passes use are made by the graph itself.
 pub struct Targets {
     pub depth: wgpu::TextureView,
     /// Multisampled HDR color, resolved into `hdr` at the end of the main pass.
     pub hdr_msaa: wgpu::TextureView,
     pub hdr: wgpu::TextureView,
-    /// Where moving things write how far they have come, for TAA.
-    pub motion: wgpu::TextureView,
 }
 
 impl Gpu {
@@ -275,7 +274,6 @@ impl Targets {
             // Read after the main pass, by the light shafts and TAA.
             depth: texture("depth", DEPTH_FORMAT, MSAA_SAMPLES, attachment | wgpu::TextureUsages::TEXTURE_BINDING),
             hdr_msaa: texture("hdr msaa", HDR_FORMAT, MSAA_SAMPLES, attachment),
-            motion: texture("motion", MOTION_FORMAT, MSAA_SAMPLES, attachment | wgpu::TextureUsages::TEXTURE_BINDING),
             hdr: texture(
                 "hdr",
                 HDR_FORMAT,

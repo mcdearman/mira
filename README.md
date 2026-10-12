@@ -94,6 +94,8 @@ Relations between entities: [docs/RELATIONS.md](docs/RELATIONS.md).
 Failures that pause the game instead of ending it, and stepping time:
 [docs/LIVE.md](docs/LIVE.md). Game rules as signals: [docs/SIGNALS.md](docs/SIGNALS.md).
 
+The frame as passes a plugin can add to: [docs/RENDER_GRAPH.md](docs/RENDER_GRAPH.md).
+
 AI agents driving a running game over MCP: [docs/MCP.md](docs/MCP.md).
 
 Interface inside the game, on Armature: [docs/UI.md](docs/UI.md).

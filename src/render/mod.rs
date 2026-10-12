@@ -6,6 +6,7 @@ pub mod gait;
 pub mod reach;
 mod gltf_scene;
 mod gpu;
+pub mod graph;
 mod image;
 mod mesh;
 mod motion;
@@ -32,6 +33,7 @@ pub use gpu::{
     main_depth_state, main_multisample, Gpu, Targets, DEPTH_CLEAR, DEPTH_COMPARE, DEPTH_FORMAT,
     HDR_FORMAT, MSAA_SAMPLES,
 };
+pub use graph::{slots, Pass, PassContext, PassInfo, RenderGraph, TargetDesc};
 pub use image::{Image, Processed};
 pub use mesh::{Mesh, Mesh3d, Vertex};
 pub use post::PostProcess;
@@ -863,7 +865,18 @@ fn render(world: &mut World) {
     if !frame.has_camera {
         return;
     }
-    let cast_shadows = frame.shadows;
+    // The order the frame's passes run in, and the targets the graph makes for them.
+    let (passes, mut views) = world.resource_scope(|world, graph: &mut RenderGraph| {
+        let gpu = world.resource::<Gpu>();
+        (graph.ordered(), graph.views(&gpu.device, gpu.config.width, gpu.config.height))
+    });
+    let passes = match passes {
+        Ok(passes) => passes,
+        Err(circle) => {
+            log::error!("{circle}; nothing is drawn until one of them is taken out");
+            return;
+        }
+    };
     let gpu = world.resource::<Gpu>();
     // Without a frame to draw in (the window hidden, or the screen locked), draw off screen
     // instead, so the world still renders and screenshots can still be taken.
@@ -917,116 +930,16 @@ fn render(world: &mut World) {
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("frame"),
         });
-    world.resource::<skin::Skinner>().dispatch(&mut encoder);
-    if world.contains_resource::<RayTracing>() {
-        world.resource_scope(|world, rt: &mut RayTracing| {
-            rt.build(&mut encoder);
-            let scene = rt.scene_key();
-            if rt.ready() && rt.probes.wants_bake(scene) {
-                let view = &world.resource::<ViewBinding>().bind_group;
-                world
-                    .resource::<ProbeBaker>()
-                    .bake(world.resource::<Gpu>(), &mut encoder, view, &mut rt.probes);
-            }
-        });
+    // The frame is its passes, each given the targets by name. Those that outlast a frame
+    // are the renderer's; the graph has made the rest.
+    views.insert(slots::FRAME, target.clone());
+    views.insert(slots::HDR, gpu.targets.hdr.clone());
+    views.insert(slots::HDR_MSAA, gpu.targets.hdr_msaa.clone());
+    views.insert(slots::DEPTH, gpu.targets.depth.clone());
+    let mut context = PassContext::new(&mut encoder, views);
+    for (_, pass) in passes {
+        pass(world, &mut context);
     }
-    let gpu = world.resource::<Gpu>();
-
-    if cast_shadows {
-        let shadows = world.resource::<ShadowMaps>();
-        for (cascade, layer) in shadows.layer_views.iter().enumerate() {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("shadow pass"),
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: layer,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_bind_group(0, &shadows.bind_group, &[ShadowMaps::offset(cascade)]);
-            for draw in &world.resource::<ShadowDrawFunctions>().0 {
-                draw(world, &mut pass);
-            }
-        }
-    }
-
-    {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("main pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &gpu.targets.hdr_msaa,
-                resolve_target: Some(&gpu.targets.hdr),
-                depth_slice: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Discard,
-                },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &gpu.targets.depth,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(DEPTH_CLEAR),
-                    // Kept for the light shafts and TAA, which read it afterwards.
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-        pass.set_bind_group(0, &world.resource::<ViewBinding>().bind_group, &[]);
-        for draw in &world.resource::<DrawFunctions>().0 {
-            draw(world, &mut pass);
-        }
-        for draw in &world.resource::<TransparentDrawFunctions>().0 {
-            draw(world, &mut pass);
-        }
-    }
-
-    // Sunlight scattered in the air, with the shadows' shafts through it.
-    let air = *world.resource::<VolumetricLight>();
-    if air.enabled && cast_shadows {
-        world.resource_scope(|world, shafts: &mut volumetric::Shafts| {
-            shafts.render(world.resource::<Gpu>(), &mut encoder, &world.resource::<ViewBinding>().bind_group, &air);
-        });
-    }
-
-    let settings = *world.resource::<PostProcess>();
-    let (unjittered, time) = {
-        let frame = world.resource::<RenderFrame>();
-        (frame.unjittered_view_proj, frame.time)
-    };
-    // What moved writes how far, so the blend over time can look for it where it was.
-    let moving = settings.taa && {
-        if !world.contains_resource::<motion::MotionRenderer>() {
-            let renderer = motion::MotionRenderer::new(world.resource::<Gpu>());
-            world.insert_resource(renderer);
-        }
-        world.resource_scope(|world, motion: &mut motion::MotionRenderer| {
-            motion.render(world.resource::<Gpu>(), &mut encoder, world.resource::<MeshRenderer>(), world.resource::<RenderFrame>())
-        })
-    };
-    let scene = world.resource_scope(|world, taa: &mut taa::Taa| {
-        let gpu = world.resource::<Gpu>();
-        if settings.taa {
-            taa.resolve(gpu, &mut encoder, unjittered, moving).clone()
-        } else {
-            taa.reset();
-            gpu.targets.hdr.clone()
-        }
-    });
-    world.resource_scope(|world, post: &mut PostRenderer| {
-        let plain = world.resource::<ViewMode>().is_plain();
-        post.render(world.resource::<Gpu>(), &mut encoder, &scene, &target, &settings, time, plain);
-    });
 
     // The frame itself is done; overlays draw on top of it, and a screenshot is taken of
     // the two together.
@@ -1058,6 +971,172 @@ fn render(world: &mut World) {
     if path.is_some() {
         world.resource_mut::<Screenshot>().path = None;
     }
+}
+
+/// The engine's own passes, as the frame starts out. A plugin adds to them, or replaces one
+/// by adding a pass of its name.
+fn frame_graph() -> RenderGraph {
+    use slots::*;
+    let mut graph = RenderGraph::default();
+    graph
+        .target(MOTION, TargetDesc::new(gpu::MOTION_FORMAT).samples(MSAA_SAMPLES))
+        .add(Pass::new("skinning", pose_skins).writes(&[SKINNED]))
+        .add(Pass::new("ray tracing", build_traced_scene).reads(&[SKINNED]).writes(&[TRACED_SCENE]))
+        .add(Pass::new("shadows", draw_shadows).reads(&[SKINNED]).writes(&[SHADOW_MAPS]))
+        .add(Pass::new("main", draw_scene).reads(&[SKINNED, SHADOW_MAPS, TRACED_SCENE]).writes(&[HDR_MSAA, HDR, DEPTH]))
+        .add(Pass::new("light shafts", draw_shafts).reads(&[HDR, DEPTH, SHADOW_MAPS]).writes(&[HDR]))
+        .add(Pass::new("motion", draw_motion).reads(&[DEPTH]).writes(&[MOTION]))
+        .add(Pass::new("blend over time", blend_over_time).reads(&[HDR, DEPTH, MOTION]).writes(&[SCENE]))
+        .add(Pass::new("post", finish_picture).reads(&[SCENE]).writes(&[FRAME]));
+    graph
+}
+
+/// Skinned meshes are posed for the frame, on the GPU.
+fn pose_skins(world: &mut World, cx: &mut PassContext) {
+    world.resource::<skin::Skinner>().dispatch(cx.encoder);
+}
+
+/// Where rays are traced: the scene they are traced against is brought up to date, and the
+/// light probes are baked when it has changed.
+fn build_traced_scene(world: &mut World, cx: &mut PassContext) {
+    if !world.contains_resource::<RayTracing>() {
+        return;
+    }
+    world.resource_scope(|world, rt: &mut RayTracing| {
+        rt.build(cx.encoder);
+        let scene = rt.scene_key();
+        if rt.ready() && rt.probes.wants_bake(scene) {
+            let view = &world.resource::<ViewBinding>().bind_group;
+            world
+                .resource::<ProbeBaker>()
+                .bake(world.resource::<Gpu>(), cx.encoder, view, &mut rt.probes);
+        }
+    });
+}
+
+/// The sun's shadow cascades.
+fn draw_shadows(world: &mut World, cx: &mut PassContext) {
+    if !world.resource::<RenderFrame>().shadows {
+        return;
+    }
+    let shadows = world.resource::<ShadowMaps>();
+    for (cascade, layer) in shadows.layer_views.iter().enumerate() {
+        let mut pass = cx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("shadow pass"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: layer,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_bind_group(0, &shadows.bind_group, &[ShadowMaps::offset(cascade)]);
+        for draw in &world.resource::<ShadowDrawFunctions>().0 {
+            draw(world, &mut pass);
+        }
+    }
+}
+
+/// The scene itself: everything opaque, the sky, then what is blended over them.
+fn draw_scene(world: &mut World, cx: &mut PassContext) {
+    let (colour, resolved, depth) = (cx.view(slots::HDR_MSAA).clone(), cx.view(slots::HDR).clone(), cx.view(slots::DEPTH).clone());
+    let mut pass = cx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("main pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: &colour,
+            resolve_target: Some(&resolved),
+            depth_slice: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                store: wgpu::StoreOp::Discard,
+            },
+        })],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: &depth,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Clear(DEPTH_CLEAR),
+                // Kept for the light shafts and TAA, which read it afterwards.
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    pass.set_bind_group(0, &world.resource::<ViewBinding>().bind_group, &[]);
+    for draw in &world.resource::<DrawFunctions>().0 {
+        draw(world, &mut pass);
+    }
+    for draw in &world.resource::<TransparentDrawFunctions>().0 {
+        draw(world, &mut pass);
+    }
+}
+
+/// Sunlight scattered in the air, with the shadows' shafts through it.
+fn draw_shafts(world: &mut World, cx: &mut PassContext) {
+    let air = *world.resource::<VolumetricLight>();
+    if air.enabled && world.resource::<RenderFrame>().shadows {
+        world.resource_scope(|world, shafts: &mut volumetric::Shafts| {
+            shafts.render(world.resource::<Gpu>(), cx.encoder, &world.resource::<ViewBinding>().bind_group, &air);
+        });
+    }
+}
+
+/// What moved writes how far, so the blend over time can look for it where it was.
+fn draw_motion(world: &mut World, cx: &mut PassContext) {
+    if !world.resource::<PostProcess>().taa {
+        return;
+    }
+    if !world.contains_resource::<motion::MotionRenderer>() {
+        let renderer = motion::MotionRenderer::new(world.resource::<Gpu>());
+        world.insert_resource(renderer);
+    }
+    let target = cx.view(slots::MOTION).clone();
+    let moving = world.resource_scope(|world, motion: &mut motion::MotionRenderer| {
+        motion.render(world.resource::<Gpu>(), cx.encoder, &target, world.resource::<MeshRenderer>(), world.resource::<RenderFrame>())
+    });
+    if moving {
+        cx.note(MOVING);
+    }
+}
+
+/// Left by the motion pass when something moved, and so the motion target holds something.
+const MOVING: &str = "moving";
+
+/// Temporal anti-aliasing: each frame blended with those before it. Without it, the scene
+/// goes on as it was drawn.
+fn blend_over_time(world: &mut World, cx: &mut PassContext) {
+    let blended = world.resource::<PostProcess>().taa;
+    let unjittered = world.resource::<RenderFrame>().unjittered_view_proj;
+    let (motion, moving) = (cx.view(slots::MOTION).clone(), cx.noted(MOVING));
+    let scene = world.resource_scope(|world, taa: &mut taa::Taa| {
+        let gpu = world.resource::<Gpu>();
+        if blended {
+            taa.resolve(gpu, cx.encoder, unjittered, &motion, moving).clone()
+        } else {
+            taa.reset();
+            gpu.targets.hdr.clone()
+        }
+    });
+    cx.set_view(slots::SCENE, scene);
+}
+
+/// Bloom, tone mapping, grading and grain: the scene made into the picture that is shown.
+fn finish_picture(world: &mut World, cx: &mut PassContext) {
+    let settings = *world.resource::<PostProcess>();
+    let time = world.resource::<RenderFrame>().time;
+    let (scene, target) = (cx.view(slots::SCENE).clone(), cx.view(slots::FRAME).clone());
+    world.resource_scope(|world, post: &mut PostRenderer| {
+        let plain = world.resource::<ViewMode>().is_plain();
+        post.render(world.resource::<Gpu>(), cx.encoder, &scene, &target, &settings, time, plain);
+    });
 }
 
 /// Where frames are drawn while the window can't give us one, or there is no window.
@@ -1166,6 +1245,7 @@ impl Plugin for RenderPlugin {
             .add_systems(Stage::Extract, (extract, extract_skins))
             .add_systems(Stage::Prepare, prepare)
             .add_systems(Stage::Render, render);
+        app.world.insert_resource(frame_graph());
         app.world.init_resource::<Overlays>();
         app.world.init_resource::<views::ExtraViews>();
         app.world.init_resource::<DebugLines>();
