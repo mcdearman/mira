@@ -341,8 +341,11 @@ dying in any order; the timer is right in every case because no code ever sets i
       one surface shares its pipelines
 - [ ] Further for materials: values of a surface's own beyond the standard ones, and the
       shadow, the traced reflection and the vertices in a surface shader's reach
-- [ ] Scene on the GPU: shared vertex and index buffers, a persistent instance buffer updated
-      only for changed transforms, bindless textures
+- [x] Instances kept on the card: one for each mesh an entity draws, written only when its
+      entity changes; each view sends the numbers of those it sees (see
+      [PERFORMANCE.md](PERFORMANCE.md))
+- [ ] The rest of the scene on the GPU: shared vertex and index buffers, bindless textures,
+      and the traced scene kept as the instances are
 - [ ] Culling in compute against the frustum and a depth pyramid; multi-draw indirect
 - [ ] Visibility buffer or deferred shading, replacing forward + MSAA
 - [ ] Point and spot lights, clustered, with a shadow atlas

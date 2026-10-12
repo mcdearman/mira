@@ -131,7 +131,7 @@ answered at the start of a frame, whether or not the game is paused.
 
 | Command | Arguments | Answer |
 | --- | --- | --- |
-| `status` | | frame, seconds, time scale, paused, frames of stepping left, failures, entities |
+| `status` | | frame, seconds, time scale, paused, frames of stepping left, failures, entities, and the instances the card holds |
 | `quit` | | asks the game to stop, as closing its window would |
 | `pause`, `resume` | | |
 | `step` | `frames` (1) | runs that many frames, then pauses |

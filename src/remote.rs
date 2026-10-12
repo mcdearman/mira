@@ -582,6 +582,12 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 ("reached", Value::Bool(reached)),
                 ("failures", Value::Int(failures as i64)),
                 ("entities", Value::Int(app.world.entity_count() as i64)),
+                (
+                    "instances",
+                    app.world
+                        .get_resource::<crate::render::MeshRenderer>()
+                        .map_or(Value::Null, |renderer| Value::Int(renderer.instance_count() as i64)),
+                ),
             ]))
         }
         "quit" => {

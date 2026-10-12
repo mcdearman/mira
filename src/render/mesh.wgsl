@@ -14,25 +14,26 @@ struct VertexInput {
     @location(11) color: vec3<f32>,
 };
 
-struct InstanceInput {
-    @location(3) model_0: vec4<f32>,
-    @location(4) model_1: vec4<f32>,
-    @location(5) model_2: vec4<f32>,
-    @location(6) model_3: vec4<f32>,
-    @location(7) normal_0: vec3<f32>,
-    @location(8) normal_1: vec3<f32>,
-    @location(9) normal_2: vec3<f32>,
-    @location(10) color: vec4<f32>,
+// One thing drawn: a mesh somewhere, with its material's values. The instances stay on the
+// card from frame to frame; `seen` holds the numbers of those the view being drawn sees, and
+// a draw's instances are a run of that list.
+struct Instance {
+    model: mat4x4<f32>,
+    normal: mat3x3<f32>,
+    color: vec4<f32>,
     // x: roughness, y: metallic, z: normal map strength, w: alpha cutoff (0 = opaque)
-    @location(12) params: vec4<f32>,
+    params: vec4<f32>,
     // rgb: emitted light, w: translucency
-    @location(13) emissive: vec4<f32>,
+    emissive: vec4<f32>,
     // x: parallax height in metres (0 = none), y: subsurface scattering, z: weathering,
     // w: 1 for a decal
-    @location(14) extra: vec4<f32>,
+    extra: vec4<f32>,
     // x: puddles, y: animated waves, zw: flow of the water over the ground, metres a second
-    @location(15) more: vec4<f32>,
+    more: vec4<f32>,
 };
+
+@group(2) @binding(0) var<storage, read> instances: array<Instance>;
+@group(2) @binding(1) var<storage, read> seen: array<u32>;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -47,15 +48,14 @@ struct VertexOutput {
 };
 
 @vertex
-fn vs_main(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
-    let model = mat4x4<f32>(instance.model_0, instance.model_1, instance.model_2, instance.model_3);
-    let normal_matrix = mat3x3<f32>(instance.normal_0, instance.normal_1, instance.normal_2);
-    let world_position = model * vec4<f32>(vertex.position, 1.0);
+fn vs_main(vertex: VertexInput, @builtin(instance_index) at: u32) -> VertexOutput {
+    let instance = instances[seen[at]];
+    let world_position = instance.model * vec4<f32>(vertex.position, 1.0);
 
     var out: VertexOutput;
     out.clip_position = view.view_proj * world_position;
     out.world_position = world_position.xyz;
-    out.world_normal = normal_matrix * vertex.normal;
+    out.world_normal = instance.normal * vertex.normal;
     out.uv = vertex.uv;
     out.color = instance.color * vec4<f32>(vertex.color, 1.0);
     out.params = instance.params;
