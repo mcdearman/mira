@@ -44,6 +44,8 @@ struct Asked {
     /// How many lanterns stand among the things in the middle of the field, shining every
     /// way and casting shadows.
     lanterns: usize,
+    /// How large the scene is drawn, as a part of the picture's width and height.
+    scale: f32,
 }
 
 /// A thing that bobs up and down about where it was put.
@@ -54,7 +56,7 @@ struct Bob {
 }
 
 fn asked() -> Asked {
-    let mut asked = Asked { count: 100_000, moving: 0.1, frames: None, rays: true, shadows: true, lights: 0, size: (1280, 720), lods: false, spots: 0, lanterns: 0 };
+    let mut asked = Asked { count: 100_000, moving: 0.1, frames: None, rays: true, shadows: true, lights: 0, size: (1280, 720), lods: false, spots: 0, lanterns: 0, scale: 1.0 };
     for arg in std::env::args().skip(1) {
         match arg.split_once('=') {
             Some(("count", value)) => asked.count = value.parse().expect("count=<how many>"),
@@ -66,11 +68,12 @@ fn asked() -> Asked {
             Some(("lods", value)) => asked.lods = value != "off",
             Some(("spots", value)) => asked.spots = value.parse().expect("spots=<how many>"),
             Some(("lanterns", value)) => asked.lanterns = value.parse().expect("lanterns=<how many>"),
+            Some(("scale", value)) => asked.scale = value.parse().expect("scale=<0.5 to 1>"),
             Some(("size", value)) => {
                 let (wide, high) = value.split_once('x').expect("size=<wide>x<high>");
                 asked.size = (wide.parse().expect("size=<wide>x<high>"), high.parse().expect("size=<wide>x<high>"));
             }
-            _ => panic!("not understood: {arg} (count=, moving=, frames=, rays=off, shadows=off, lights=, size=, lods=on, spots=, lanterns=)"),
+            _ => panic!("not understood: {arg} (count=, moving=, frames=, rays=off, shadows=off, lights=, size=, lods=on, spots=, lanterns=, scale=)"),
         }
     }
     asked
@@ -208,6 +211,7 @@ fn main() -> anyhow::Result<()> {
     let mut app = App::new();
     app.insert_resource(WindowSettings { title: "instances".into(), width: asked.size.0, height: asked.size.1, ..Default::default() })
         .insert_resource(RayTracingSettings { enabled: asked.rays, ..Default::default() })
+        .insert_resource(PostProcess { render_scale: asked.scale, ..Default::default() })
         .add_plugins(DefaultPlugins)
         .insert_resource(asked)
         .add_systems(Stage::Startup, field)

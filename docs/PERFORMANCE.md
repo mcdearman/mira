@@ -10,8 +10,8 @@ MIRA_HIDDEN=1 cargo run --release --example instances -- count=20000 moving=0.5 
 `examples/instances` lays out a field of cubes and balls (`count`, 100,000 unless told), a
 part of them moving (`moving`, a tenth), runs the frames asked for, and prints what a frame
 cost. Without `frames=` it runs on, to be looked at. `rays=off`, `shadows=off`,
-`lights=N`, `size=WxH` and `lods=on` take a part of the frame away or add to it, to see
-what it costs.
+`lights=N`, `size=WxH`, `lods=on`, `scale=`, `spots=N` and `lanterns=N` take a part of
+the frame away or add to it, to see what it costs.
 
 A frame is paid for twice, and the two are told apart:
 
@@ -288,6 +288,34 @@ instances within a batch is then whatever the card's threads came to them in.
 
 What it does not do yet: leave out what is hidden behind other things, and leave out the
 draws of batches nothing of which is seen.
+## A real scene, and drawing it smaller
+
+The field of things is hard on the processor and on the card's triangles. A scene such as
+the Paris square is hard on neither: 1,358 instances, and a card that spends its frame
+shading. At 2,560 by 1,440, with ray tracing, the card takes 23.3 ms a frame, 17.8 of them
+in the main pass, which is 42 frames a second.
+
+`PostProcess::render_scale` draws the scene smaller than the picture, from a half of its
+width and height to the whole. The blend over time then makes the picture at its full size:
+each frame's points fall elsewhere among the picture's pixels, by the frame's jitter, so
+over a few frames the history holds more than any one frame drew. What is drawn at the
+scene's size is the main pass, the light shafts and what moved; the bloom, the tone curve
+and anything drawn over the picture stay at the picture's.
+
+Paris, on the card:
+
+| Scale | Main pass | The frame | Frames a second |
+|---|---|---|---|
+| 1 | 17.8 ms | 23.3 ms | 42 |
+| 0.75 | 13.4 ms | 18.7 ms | 53 |
+| 0.67 | 10.2 ms | 14.8 ms | 67 |
+| 0.5 | 6.7 ms | 10.9 ms | 91 |
+
+At two thirds the picture is a little softer than at full size and otherwise the same. The
+default is 1. Without the blend over time (`taa` off) a smaller scene is only stretched.
+
+The instances example takes `scale=`: at 2,560 by 1,440 with levels of detail, 100,000
+things at rest go from 11.1 ms on the card to 8.2 at 0.67.
 ## What is next
 
 On the processor, with things moving, where the time now is:

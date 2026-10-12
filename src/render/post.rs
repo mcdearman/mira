@@ -33,6 +33,21 @@ pub struct PostProcess {
     pub temperature: f32,
     /// Film grain, 0 for none, 1 for heavy.
     pub grain: f32,
+    /// How large the scene is drawn, as a part of the picture's width and height, from a
+    /// half to the whole: 1 draws it at the picture's own size. Below that the scene is
+    /// drawn smaller and made up to the picture's size as frames are blended over time
+    /// (with `taa`), each frame adding the points the last ones missed; without `taa` it
+    /// is only stretched. What the card spends shading goes with the square of it.
+    pub render_scale: f32,
+}
+
+impl PostProcess {
+    /// The size the scene is drawn at for a picture of this size: see `render_scale`.
+    pub fn scene_size(&self, width: u32, height: u32) -> (u32, u32) {
+        let scale = if self.render_scale.is_finite() { self.render_scale.clamp(0.5, 1.0) } else { 1.0 };
+        let of = |length: u32| ((length as f32 * scale).round() as u32).max(1);
+        (of(width), of(height))
+    }
 }
 
 impl Default for PostProcess {
@@ -52,6 +67,7 @@ impl Default for PostProcess {
             highlight_tint: Color::WHITE,
             temperature: 0.0,
             grain: 0.0,
+            render_scale: 1.0,
         }
     }
 }
