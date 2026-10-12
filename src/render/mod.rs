@@ -795,7 +795,7 @@ fn prepare(    gpu: Res<Gpu>,
     let from = instances::Viewpoint {
         view_proj: frame.view_proj,
         camera: frame.camera_position,
-        shadows: frame.shadows,
+        cascades: if frame.shadows { frame.cascades.matrices.to_vec() } else { vec![] },
         shadow_reach: frame.shadow_reach,
         blended: frame.temporal,
     };
@@ -1059,6 +1059,8 @@ fn draw_shadows(world: &mut World, cx: &mut PassContext) {
             multiview_mask: None,
         });
         pass.set_bind_group(0, &shadows.bind_group, &[ShadowMaps::offset(cascade)]);
+        // Each cascade draws only what casts into it.
+        world.resource::<MeshRenderer>().begin_cascade(cascade);
         for draw in &world.resource::<ShadowDrawFunctions>().0 {
             draw(world, &mut pass);
         }
