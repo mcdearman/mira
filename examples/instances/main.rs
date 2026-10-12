@@ -5,6 +5,7 @@
 //! ```sh
 //! cargo run --release --example instances                        # 100,000, a tenth moving
 //! cargo run --release --example instances -- count=20000 moving=0.5 rays=off lights=1000
+//! cargo run --release --example instances -- lods=on size=1920x1080
 //! MIRA_HIDDEN=1 cargo run --release --example instances -- frames=300   # measure, say, and stop
 //! ```
 //!
@@ -33,6 +34,11 @@ struct Asked {
     shadows: bool,
     /// How many lamps stand over the field.
     lights: usize,
+    /// The size of the picture: what the card takes grows with it where it is shading, and
+    /// does not where it is the triangles that cost.
+    size: (u32, u32),
+    /// Whether the balls are drawn with fewer triangles the further away they are.
+    lods: bool,
 }
 
 /// A thing that bobs up and down about where it was put.
@@ -43,7 +49,7 @@ struct Bob {
 }
 
 fn asked() -> Asked {
-    let mut asked = Asked { count: 100_000, moving: 0.1, frames: None, rays: true, shadows: true, lights: 0 };
+    let mut asked = Asked { count: 100_000, moving: 0.1, frames: None, rays: true, shadows: true, lights: 0, size: (1280, 720), lods: false };
     for arg in std::env::args().skip(1) {
         match arg.split_once('=') {
             Some(("count", value)) => asked.count = value.parse().expect("count=<how many>"),
@@ -52,7 +58,12 @@ fn asked() -> Asked {
             Some(("rays", value)) => asked.rays = value != "off",
             Some(("shadows", value)) => asked.shadows = value != "off",
             Some(("lights", value)) => asked.lights = value.parse().expect("lights=<how many>"),
-            _ => panic!("not understood: {arg} (count=, moving=, frames=, rays=off, shadows=off, lights=)"),
+            Some(("lods", value)) => asked.lods = value != "off",
+            Some(("size", value)) => {
+                let (wide, high) = value.split_once('x').expect("size=<wide>x<high>");
+                asked.size = (wide.parse().expect("size=<wide>x<high>"), high.parse().expect("size=<wide>x<high>"));
+            }
+            _ => panic!("not understood: {arg} (count=, moving=, frames=, rays=off, shadows=off, lights=, size=, lods=on)"),
         }
     }
     asked
@@ -75,6 +86,9 @@ fn field(mut commands: Commands, mut server: ResMut<AssetServer>, mut meshes: Re
         Color::rgb(0.75, 0.75, 0.78),
         Color::rgb(0.55, 0.3, 0.7),
     ];
+    // A ball is 960 triangles close to, and at a distance is a few pixels across: with
+    // `lods=on` it is drawn with fewer the further away it is.
+    let coarser = [0.35f32, 0.25].map(|radius| [(12, 6), (6, 4)].map(|(sectors, stacks)| meshes.add(Mesh::uv_sphere(radius, sectors, stacks))));
     let side = (asked.count as f32).sqrt().ceil() as usize;
     let spacing = 1.2;
     let half = side as f32 * spacing * 0.5;
@@ -84,7 +98,14 @@ fn field(mut commands: Commands, mut server: ResMut<AssetServer>, mut meshes: Re
         let (column, row) = (i % side, i / side);
         let at = Vec3::new(column as f32 * spacing - half, 0.4, row as f32 * spacing - half);
         let material = Material { color: colours[(column + row * 3) % colours.len()], roughness: 0.6, ..Default::default() };
-        let thing = commands.spawn((Transform::from_translation(at), Mesh3d(shapes[(column * 7 + row) % shapes.len()]), material)).id();
+        let shape = (column * 7 + row) % shapes.len();
+        let thing = if asked.lods && shape % 2 == 1 {
+            let [middle, far] = coarser[shape / 2];
+            let level = |max_distance, mesh| LodLevel { max_distance, mesh, material };
+            commands.spawn((Transform::from_translation(at), Lods(vec![level(30.0, shapes[shape]), level(90.0, middle), level(f32::MAX, far)]))).id()
+        } else {
+            commands.spawn((Transform::from_translation(at), Mesh3d(shapes[shape]), material)).id()
+        };
         if every.is_some_and(|every| i % every == 0) {
             commands.entity(thing).insert(Bob { rest: at.y, phase: i as f32 * 0.37 });
         }
@@ -163,7 +184,8 @@ fn report(world: &mut World) {
 fn main() -> anyhow::Result<()> {
     let asked = asked();
     let mut app = App::new();
-    app.insert_resource(RayTracingSettings { enabled: asked.rays, ..Default::default() })
+    app.insert_resource(WindowSettings { title: "instances".into(), width: asked.size.0, height: asked.size.1, ..Default::default() })
+        .insert_resource(RayTracingSettings { enabled: asked.rays, ..Default::default() })
         .add_plugins(DefaultPlugins)
         .insert_resource(asked)
         .add_systems(Stage::Startup, field)

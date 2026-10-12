@@ -9,8 +9,9 @@ MIRA_HIDDEN=1 cargo run --release --example instances -- count=20000 moving=0.5 
 
 `examples/instances` lays out a field of cubes and balls (`count`, 100,000 unless told), a
 part of them moving (`moving`, a tenth), runs the frames asked for, and prints what a frame
-cost. Without `frames=` it runs on, to be looked at. `rays=off`, `shadows=off` and
-`lights=N` take a part of the frame away or add to it, to see what it costs.
+cost. Without `frames=` it runs on, to be looked at. `rays=off`, `shadows=off`,
+`lights=N`, `size=WxH` and `lods=on` take a part of the frame away or add to it, to see
+what it costs.
 
 A frame is paid for twice, and the two are told apart:
 
@@ -70,7 +71,8 @@ What that says:
 - **The roadmap's test is met on this machine without ray tracing**, at 65 frames a second,
   and by little: the card takes 15.3 ms of the 16.7.
 - **The card is what holds the frame back**, not the engine, wherever nothing much moves. At
-  100,000 it spends 5.5 ms drawing the sun's shadow maps and 7.5 to 10 ms on the main pass.
+  100,000 it spends 5.5 ms drawing the sun's shadow maps and 7.5 to 10 ms on the main pass,
+  nearly all of it on triangles the field need not have (see levels of detail, below).
 - **With ray tracing and things moving, the processor is**, and the time is in the traced
   scene (below).
 
@@ -155,13 +157,39 @@ until it costs a scene at rest nothing.
 (`moving=0.00001` at 100,000 moves one thing that is 490 m from the camera, beyond the
 rays' reach of 400, so it measures the same as nothing moving.)
 
+## Triangles, and levels of detail
+
+What the card spends on that field is triangles, not pixels. With the picture a sixteenth
+the size (`size=320x180`) the main pass is still 5.9 ms of its 7.4 and the shadows are
+unchanged. Half the things are balls of 960 triangles, most of them a few pixels across.
+
+`lods=on` gives each ball two coarser meshes for further away, through the `Lods` component
+any entity can carry (72 triangles beyond 30 m, 24 beyond 90). At 100,000 things:
+
+| Rays | Moving | Lights | On the processor | On the card | Shadows | Main pass | Frames a second |
+|---|---|---|---|---|---|---|---|
+| off | none | | 5.9 ms | 3.5 ms | 1.0 ms | 2.1 ms | 170 |
+| off | a tenth | | 16.5 ms | 3.6 ms | 1.0 ms | 2.2 ms | 61 |
+| off | a tenth | 1,000 | 16.2 ms | 4.6 ms | 1.0 ms | 3.2 ms | 62 |
+| on | none | | 7.2 ms | 5.8 ms | 1.0 ms | 4.4 ms | 139 |
+| on | a tenth | | 27.7 ms | 6.1 ms | 1.1 ms | 4.6 ms | 36 |
+
+So a scene whose distant things are given fewer triangles costs the card a quarter of what
+it did, and then it is the processor that holds the frame back once things move. A thing
+with levels costs the processor more than one without, since each level is an instance of
+its own: 16.5 ms against 13.1 with a tenth moving.
+
+The engine does not make the coarser meshes: they are the scene's to give.
+
 ## What is next
 
-On the card, which is what holds most frames back: the sun's shadows (5.5 ms) and the main
-pass (7.5 ms and up), at a size of picture that is small. What to try: distant things drawn
-with fewer triangles, the far cascades drawn less often than every frame, and a main pass
-that shades each pixel once.
+On the processor, with things moving, where the time now is:
 
-On the processor, with things moving: deciding on the card what each view and each cascade
-sees, with meshes in shared buffers so that a pipeline's draws are one call, which wants a
-benchmark of many different meshes and materials first.
+- Where rays are traced, the structure built again whole: about 12 ms. Two structures cut
+  that, and with levels of detail the card has the 2 ms to spare that they cost.
+- Deciding what each view and each cascade sees (Prepare, 7 ms with a tenth moving) and
+  gathering what changed (Extract, 3.5 ms): deciding it on the card, with meshes in shared
+  buffers so that a pipeline's draws are one call, which wants a benchmark of many different
+  meshes and materials first.
+
+On the card, for a scene that gives no levels of detail: coarser meshes made by the engine.
