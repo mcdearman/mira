@@ -49,10 +49,7 @@ fn bake_probes(@builtin(global_invocation_id) invocation: vec3<u32>) {
         let a = f32(i) * 2.39996323 + spin;
         let dir = vec3<f32>(cos(a) * r, y, sin(a) * r);
 
-        var rq: ray_query;
-        rayQueryInitialize(&rq, scene, RayDesc(0u, 0xffu, 0.0, 400.0, p, dir));
-        rayQueryProceed(&rq);
-        let hit = rayQueryGetCommittedIntersection(&rq);
+        let hit = nearest(p, dir, 0.0, 400.0, 0u);
         var light: vec3<f32>;
         if hit.kind == RAY_QUERY_INTERSECTION_NONE {
             light = sample_sky(dir, view.fog.w - 3.0);

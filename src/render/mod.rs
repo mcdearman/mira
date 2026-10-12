@@ -875,6 +875,7 @@ fn prepare(    gpu: Res<Gpu>,
             rt.place(number, geometry, object.model, material);
         }
         rt.upload(&gpu);
+        view.say_traced(&gpu, rt.any_moving());
         if rt.generation != view.rt_generation {
             view.rt_generation = rt.generation;
             view.rebind(&gpu, &shadows, &sky.gpu_environment, Some(rt));

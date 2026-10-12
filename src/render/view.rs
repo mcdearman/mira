@@ -78,6 +78,7 @@ struct ViewUniform {
     probe_origin: [f32; 4],
     probe_dims: [f32; 4],
     temporal: [f32; 4],
+    traced: [f32; 4],
 }
 
 /// Camera, sun, sky and shadow data shared by every pipeline in the main pass. Always bound at
@@ -176,6 +177,8 @@ impl ViewBinding {
                 fragment(13, probe_texture(), None),
                 fragment(14, probe_texture(), None),
                 fragment(15, probe_texture(), None),
+                // What moves, in a structure of its own beside the one of what stands still.
+                fragment(18, wgpu::BindingType::AccelerationStructure { vertex_return: false }, None),
             ]);
         }
         // The lights with a place, read where surfaces are shaded.
@@ -264,7 +267,11 @@ impl ViewBinding {
             entries.extend([
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: rt.tlas.as_binding(),
+                    resource: rt.still.tlas.as_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 18,
+                    resource: rt.moving.tlas.as_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
@@ -317,6 +324,15 @@ impl ViewBinding {
     }
 
 
+    /// Says whether anything is in the traced structure of the things that move, so that a
+    /// ray is not traced against it while it is empty. After `write`, which is before the
+    /// traced scene has been brought up to date.
+    pub(crate) fn say_traced(&self, gpu: &Gpu, any_moving: bool) {
+        let said = [if any_moving { 1.0f32 } else { 0.0 }, 0.0, 0.0, 0.0];
+        let at = std::mem::offset_of!(ViewUniform, traced) as u64;
+        gpu.queue.write_buffer(&self.buffer, at, bytemuck::bytes_of(&said));
+    }
+
     pub(crate) fn write(&self, gpu: &Gpu, frame: &RenderFrame, mode: ViewMode, sky_mips: u32, shadows: &ShadowMaps, probes: [[f32; 4]; 2]) {
         let v4 = |v: glam::Vec3, w: f32| [v.x, v.y, v.z, w];
         let mut sh = [[0.0; 4]; 9];
@@ -358,6 +374,8 @@ impl ViewBinding {
                 frame.jitter.x,
                 frame.jitter.y,
             ],
+            // Said once the traced scene is up to date: see `say_traced`.
+            traced: [0.0; 4],
         };
         gpu.queue
             .write_buffer(&self.buffer, 0, bytemuck::bytes_of(&view));

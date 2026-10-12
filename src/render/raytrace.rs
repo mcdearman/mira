@@ -1,9 +1,15 @@
 //! Hardware ray tracing, through wgpu's (experimental, Vulkan-only) ray queries.
 //!
 //! Every opaque mesh gets a bottom-level acceleration structure once, and the scene's
-//! instances are kept in a top-level structure that shaders trace against, for sun shadows,
-//! ambient occlusion and reflections. An instance keeps its place there, so a frame touches
-//! only the ones that changed; the structure itself is built again whenever any has.
+//! instances are kept in top-level structures that shaders trace against, for sun shadows,
+//! ambient occlusion and reflections. An instance keeps its place, so a frame touches only
+//! the ones that changed.
+//!
+//! A structure is built again, whole, whenever any instance in it has changed. So there
+//! are two: a large one of what stands still, which is seldom built, and a small one of
+//! what moves, which is built every frame something in it does. A thing is among those
+//! that move while it is moving and for a couple of seconds after, and rays are traced
+//! against both.
 //!
 //! Reflections shade what they hit properly: every traced mesh's normals and texture
 //! coordinates live in one storage buffer, each instance has a material entry, and all
@@ -61,16 +67,120 @@ struct Geometry {
     dynamic: bool,
 }
 
-/// An instance traced against: which geometry, and where.
+/// An instance traced against: which geometry, where, which instance of the scene it is
+/// (none for one that was fixed in place), and the frame it last changed in.
+#[derive(Clone, Copy)]
 struct Entry {
     geometry: GeometryId,
     transform: Mat4,
+    number: u32,
+    touched: u64,
+}
+
+/// One of the two structures rays are traced against, and what is in it. An instance keeps
+/// its place for as long as it is there, so only the places that change are told to it.
+pub(crate) struct Structure {
+    pub(crate) tlas: wgpu::Tlas,
+    entries: Vec<Option<Entry>>,
+    free: Vec<u32>,
+    room: u32,
+    /// Where its places begin among the materials: what an instance in it is numbered from.
+    base: u32,
+    /// Places it is to be told of.
+    unplaced: Vec<u32>,
+    built: bool,
+}
+
+impl Structure {
+    fn new(device: &wgpu::Device, label: &str, room: u32, base: u32, flags: wgpu::AccelerationStructureFlags) -> Self {
+        let tlas = device.create_tlas(&wgpu::CreateTlasDescriptor {
+            label: Some(label),
+            max_instances: room,
+            flags,
+            update_mode: wgpu::AccelerationStructureUpdateMode::Build,
+        });
+        Self { tlas, entries: Vec::new(), free: Vec::new(), room, base, unplaced: Vec::new(), built: false }
+    }
+
+    fn count(&self) -> usize {
+        self.entries.len() - self.free.len()
+    }
+
+    /// A place, if there is one left.
+    fn take_place(&mut self) -> Option<u32> {
+        self.free.pop().or_else(|| {
+            (self.entries.len() < self.room as usize).then(|| {
+                self.entries.push(None);
+                self.entries.len() as u32 - 1
+            })
+        })
+    }
+
+    fn set(&mut self, place: u32, entry: Entry) {
+        self.entries[place as usize] = Some(entry);
+        self.unplaced.push(place);
+    }
+
+    /// Empties a place and gives back what was in it.
+    fn clear(&mut self, place: u32) -> Option<Entry> {
+        let entry = self.entries[place as usize].take();
+        if entry.is_some() {
+            self.free.push(place);
+            self.unplaced.push(place);
+        }
+        entry
+    }
+
+    /// Tells the structure of the places that changed. Answers whether it is to be built:
+    /// because any did, or geometry under one of its instances is built again this frame, or
+    /// it never has been.
+    fn tell(&mut self, geometry: &[Geometry], pending: &[usize]) -> bool {
+        let mut unplaced = std::mem::take(&mut self.unplaced);
+        unplaced.sort_unstable();
+        unplaced.dedup();
+        let mut build = !self.built || !unplaced.is_empty();
+        for place in unplaced {
+            let Some(entry) = &self.entries[place as usize] else {
+                self.tlas[place as usize] = None;
+                continue;
+            };
+            let g = entry.geometry.0 as usize;
+            if !geometry[g].built && !pending.contains(&g) {
+                // Not built yet: left out this frame, and tried again the next.
+                self.tlas[place as usize] = None;
+                self.unplaced.push(place);
+                continue;
+            }
+            let t = entry.transform.transpose().to_cols_array();
+            // Row-major 3x4: the first three rows of the (column-major) matrix.
+            let rows: [f32; 12] = t[..12].try_into().unwrap();
+            // The custom index finds the instance's material: both are kept by place.
+            self.tlas[place as usize] = Some(wgpu::TlasInstance::new(&geometry[g].blas, rows, self.base + place, 0xff));
+        }
+        // A figure that is posed again each frame moves under the instance that shows it.
+        build |= pending.iter().any(|g| geometry[*g].dynamic) && self.entries.iter().flatten().any(|entry| geometry[entry.geometry.0 as usize].dynamic);
+        self.built |= build;
+        build
+    }
 }
 
 /// Said of an instance of the scene in place of a place: it has not been looked at, or it
 /// was, is within reach, and is left out (not a thing to trace against, or no room).
 const UNKNOWN: u32 = u32::MAX;
 const LEFT_OUT: u32 = u32::MAX - 1;
+
+/// How many things that move are traced against at once. They are in a structure of their
+/// own, built again whenever one of them moves, so it is kept small.
+pub const MAX_MOVING: u32 = 1 << 14;
+/// How many frames a thing stands still before it is counted among those that stand still.
+const IDLE: u64 = 120;
+/// Things are moved to the structure of those that stand still when this many are ready to
+/// be, and in any case this often, in frames.
+const SETTLE_MANY: usize = 256;
+/// How many instances new to the scene in one frame are taken for things appearing in it,
+/// and put among those that move; more than this at once is taken for a scene being loaded.
+const ARRIVE_AS_MOVING: u32 = 256;
+const SETTLE_AT_LEAST: u64 = 600;
 
 /// A handle to geometry added with [`RayTracing::add_geometry`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -105,23 +215,26 @@ impl HitMaterial {
 
 /// The ray-traced scene. Present only when the GPU supports ray queries.
 pub struct RayTracing {
-    pub tlas: wgpu::Tlas,
+    /// What stands still, and what moves: two structures, so that when something moves only
+    /// the small one of the things that move is built again. Rays are traced against both.
+    /// A place in the first is numbered from nought and one in the second from
+    /// `MAX_INSTANCES`, which is also where each one's material is kept.
+    pub(crate) still: Structure,
+    pub(crate) moving: Structure,
     geometry: Vec<Geometry>,
     meshes: HashMap<u32, GeometryId>,
-    /// What is traced against, each instance at a place in the top-level structure that it
-    /// keeps for as long as it is there: so only the places that change are touched.
-    entries: Vec<Option<Entry>>,
-    free: Vec<u32>,
-    /// For each instance of the scene, by its number: its place here, or that it has not
-    /// been looked at, or that it was and is left out.
+    /// For each instance of the scene, by its number: its place, or that it has not been
+    /// looked at, or that it was and is left out.
     of: Vec<u32>,
     /// What the card holds of each place's material, kept here too so a stretch can be sent.
     materials: Vec<HitMaterial>,
-    /// Places whose material is to be sent, and places the structure is to be told of.
+    /// Places whose material is to be sent.
     stale: Vec<u32>,
-    unplaced: Vec<u32>,
-    /// Whether the structure has been told of anything since it was last built.
-    changed: bool,
+    /// Frames counted, and the one things were last settled in.
+    frame: u64,
+    settled: u64,
+    /// How many instances new to the scene have been placed this frame.
+    arrivals: u32,
     /// Instances of the scene to look at again next frame: a mesh or a texture of theirs
     /// was not ready.
     pub(crate) again: Vec<u32>,
@@ -165,15 +278,12 @@ fn storage(device: &wgpu::Device, label: &str, contents: &[u8]) -> wgpu::Buffer 
 impl RayTracing {
     pub(crate) fn new(gpu: &Gpu, settings: RayTracingSettings, white: wgpu::TextureView) -> Self {
         let device = &gpu.device;
-        let tlas = device.create_tlas(&wgpu::CreateTlasDescriptor {
-            label: Some("scene"),
-            max_instances: MAX_INSTANCES,
-            flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE,
-            update_mode: wgpu::AccelerationStructureUpdateMode::Build,
-        });
+        let still = Structure::new(device, "scene at rest", MAX_INSTANCES, 0, wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE);
+        let moving = Structure::new(device, "scene moving", MAX_MOVING, MAX_INSTANCES, wgpu::AccelerationStructureFlags::PREFER_FAST_BUILD);
+        let places = (MAX_INSTANCES + MAX_MOVING) as usize;
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("hit instances"),
-            size: MAX_INSTANCES as u64 * std::mem::size_of::<HitMaterial>() as u64,
+            size: places as u64 * std::mem::size_of::<HitMaterial>() as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -187,16 +297,16 @@ impl RayTracing {
             ..Default::default()
         });
         Self {
-            tlas,
+            still,
+            moving,
             geometry: Vec::new(),
             meshes: HashMap::new(),
-            entries: Vec::new(),
-            free: Vec::new(),
             of: Vec::new(),
-            materials: Vec::new(),
+            materials: vec![HitMaterial::plain(Color::WHITE); places],
             stale: Vec::new(),
-            unplaced: Vec::new(),
-            changed: false,
+            frame: 0,
+            settled: 0,
+            arrivals: 0,
             again: Vec::new(),
             settings,
             hit_vertices: Vec::new(),
@@ -273,8 +383,9 @@ impl RayTracing {
 
     /// An instance that stays put for the rest of the run, like terrain or a building.
     pub fn add_fixed(&mut self, geometry: GeometryId, transform: Mat4, material: HitMaterial) {
-        if let Some(place) = self.take_place() {
-            self.put(place, geometry, transform, material);
+        if let Some(place) = self.still.take_place() {
+            self.still.set(place, Entry { geometry, transform, number: UNKNOWN, touched: 0 });
+            self.paint(place, geometry, material);
         }
     }
 
@@ -374,27 +485,12 @@ impl RayTracing {
     /// Identifies the traced scene's contents: its geometry and textures, and how many
     /// instances it holds.
     pub(crate) fn scene_key(&self) -> (u64, usize) {
-        (self.generation, self.entries.len() - self.free.len())
+        (self.generation, self.still.count() + self.moving.count())
     }
 
-    /// A place in the top-level structure, if there is one left.
-    fn take_place(&mut self) -> Option<u32> {
-        self.free.pop().or_else(|| {
-            (self.entries.len() < MAX_INSTANCES as usize).then(|| {
-                self.entries.push(None);
-                self.materials.push(HitMaterial::plain(Color::WHITE));
-                self.entries.len() as u32 - 1
-            })
-        })
-    }
-
-    /// Puts an instance in a place: its material is sent and the structure told of it when
-    /// the frame is next built.
-    fn put(&mut self, place: u32, geometry: GeometryId, transform: Mat4, material: HitMaterial) {
-        self.entries[place as usize] = Some(Entry { geometry, transform });
-        self.materials[place as usize] = HitMaterial { geometry: geometry.0, ..material };
-        self.stale.push(place);
-        self.unplaced.push(place);
+    /// Whether anything is among the things that move.
+    pub(crate) fn any_moving(&self) -> bool {
+        self.moving.count() > 0
     }
 
     /// Whether an instance of the scene has been looked at and found within reach: traced
@@ -411,18 +507,70 @@ impl RayTracing {
         &mut self.of[number as usize]
     }
 
-    /// Traces against an instance of the scene, or brings what is traced up to date with
-    /// it. It keeps its place, so nothing else is touched. Where the structure is full it
-    /// is left out.
+    /// The structure a place is in, and the place's number within it.
+    fn structure(&mut self, place: u32) -> (&mut Structure, u32) {
+        if place < MAX_INSTANCES { (&mut self.still, place) } else { (&mut self.moving, place - MAX_INSTANCES) }
+    }
+
+    /// Says what a place's material is.
+    fn paint(&mut self, place: u32, geometry: GeometryId, material: HitMaterial) {
+        self.materials[place as usize] = HitMaterial { geometry: geometry.0, ..material };
+        self.stale.push(place);
+    }
+
+    /// Traces against an instance of the scene, or brings what is traced up to date with it.
+    ///
+    /// A new one goes among the things that move, where being built again costs little, and
+    /// one at rest that has moved is taken there; they go back among the things that stand
+    /// still once they have stood still a while ([`Self::settle`]). One whose material alone
+    /// has changed has nothing built for it at all. Where there is no room it is left out.
     pub(crate) fn place(&mut self, number: u32, geometry: GeometryId, transform: Mat4, material: HitMaterial) {
-        let place = match *self.place_of(number) {
-            UNKNOWN | LEFT_OUT => self.take_place(),
-            place => Some(place),
+        let entry = Entry { geometry, transform, number, touched: self.frame };
+        let current = *self.place_of(number);
+        if current != UNKNOWN && current != LEFT_OUT {
+            self.paint(current, geometry, material);
+            let (structure, local) = self.structure(current);
+            let was = structure.entries[local as usize].as_ref().expect("an instance's place holds it");
+            if was.geometry == geometry && was.transform == transform {
+                return;
+            }
+            if current >= MAX_INSTANCES {
+                structure.set(local, entry);
+                return;
+            }
+            // At rest until now. Among the things that move if there is room for it there;
+            // otherwise it is told to the structure it is in, which is built again.
+            match self.moving.take_place() {
+                Some(moving) => {
+                    self.still.clear(current);
+                    self.moving.set(moving, entry);
+                    *self.place_of(number) = MAX_INSTANCES + moving;
+                    self.paint(MAX_INSTANCES + moving, geometry, material);
+                }
+                None => self.still.set(current, entry),
+            }
+            return;
+        }
+        // New to the scene. A few at a time are things appearing in a scene that is there
+        // already, and go among the things that move so that the large structure is left
+        // alone. A crowd of them at once is a scene being loaded: most of it will never
+        // move, and it would only fill the small structure and have to be moved out again.
+        self.arrivals += 1;
+        let among_moving = if self.arrivals <= ARRIVE_AS_MOVING { self.moving.take_place() } else { None };
+        let place = match among_moving {
+            Some(moving) => {
+                self.moving.set(moving, entry);
+                Some(MAX_INSTANCES + moving)
+            }
+            // Where there is no room among the things that stand still it is left out, and
+            // not put among those that move: rays are traced against that structure too, and
+            // filled with things at rest it costs every ray dear.
+            None => self.still.take_place().inspect(|still| self.still.set(*still, entry)),
         };
         match place {
             Some(place) => {
                 *self.place_of(number) = place;
-                self.put(place, geometry, transform, material);
+                self.paint(place, geometry, material);
             }
             None => *self.place_of(number) = LEFT_OUT,
         }
@@ -434,15 +582,54 @@ impl RayTracing {
     pub(crate) fn leave_out(&mut self, number: u32, within_reach: bool) {
         let kept = std::mem::replace(self.place_of(number), if within_reach { LEFT_OUT } else { UNKNOWN });
         if kept != UNKNOWN && kept != LEFT_OUT {
-            self.entries[kept as usize] = None;
-            self.free.push(kept);
-            self.unplaced.push(kept);
+            let (structure, local) = self.structure(kept);
+            structure.clear(local);
+        }
+    }
+
+    /// Takes the things that have stood still a while from among the things that move and
+    /// puts them among those that stand still. That builds the large structure again, so
+    /// it is done for many at once, or when the small one is filling, or now and then.
+    fn settle(&mut self) {
+        let idle: Vec<u32> = (0..self.moving.entries.len() as u32)
+            .filter(|local| {
+                self.moving.entries[*local as usize]
+                    .as_ref()
+                    .is_some_and(|entry| self.frame - entry.touched >= IDLE &&!self.geometry[entry.geometry.0 as usize].dynamic)
+            })
+            .collect();
+        let filling = self.moving.count() * 4 > MAX_MOVING as usize * 3;
+        let due = self.frame - self.settled >= SETTLE_AT_LEAST;
+        if idle.is_empty() || !(idle.len() >= SETTLE_MANY || filling || due) {
+            return;
+        }
+        self.settled = self.frame;
+        for local in idle {
+            let entry = self.moving.clear(local).expect("an idle place holds an instance");
+            // Where the large structure is full, a thing at rest is left out and not kept
+            // among those that move: a ray is traced against that structure too, and pays
+            // for whatever is in it.
+            let Some(still) = self.still.take_place() else {
+                if entry.number != UNKNOWN {
+                    *self.place_of(entry.number) = LEFT_OUT;
+                }
+                continue;
+            };
+            if entry.number != UNKNOWN {
+                *self.place_of(entry.number) = still;
+            }
+            self.materials[still as usize] = self.materials[(MAX_INSTANCES + local) as usize];
+            self.stale.push(still);
+            self.still.set(still, entry);
         }
     }
 
     /// Uploads the hit buffers if geometry was added, and the materials of the instances
-    /// that changed.
+    /// that changed. Once a frame: it is what counts the frames things have stood still for.
     pub(crate) fn upload(&mut self, gpu: &Gpu) {
+        self.frame += 1;
+        self.arrivals = 0;
+        self.settle();
         if self.buffers_stale {
             self.buffers_stale = false;
             self.vertex_buffer = storage(&gpu.device, "hit vertices", bytemuck::cast_slice(&self.hit_vertices));
@@ -458,7 +645,7 @@ impl RayTracing {
     }
 
     /// Records the acceleration structure builds for this frame: new geometry, geometry
-    /// that moves, and the top-level structure if any instance in it has changed.
+    /// that moves, and each top-level structure in which an instance has changed.
     pub(crate) fn build(&mut self, encoder: &mut wgpu::CommandEncoder) {
         // Build a few million triangles' worth of new geometry a frame at most: a big scene
         // built all at once can keep the GPU busy long enough for Windows to reset it.
@@ -473,35 +660,20 @@ impl RayTracing {
             })
             .chain((0..self.geometry.len()).filter(|i| self.geometry[*i].dynamic))
             .collect();
-        // Only the places that changed are told to the structure.
-        let mut unplaced = std::mem::take(&mut self.unplaced);
-        unplaced.sort_unstable();
-        unplaced.dedup();
-        for place in unplaced {
-            self.changed = true;
-            let Some(entry) = &self.entries[place as usize] else {
-                self.tlas[place as usize] = None;
-                continue;
-            };
-            let g = entry.geometry.0 as usize;
-            if !self.geometry[g].built && !pending.contains(&g) {
-                // Not built yet: left out this frame, and tried again the next.
-                self.tlas[place as usize] = None;
-                self.unplaced.push(place);
-                continue;
-            }
-            let t = entry.transform.transpose().to_cols_array();
-            // Row-major 3x4: the first three rows of the (column-major) matrix.
-            let rows: [f32; 12] = t[..12].try_into().unwrap();
-            // The custom index finds the instance's material: both are kept by place.
-            self.tlas[place as usize] = Some(wgpu::TlasInstance::new(&self.geometry[g].blas, rows, place, 0xff));
-        }
-        // No instance changed and no geometry is to be built or built again: the structure
-        // stands as it is.
-        if !self.changed && pending.is_empty() {
+        // Each structure is told of its places that changed, and is built if any did, or if
+        // geometry under one of its instances is built again this frame, or if it never was.
+        let build_still = self.still.tell(&self.geometry, &pending);
+        let build_moving = self.moving.tell(&self.geometry, &pending);
+        if !build_still && !build_moving && pending.is_empty() {
             return;
         }
-        self.changed = false;
+        let mut structures: Vec<&wgpu::Tlas> = Vec::new();
+        if build_still {
+            structures.push(&self.still.tlas);
+        }
+        if build_moving {
+            structures.push(&self.moving.tlas);
+        }
         let entries: Vec<wgpu::BlasBuildEntry> = pending
             .iter()
             .map(|&i| {
@@ -521,7 +693,7 @@ impl RayTracing {
                 }
             })
             .collect();
-        encoder.build_acceleration_structures(entries.iter(), std::iter::once(&self.tlas));
+        encoder.build_acceleration_structures(entries.iter(), structures);
         drop(entries);
         for i in pending {
             self.geometry[i].built = true;
