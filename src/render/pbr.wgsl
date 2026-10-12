@@ -41,7 +41,7 @@ struct View {
     // x: 1 while anything is in the traced structure of the things that move
     traced: vec4<f32>,
     // What each shadow map of the lights with a place is drawn with.
-    light_shadows: array<mat4x4<f32>, 8>,
+    light_shadows: array<mat4x4<f32>, 16>,
 };
 
 // A storage buffer rather than a uniform: the same group may hold a texture binding array.
@@ -60,7 +60,8 @@ struct Light {
     light: vec4<f32>,
     // xyz: the way it faces, w: the cosine of the cone's inner angle
     direction: vec4<f32>,
-    // x: which shadow map is its own, or less than nought where it casts no shadows
+    // x: which shadow map is its own, or the first of its six, or less than nought where it
+    // casts no shadows; y: 1 for a point light, which has six
     shadow: vec4<f32>,
 };
 
@@ -292,7 +293,21 @@ fn local_lights(world_position: vec3<f32>, n: vec3<f32>, v: vec3<f32>, diffuse_c
         }
         var reaching = 1.0;
         if light.shadow.x >= 0.0 {
-            reaching = light_visibility(u32(light.shadow.x), world_position, n, sqrt(distance_squared));
+            var map = u32(light.shadow.x);
+            if light.shadow.y > 0.5 {
+                // A point light has a map for each of six ways: the one that looks along the
+                // axis the way from the light to here is longest on.
+                let away = -to_light;
+                let size = abs(away);
+                if size.x >= size.y && size.x >= size.z {
+                    map += select(1u, 0u, away.x >= 0.0);
+                } else if size.y >= size.z {
+                    map += select(3u, 2u, away.y >= 0.0);
+                } else {
+                    map += select(5u, 4u, away.z >= 0.0);
+                }
+            }
+            reaching = light_visibility(map, world_position, n, sqrt(distance_squared));
             if reaching <= 0.0 {
                 continue;
             }

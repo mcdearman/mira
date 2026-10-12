@@ -36,7 +36,7 @@ struct Views {
     // to go through, w: which of the views there are this frame, a bit for each
     counts: vec4<u32>,
     // Five planes a view: four sides and the far end, pointing inward.
-    planes: array<vec4<f32>, 65>,
+    planes: array<vec4<f32>, 105>,
 };
 
 @group(0) @binding(0) var<storage, read> places: array<Place>;
@@ -97,7 +97,7 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
     // Into each shadow map it falls in, and no other: the sun's cascades, for what is near
     // enough the camera to matter to them, and then the lights'.
     let near = !sized || distance(center, views.camera.xyz) - radius <= views.camera.w;
-    for (var view = 1u; view < 13u; view++) {
+    for (var view = 1u; view < 21u; view++) {
         if (views.counts.w & (1u << view)) == 0u || (view < views.counts.x && !near) {
             continue;
         }

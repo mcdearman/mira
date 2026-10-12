@@ -1,7 +1,8 @@
 //! Lights with a place: lamps, fires, torches.
 //!
 //! A [`PointLight`] shines all round and a [`SpotLight`] in a cone, each as far as its
-//! `range`. A spot light may cast shadows; a point light casts none.
+//! `range`. Either may cast shadows: a spot light into one shadow map, a point light into
+//! six, one for each way it shines.
 //!
 //! A scene may hold a great many, since a surface is lit only by the few that reach it. The
 //! view is cut into cells, a grid across the picture and slices through its depth, and each
@@ -23,13 +24,16 @@ pub struct PointLight {
     pub intensity: f32,
     /// How far it reaches, in metres: it fades to nothing there.
     pub range: f32,
+    /// Whether what stands in its light casts a shadow. It takes six of the sixteen shadow
+    /// maps there are for lights, where a spot light takes one: see [`SpotLight::shadows`].
+    pub shadows: bool,
 }
 
 impl crate::ecs::Component for PointLight {}
 
 impl Default for PointLight {
     fn default() -> Self {
-        Self { color: Color::WHITE, intensity: 4.0, range: 8.0 }
+        Self { color: Color::WHITE, intensity: 4.0, range: 8.0, shadows: false }
     }
 }
 
@@ -45,8 +49,9 @@ pub struct SpotLight {
     /// `outer`.
     pub inner: f32,
     pub outer: f32,
-    /// Whether what stands in its light casts a shadow. The eight such lights nearest the
-    /// camera do, each with a shadow map of its own; the rest shine through things.
+    /// Whether what stands in its light casts a shadow. There are sixteen shadow maps for
+    /// lights: the lights that ask are given them nearest the camera first, one to a spot
+    /// light and six to a point light, and those left without shine through things.
     pub shadows: bool,
 }
 
@@ -85,7 +90,7 @@ impl LocalLight {
             direction: Vec3::NEG_Z,
             cos_inner: -2.0,
             cos_outer: -3.0,
-            casts: false,
+            casts: light.shadows,
             shadow: None,
         }
     }
@@ -116,7 +121,8 @@ pub(crate) struct LightRaw {
     light: [f32; 4],
     /// xyz: the way it faces, w: the cosine of the cone's inner angle
     direction: [f32; 4],
-    /// x: which shadow map is its own, or less than nought where it has none
+    /// x: which shadow map is its own, or the first of its six, or less than nought where it
+    /// has none; y: 1 for a point light, which has six
     shadow: [f32; 4],
 }
 
@@ -139,8 +145,27 @@ pub(crate) fn slice(depth: f32) -> u32 {
     ((through * CELLS.2 as f32) as u32).min(CELLS.2 - 1)
 }
 
-/// How many lights cast shadows at once, each into a map of its own.
-pub(crate) const SHADOWED: usize = 8;
+/// How many shadow maps there are for lights: one for a spot light, six for a point light.
+pub(crate) const SHADOWED: usize = 16;
+/// The six ways a point light's maps look, in the order the shader takes them in: along x and
+/// against it, then y, then z. With each, which way is up in it.
+const FACES: [(Vec3, Vec3); 6] = [(Vec3::X, Vec3::Y), (Vec3::NEG_X, Vec3::Y), (Vec3::Y, Vec3::Z), (Vec3::NEG_Y, Vec3::Z), (Vec3::Z, Vec3::Y), (Vec3::NEG_Z, Vec3::Y)];
+
+/// Which of a point light's six maps a direction from it falls in: the one that looks along
+/// the axis the direction is longest on. The same sum as in `light_visibility` in `pbr.wgsl`.
+#[cfg(test)]
+fn face(direction: Vec3) -> usize {
+    let size = direction.abs();
+    if size.x >= size.y && size.x >= size.z {
+        if direction.x >= 0.0 { 0 } else { 1 }
+    } else if size.y >= size.z {
+        if direction.y >= 0.0 { 2 } else { 3 }
+    } else if direction.z >= 0.0 {
+        4
+    } else {
+        5
+    }
+}
 /// How wide and high each of those maps is.
 pub(crate) const SHADOW_MAP: u32 = 1024;
 
@@ -151,24 +176,32 @@ pub(crate) fn shadowed(lights: &mut [LocalLight], camera: Vec3) -> Vec<Mat4> {
         .iter()
         .enumerate()
         .take(MOST)
-        .filter(|(_, light)| light.casts && light.range > 0.05 && light.cos_outer > -1.0)
-        .map(|(at, light)| ((light.position.distance(camera) - light.range).max(0.0), at))
-        .filter(|(away, _)| *away < FAR)
+        .filter(|(_, light)| light.casts && light.range > 0.05)
+        .map(|(at, light)| (light.position.distance(camera), at))
+        .filter(|(away, at)| *away - lights[*at].range < FAR)
         .collect();
     casting.sort_by(|a, b| a.0.total_cmp(&b.0));
-    casting
-        .into_iter()
-        .take(SHADOWED)
-        .enumerate()
-        .map(|(map, (_, at))| {
-            let light = &mut lights[at];
-            light.shadow = Some(map as u32);
+    let mut maps = Vec::new();
+    for (_, at) in casting {
+        let light = &mut lights[at];
+        let looks = |toward: Vec3, up: Vec3, across: f32| Mat4::perspective_rh(across, 1.0, 0.05, light.range) * Mat4::look_at_rh(light.position, light.position + toward, up);
+        // A point light shines every way, and has a map for each of six; a little wider than
+        // the quarter turn each has to take in, so that their edges overlap.
+        let its: Vec<Mat4> = if light.cos_outer < -1.0 {
+            FACES.iter().map(|(toward, up)| looks(*toward, *up, std::f32::consts::FRAC_PI_2 + 0.04)).collect()
+        } else {
             // A little wider than the cone, so that its edge is not the map's.
             let across = (2.0 * light.cos_outer.clamp(-1.0, 1.0).acos() + 0.1).min(3.0);
             let up = if light.direction.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
-            Mat4::perspective_rh(across, 1.0, 0.05, light.range) * Mat4::look_at_rh(light.position, light.position + light.direction, up)
-        })
-        .collect()
+            vec![looks(light.direction, up, across)]
+        };
+        // One that there is no room left for goes without; a smaller one after it may fit.
+        if maps.len() + its.len() <= SHADOWED {
+            light.shadow = Some(maps.len() as u32);
+            maps.extend(its);
+        }
+    }
+    maps
 }
 
 /// What a view is seen from, as far as the lights need it.
@@ -215,7 +248,7 @@ impl LightGrid {
                 position: light.position.extend(light.range).to_array(),
                 light: light.light.extend(light.cos_outer).to_array(),
                 direction: light.direction.extend(light.cos_inner).to_array(),
-                shadow: [light.shadow.map_or(-1.0, |map| map as f32), 0.0, 0.0, 0.0],
+                shadow: [light.shadow.map_or(-1.0, |map| map as f32), if light.cos_outer < -1.0 { 1.0 } else { 0.0 }, 0.0, 0.0],
             });
             let slices = slice(depth - reach)..=slice(depth + reach);
             // Across and down: the box about the sphere, as the picture shows it. A sphere the
@@ -415,17 +448,17 @@ mod tests {
     #[test]
     fn the_nearest_lights_that_ask_are_given_the_shadow_maps() {
         let down = |at: Vec3, shadows: bool| LocalLight::spot(at, Vec3::NEG_Y, &SpotLight { range: 10.0, outer: 0.5, shadows, ..Default::default() });
-        // Ten that ask, further and further off, one that does not ask, and a point light.
-        let mut lights: Vec<LocalLight> = (0..10).rev().map(|i| down(Vec3::new(0.0, 5.0, -20.0 * i as f32), true)).collect();
+        // Twenty that ask, further and further off, one that does not ask, and a point light.
+        let mut lights: Vec<LocalLight> = (0..20).rev().map(|i| down(Vec3::new(0.0, 5.0, -5.0 * i as f32), true)).collect();
         lights.push(down(Vec3::new(1.0, 5.0, 0.0), false));
         lights.push(lamp(Vec3::ZERO, 5.0));
         let maps = shadowed(&mut lights, Vec3::ZERO);
         assert_eq!(maps.len(), SHADOWED);
-        // The nearest has the first map, the two furthest have none, nor have those that did
+        // The nearest has the first map, the furthest have none, nor have those that did
         // not ask.
-        assert_eq!(lights[9].shadow, Some(0));
-        assert_eq!(lights[8].shadow, Some(1));
-        assert!(lights[0].shadow.is_none() && lights[1].shadow.is_none() && lights[10].shadow.is_none() && lights[11].shadow.is_none());
+        assert_eq!(lights[19].shadow, Some(0));
+        assert_eq!(lights[18].shadow, Some(1));
+        assert!(lights[0].shadow.is_none() && lights[1].shadow.is_none() && lights[20].shadow.is_none() && lights[21].shadow.is_none());
         // Its map takes in what is in its cone, within its reach, and not what is behind it
         // or beyond.
         let seen = |point: Vec3| {
@@ -434,6 +467,19 @@ mod tests {
         };
         assert!(seen(Vec3::new(0.0, 0.0, 0.0)) && seen(Vec3::new(2.0, 0.0, 0.0)) && seen(Vec3::new(0.0, 0.0, -2.0)));
         assert!(!seen(Vec3::new(0.0, 8.0, 0.0)) && !seen(Vec3::new(0.0, -6.0, 0.0)) && !seen(Vec3::new(9.0, 0.0, 0.0)));
+        // A point light that asks has six, one for each way: whichever way a thing is from it,
+        // the map chosen for that way takes the thing in.
+        let mut lantern = [LocalLight::point(Vec3::new(1.0, 2.0, 3.0), &PointLight { range: 9.0, shadows: true, ..Default::default() }), down(Vec3::new(0.0, 5.0, -4.0), true)];
+        let maps = shadowed(&mut lantern, Vec3::ZERO);
+        assert_eq!((maps.len(), lantern[0].shadow, lantern[1].shadow), (7, Some(0), Some(6)));
+        for toward in [Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y, Vec3::Z, Vec3::NEG_Z, Vec3::new(1.0, 0.98, 0.97), Vec3::new(-0.3, -0.9, 0.89), Vec3::new(0.2, 0.1, -0.21)] {
+            let clip = maps[face(toward)] * (lantern[0].position + toward.normalize() * 4.0).extend(1.0);
+            assert!(clip.w > 0.0 && clip.x.abs() <= clip.w && clip.y.abs() <= clip.w && (0.0..=clip.w).contains(&clip.z), "toward {toward}");
+        }
+        // Three of them would want eighteen maps: two are given theirs and the third is not.
+        let mut three: Vec<LocalLight> = (0..3).map(|i| LocalLight::point(Vec3::new(0.0, 0.0, -5.0 * i as f32), &PointLight { shadows: true, ..Default::default() })).collect();
+        assert_eq!(shadowed(&mut three, Vec3::ZERO).len(), 12);
+        assert!(three[2].shadow.is_none());
         // And is told to the shader with the light.
         let grid = LightGrid::build(&lights, &Lookout { camera: Vec3::new(0.0, 2.0, 30.0), ..lookout() });
         assert!(grid.lights.iter().any(|light| light.shadow[0] == 0.0) && grid.lights.iter().any(|light| light.shadow[0] < 0.0));

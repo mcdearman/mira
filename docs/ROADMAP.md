@@ -358,9 +358,10 @@ dying in any order; the timer is right in every case because no code ever sets i
 - [ ] Visibility buffer or deferred shading, replacing forward + MSAA
 - [x] Point and spot lights, clustered: sorted each frame into cells of the view, so a
       surface goes through only the lights that reach it (see [LIGHTS.md](LIGHTS.md))
-- [x] Shadows for spot lights: a map each for the eight nearest the camera that ask
-- [ ] Shadows for point lights, and for more lights at once in an atlas; the lights in
-      traced reflections and the probes
+- [x] Shadows for lights with a place: sixteen maps, one to a spot light and six to a point
+      light, given to those nearest the camera that ask
+- [ ] Shadows for more lights at once, in an atlas with maps sized by how near the light is;
+      the lights in traced reflections and the probes
 - [ ] GPU particles, sorted or order-independent transparency, temporal upscaling
 - [ ] Voxels: greedy meshing, transparent-block pass, chunk draws through the same indirect path
 
