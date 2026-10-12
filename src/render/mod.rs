@@ -731,7 +731,7 @@ fn sync_instances(
     time: Res<Time>,
     mut renderer: ResMut<MeshRenderer>,
     mut undrawn: ResMut<Undrawn>,
-    moved: Query<crate::ecs::Entity, crate::ecs::Changed<GlobalTransform>>,
+    moved: Query<(crate::ecs::Entity, &GlobalTransform), crate::ecs::Changed<GlobalTransform>>,
     painted: Query<crate::ecs::Entity, crate::ecs::Changed<Material>>,
     meshed: Query<crate::ecs::Entity, crate::ecs::Changed<Mesh3d>>,
     levelled: Query<crate::ecs::Entity, crate::ecs::Changed<Lods>>,
@@ -743,7 +743,17 @@ fn sync_instances(
     // In order, and each once: an entity's parts lie near its neighbours' in the card's
     // copy, which is then written through from end to end.
     let mut touched: Vec<crate::ecs::Entity> = std::mem::take(&mut undrawn.0);
-    touched.extend(moved.iter().chain(painted.iter()).chain(meshed.iter()).chain(levelled.iter()).chain(surfaced.iter()).chain(unshadowed.iter()));
+    touched.extend(painted.iter().chain(meshed.iter()).chain(levelled.iter()).chain(surfaced.iter()).chain(unshadowed.iter()));
+    touched.sort_unstable();
+    // Most of what changes in a frame has only moved, and of that only where it is is
+    // brought up to date. What has changed otherwise, or draws nothing yet, is gone through
+    // whole.
+    let otherwise = touched.len();
+    for (entity, transform) in &moved {
+        if touched[..otherwise].binary_search(&entity).is_ok() || !renderer.scene.moved(entity, transform.0) {
+            touched.push(entity);
+        }
+    }
     touched.sort_unstable();
     touched.dedup();
     let mut parts: Vec<instances::Part> = Vec::new();
