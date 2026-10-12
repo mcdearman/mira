@@ -38,6 +38,8 @@ struct View {
     probe_dims: vec4<f32>,
     // x: frame number (mod 1024), y: 1 when frames are blended over time (TAA), zw: jitter
     temporal: vec4<f32>,
+    // x: 1 while anything is in the traced structure of the things that move
+    traced: vec4<f32>,
 };
 
 // A storage buffer rather than a uniform: the same group may hold a texture binding array.

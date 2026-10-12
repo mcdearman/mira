@@ -147,12 +147,47 @@ What tracing costs, at 100,000 things:
 found by taking the stages away from the frame, which could not tell the card's work from
 the library's on the processor. The card's clock says it is the library's.)
 
-What would cut it is fewer instances in what has to be built again: a structure of the
-things that move, kept apart from one of the things that stand still, with rays traced
-against both. That was tried. It does cut the processor's cost (at 60,000 things with a tenth
-moving, 18.3 ms became 10.9), and it costs the card 1.5 to 2 ms in the main pass, at rest as
-well, since every ray is traced twice. It is kept on a branch (`traced-two-structures`)
-until it costs a scene at rest nothing.
+### Two structures
+
+What cuts it is fewer instances in what has to be built again. So there are two structures:
+one of the things that stand still, of 65,536 at most and made to be quick to trace, and one
+of the things that move, of 16,384 at most and made to be quick to build. A thing that
+moves is taken from the first to the second, and goes back once it has stood still for 120
+frames, many at a time so that the large one is seldom built. A scene arriving all at once
+goes straight to the large one. Where the small one is full, a thing that moves stays in
+the large one, which is then built as before.
+
+A ray is traced against both, and against the second only while there is something in it,
+so a scene at rest pays nothing for it.
+
+With ray tracing, the figures in the tables above are from before this. Beside them:
+
+| Things | Moving | | On the processor | On the card | Frames a second |
+|---|---|---|---|---|---|
+| 100,000 | none | one structure | 6.5 ms | 16.1 ms | 62 |
+| | | two | 6.4 ms | 16.7 ms | 60 |
+| 100,000 | a hundredth | one structure | 18.6 ms | 16.4 ms | 54 |
+| | | two | 19.1 ms | 18.0 ms | 52 |
+| 100,000 | a tenth | one structure | 24.5 ms | 16.7 ms | 41 |
+| | | two | 18.7 ms | 18.3 ms | 53 |
+| 100,000 with levels of detail | none | one structure | 7.2 ms | 5.8 ms | 139 |
+| | | two | 7.1 ms | 6.1 ms | 141 |
+| 100,000 with levels of detail | a hundredth | two | 10.2 ms | 7.2 ms | 98 |
+| 100,000 with levels of detail | a tenth | one structure | 27.7 ms | 6.1 ms | 36 |
+| | | two | 19.8 ms | 7.5 ms | 51 |
+| 20,000 | a tenth | one structure | 8.1 ms | 9.0 ms | 111 |
+| | | two | 4.2 ms | 10.9 ms | 92 |
+
+What that says:
+
+- **Building costs the processor half a millisecond where it cost twelve.** With a tenth of
+  100,000 moving, the frame goes from 41 a second to 53, and with levels of detail from 36
+  to 51.
+- **Tracing the second structure costs the card 1 to 2 ms while anything moves.** Where the
+  card is what holds the frame back and the processor is not, that is a loss: 20,000 things
+  without levels of detail go from 111 a second to 92.
+- Where the card is past 16.7 ms, the processor's figure is mostly the wait for it (the two
+  rows at 100,000 without levels of detail).
 
 (`moving=0.00001` at 100,000 moves one thing that is 490 m from the camera, beyond the
 rays' reach of 400, so it measures the same as nothing moving.)
@@ -185,8 +220,6 @@ The engine does not make the coarser meshes: they are the scene's to give.
 
 On the processor, with things moving, where the time now is:
 
-- Where rays are traced, the structure built again whole: about 12 ms. Two structures cut
-  that, and with levels of detail the card has the 2 ms to spare that they cost.
 - Deciding what each view and each cascade sees (Prepare, 7 ms with a tenth moving) and
   gathering what changed (Extract, 3.5 ms): deciding it on the card, with meshes in shared
   buffers so that a pipeline's draws are one call, which wants a benchmark of many different

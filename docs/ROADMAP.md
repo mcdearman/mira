@@ -346,12 +346,10 @@ dying in any order; the timer is right in every case because no code ever sets i
 - [x] Instances kept on the card: one for each mesh an entity draws, written only when its
       entity changes; each view sends the numbers of those it sees, and each shadow cascade
       of those that cast into it (see [PERFORMANCE.md](PERFORMANCE.md))
-- [ ] The rest of the scene on the GPU: shared vertex and index buffers, bindless textures,
-      and a structure of what moves apart from one of what stands still for rays to be
-      traced against (the traced scene keeps its instances now, but is built again whole
-      whenever one of them moves, which costs the processor 12 ms at 65,536 instances;
-      two structures were tried and cost the card 2 ms at rest, see
+- [x] The traced scene kept from frame to frame, in two structures: what stands still, and
+      what moves, which is the only one built again when something does (see
       [PERFORMANCE.md](PERFORMANCE.md))
+- [ ] The rest of the scene on the GPU: shared vertex and index buffers, bindless textures
 - [ ] Culling in compute against the frustum and a depth pyramid; multi-draw indirect
 - [ ] Visibility buffer or deferred shading, replacing forward + MSAA
 - [x] Point and spot lights, clustered: sorted each frame into cells of the view, so a

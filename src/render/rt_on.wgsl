@@ -6,13 +6,46 @@ enable wgpu_binding_array;
 
 const RAY_TRACING: bool = true;
 
+// What stands still and what moves are kept in two structures, so that when something moves
+// only the small one of the things that move is built again. A ray is traced against both.
 @group(0) @binding(5) var scene: acceleration_structure;
+@group(0) @binding(18) var scene_moving: acceleration_structure;
 
 fn occluded(origin: vec3<f32>, dir: vec3<f32>, tmax: f32) -> bool {
     var rq: ray_query;
     rayQueryInitialize(&rq, scene, RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT, 0xffu, 0.0, tmax, origin, dir));
     rayQueryProceed(&rq);
+    if rayQueryGetCommittedIntersection(&rq).kind != RAY_QUERY_INTERSECTION_NONE {
+        return true;
+    }
+    // Nothing moves in most frames of most scenes, and then there is no second structure
+    // to trace against.
+    if view.traced.x < 0.5 {
+        return false;
+    }
+    rayQueryInitialize(&rq, scene_moving, RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT, 0xffu, 0.0, tmax, origin, dir));
+    rayQueryProceed(&rq);
     return rayQueryGetCommittedIntersection(&rq).kind != RAY_QUERY_INTERSECTION_NONE;
+}
+
+// What a ray meets first, of the things that stand still and the things that move. The
+// second structure is asked only for something nearer than what the first found.
+fn nearest(origin: vec3<f32>, dir: vec3<f32>, tmin: f32, tmax: f32, flags: u32) -> RayIntersection {
+    var rq: ray_query;
+    rayQueryInitialize(&rq, scene, RayDesc(flags, 0xffu, tmin, tmax, origin, dir));
+    rayQueryProceed(&rq);
+    let still = rayQueryGetCommittedIntersection(&rq);
+    if view.traced.x < 0.5 {
+        return still;
+    }
+    let reach = select(tmax, still.t, still.kind != RAY_QUERY_INTERSECTION_NONE);
+    rayQueryInitialize(&rq, scene_moving, RayDesc(flags, 0xffu, tmin, reach, origin, dir));
+    rayQueryProceed(&rq);
+    let moving = rayQueryGetCommittedIntersection(&rq);
+    if moving.kind != RAY_QUERY_INTERSECTION_NONE {
+        return moving;
+    }
+    return still;
 }
 
 // A basis with `n` as its third axis.
@@ -79,10 +112,7 @@ fn contact_occlusion(p: vec3<f32>, n: vec3<f32>, pixel: vec2<f32>) -> f32 {
         let phi = fract(b + f32(i) * 0.618034) * 6.2831853;
         let r = sqrt(u);
         let dir = frame * vec3<f32>(cos(phi) * r, sin(phi) * r, sqrt(1.0 - u));
-        var rq: ray_query;
-        rayQueryInitialize(&rq, scene, RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT, 0xffu, 0.0, reach, origin, dir));
-        rayQueryProceed(&rq);
-        let hit = rayQueryGetCommittedIntersection(&rq);
+        let hit = nearest(origin, dir, 0.0, reach, RAY_FLAG_TERMINATE_ON_FIRST_HIT);
         open += select(1.0, hit.t / reach, hit.kind != RAY_QUERY_INTERSECTION_NONE);
     }
     return open * 0.5;
@@ -159,10 +189,7 @@ fn shade_hit(hit: RayIntersection, origin: vec3<f32>, dir: vec3<f32>, lod: f32, 
 
 // What a mirror ray sees: rgb, and in w whether it hit anything (else the caller uses the sky).
 fn traced_reflection(p: vec3<f32>, dir: vec3<f32>) -> vec4<f32> {
-    var rq: ray_query;
-    rayQueryInitialize(&rq, scene, RayDesc(0u, 0xffu, 0.02, 1500.0, p, dir));
-    rayQueryProceed(&rq);
-    let hit = rayQueryGetCommittedIntersection(&rq);
+    let hit = nearest(p, dir, 0.02, 1500.0, 0u);
     if hit.kind == RAY_QUERY_INTERSECTION_NONE {
         return vec4<f32>(0.0);
     }
