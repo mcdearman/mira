@@ -276,9 +276,29 @@ mod tests {
         }
     }
 
+    /// A surface shader is the mesh shader with the surface's module taken in, and no one
+    /// machine builds it both traced and not.
     #[test]
-    fn the_engines_lighting_comes_with_and_without_ray_tracing() {
-        let library = ShaderLibrary::engine();
+    fn the_mesh_shader_reads_as_wgsl_with_a_surface_shader_taken_in() {
+        let mut library = ShaderLibrary::engine();
+        library.add_text(
+            "game::glow",
+            "fn surface(s: Surface, in: VertexOutput) -> Surface {\n    var out = s;\n    out.emissive = in.color.rgb * (0.5 + 0.5 * sin(time()));\n    return out;\n}",
+        );
+        let source = format!("{}\n#import game::glow\n", crate::shader!("mesh.wgsl").embedded);
+        for defines in [&["SURFACE"][..], &["SURFACE", RAY_TRACING][..]] {
+            let whole = library.compose(&source, defines).unwrap();
+            assert!(whole.contains("s = surface(s, in);"));
+            if let Err(wrong) = wgpu::naga::front::wgsl::parse_str(&whole) {
+                panic!("with {defines:?}:\n{}", wrong.emit_to_string(&whole));
+            }
+        }
+        // Without one, the mesh shader does not ask for it.
+        assert!(!library.compose(crate::shader!("mesh.wgsl").embedded, &[]).unwrap().contains("surface(s, in)"));
+    }
+
+    #[test]
+    fn the_engines_lighting_comes_with_and_without_ray_tracing() {        let library = ShaderLibrary::engine();
         let plain = library.compose("#import mira::pbr", &[]).unwrap();
         let traced = library.compose("#import mira::pbr", &[RAY_TRACING]).unwrap();
         let directive = |text: &str| text.lines().any(|line| line.trim_start().starts_with('#'));

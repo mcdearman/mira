@@ -246,6 +246,10 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) front: bool) -> @location(0)
     s.subsurface = in.extra.y;
     s.geometric = geometric;
     s.sun_occlusion = self_shadow;
+#ifdef SURFACE
+    // A surface shader of the material's own has the last word on what is lit.
+    s = surface(s, in);
+#endif
     let color = apply_haze(shade(s, in.world_position), in.world_position);
     if decal {
         // Decals blend over what is beneath by their own alpha.

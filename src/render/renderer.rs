@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Range};
+use std::{collections::HashMap, ops::Range, sync::Mutex};
 
 use glam::{Mat3, Mat4, Vec3};
 use wgpu::util::DeviceExt;
@@ -69,6 +69,8 @@ impl InstanceRaw {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub(crate) struct BatchKey {
     variant: u8,
+    /// The surface shader, counted from one; nought is the standard surface.
+    surface: u16,
     mesh: u32,
     textures: TextureSet,
 }
@@ -84,11 +86,12 @@ struct TextureSet {
 const NONE: u32 = u32::MAX;
 
 impl BatchKey {
-    pub(crate) fn new(mesh: u32, m: &Material) -> Self {
+    pub(crate) fn new(mesh: u32, m: &Material, surface: u16) -> Self {
         let id = |h: Option<crate::assets::Handle<Image>>| h.map_or(NONE, |h| h.id());
         Self {
             // Decals sort after everything else, so they lie over what is already drawn.
             variant: m.alpha_cutoff.is_some() as u8 | (m.double_sided as u8) << 1 | (m.decal as u8) << 2,
+            surface,
             mesh,
             textures: TextureSet {
                 base_color: id(m.base_color_texture),
@@ -122,10 +125,85 @@ struct Batch {
     instances: Range<u32>,
 }
 
+/// One of the main pass's pipelines for meshes, drawing with `shader`.
+fn main_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    masked: bool,
+    double_sided: bool,
+    decal: bool,
+    lines: bool,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("mesh pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            buffers: &[Some(Vertex::layout()), Some(InstanceRaw::layout())],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: HDR_FORMAT,
+                blend: decal.then_some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            cull_mode: (!double_sided).then_some(wgpu::Face::Back),
+            polygon_mode: if lines { wgpu::PolygonMode::Line } else { wgpu::PolygonMode::Fill },
+            ..Default::default()
+        },
+        depth_stencil: Some(if decal {
+            // Tested against the surface beneath but not written, and pulled a little
+            // toward the eye (depth is reversed) so it never flickers through it.
+            wgpu::DepthStencilState {
+                bias: wgpu::DepthBiasState {
+                    constant: 8,
+                    slope_scale: 1.5,
+                    clamp: 0.0,
+                },
+                ..main_depth_state(false)
+            }
+        } else {
+            main_depth_state(true)
+        }),
+        multisample: main_multisample(masked && !decal),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+/// The main pass's pipelines for one shader, by `BatchKey::variant`.
+fn main_pipelines(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule) -> [wgpu::RenderPipeline; 8] {
+    std::array::from_fn(|variant| main_pipeline(device, layout, shader, variant & 1 != 0, variant & 2 != 0, variant & 4 != 0, false))
+}
+
+/// A surface shader an entity named, and the pipelines that draw with it.
+struct SurfacePipelines {
+    /// None until they are made, and where the shader could not be built: such a surface is
+    /// drawn the standard way.
+    pipelines: Option<[wgpu::RenderPipeline; 8]>,
+    tried: bool,
+}
+
 /// Draws every `Mesh3d` with one instanced draw call per mesh and material.
 pub struct MeshRenderer {
     /// Indexed by `BatchKey::variant`: bit 0 alpha-tested, bit 1 double-sided, bit 2 decal.
     pipelines: [wgpu::RenderPipeline; 8],
+    /// What the main pass's pipelines are laid out as, kept for those made later.
+    layout: wgpu::PipelineLayout,
+    /// The surface shaders entities have named, in the order they were first met: a batch
+    /// knows one by its place here, counted from one. Named while the frame is gathered,
+    /// which only reads the renderer.
+    surface_names: Mutex<Vec<String>>,
+    /// The pipelines made for each of those, where its shader could be built.
+    surfaces: Vec<SurfacePipelines>,
     /// Draws triangles as their edges, where the graphics card can.
     wire: Option<wgpu::RenderPipeline>,
     /// Whether to draw with `wire` this frame.
@@ -182,55 +260,11 @@ impl MeshRenderer {
             bind_group_layouts: &[Some(&view.layout), Some(&material_layout)],
             immediate_size: 0,
         });
-        let pipeline = |masked: bool, double_sided: bool, decal: bool, lines: bool| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("mesh pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Some(Vertex::layout()), Some(InstanceRaw::layout())],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_FORMAT,
-                        blend: decal.then_some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    cull_mode: (!double_sided).then_some(wgpu::Face::Back),
-                    polygon_mode: if lines { wgpu::PolygonMode::Line } else { wgpu::PolygonMode::Fill },
-                    ..Default::default()
-                },
-                depth_stencil: Some(if decal {
-                    // Tested against the surface beneath but not written, and pulled a little
-                    // toward the eye (depth is reversed) so it never flickers through it.
-                    wgpu::DepthStencilState {
-                        bias: wgpu::DepthBiasState {
-                            constant: 8,
-                            slope_scale: 1.5,
-                            clamp: 0.0,
-                        },
-                        ..main_depth_state(false)
-                    }
-                } else {
-                    main_depth_state(true)
-                }),
-                multisample: main_multisample(masked && !decal),
-                multiview_mask: None,
-                cache: None,
-            })
-        };
-        let pipelines = std::array::from_fn(|variant| pipeline(variant & 1 != 0, variant & 2 != 0, variant & 4 != 0, false));
+        let pipelines = main_pipelines(device, &layout, &shader);
         let wire = device
             .features()
             .contains(wgpu::Features::POLYGON_MODE_LINE)
-            .then(|| pipeline(false, true, false, true));
+            .then(|| main_pipeline(device, &layout, &shader, false, true, false, true));
 
         let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh shadow layout"),
@@ -261,7 +295,6 @@ impl MeshRenderer {
                 cache: None,
             })
         };
-
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("material sampler"),
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -283,6 +316,9 @@ impl MeshRenderer {
         let instance_capacity = 64;
         Self {
             pipelines,
+            layout,
+            surface_names: Mutex::default(),
+            surfaces: Vec::new(),
             wire,
             wireframe: false,
             shadow_opaque: shadow_pipeline(false),
@@ -305,6 +341,9 @@ impl MeshRenderer {
     /// this one's meshes, textures and materials.
     pub(crate) fn adopt_pipelines(&mut self, fresh: Self) {
         self.pipelines = fresh.pipelines;
+        self.layout = fresh.layout;
+        // The surface shaders are built again from what they now say, when next drawn.
+        self.surfaces.clear();
         self.wire = fresh.wire;
         self.shadow_opaque = fresh.shadow_opaque;
         self.shadow_masked = fresh.shadow_masked;
@@ -448,6 +487,50 @@ impl MeshRenderer {
         self.materials.insert(set, bind_group);
     }
 
+    /// How a batch knows the surface shader of this name: its place among those named so
+    /// far, counted from one. Its pipelines are made when it is first drawn.
+    pub(crate) fn surface(&self, name: &str) -> u16 {
+        let mut names = self.surface_names.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let at = names.iter().position(|known| known == name).unwrap_or_else(|| {
+            names.push(name.to_owned());
+            names.len() - 1
+        });
+        at as u16 + 1
+    }
+
+    /// Makes the pipelines of surface shaders that have been named and not yet built. The
+    /// mesh shader is put together with the surface's module taken in, and `SURFACE` defined
+    /// so that it is asked. A shader that is not there, or will not compile, is said once
+    /// and its surfaces are drawn the standard way.
+    fn build_surfaces(&mut self, gpu: &Gpu) {
+        let names = self.surface_names.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+        while self.surfaces.len() < names.len() {
+            self.surfaces.push(SurfacePipelines { pipelines: None, tried: false });
+        }
+        for (surface, name) in self.surfaces.iter_mut().zip(&names).filter(|(surface, _)| !surface.tried) {
+            surface.tried = true;
+            let source = format!("{}\n#import {name}\n", crate::shader!("mesh.wgsl").source());
+            let whole = match gpu.compose_with(&source, &["SURFACE"]) {
+                Ok(whole) => whole,
+                Err(mistake) => {
+                    log::error!("the surface shader `{name}` is drawn the standard way: {mistake}");
+                    continue;
+                }
+            };
+            // Collected, where wgpu would otherwise stop the program at the first.
+            let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let module = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(name),
+                source: wgpu::ShaderSource::Wgsl(whole.into()),
+            });
+            let pipelines = main_pipelines(&gpu.device, &self.layout, &module);
+            match pollster::block_on(scope.pop()) {
+                Some(error) => log::error!("the surface shader `{name}` is drawn the standard way:\n{error}"),
+                None => surface.pipelines = Some(pipelines),
+            }
+        }
+    }
+
     /// The bounding sphere of an uploaded mesh, in mesh space.
     pub fn bounds(&self, mesh: u32) -> Option<(Vec3, f32)> {
         self.meshes.get(&mesh).map(|m| (m.center, m.radius))
@@ -456,6 +539,7 @@ impl MeshRenderer {
     /// Sorts objects so each mesh and material becomes one contiguous range of instances,
     /// once for the camera's view and once for the shadow cascades.
     pub fn build_batches(&mut self, gpu: &Gpu, frame: &mut RenderFrame) {
+        self.build_surfaces(gpu);
         frame.objects.sort_unstable_by_key(|o| o.key);
         self.instances.clear();
         self.batches.clear();
@@ -497,7 +581,10 @@ impl MeshRenderer {
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         match (&self.wire, self.wireframe) {
             (Some(wire), true) => self.draw_with(pass, &self.batches, |_| wire),
-            _ => self.draw_with(pass, &self.batches, |key| &self.pipelines[key.variant as usize]),
+            _ => self.draw_with(pass, &self.batches, |key| {
+                let own = key.surface.checked_sub(1).and_then(|at| self.surfaces.get(at as usize));
+                &own.and_then(|surface| surface.pipelines.as_ref()).unwrap_or(&self.pipelines)[key.variant as usize]
+            }),
         }
     }
 

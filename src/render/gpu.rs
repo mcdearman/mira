@@ -259,6 +259,14 @@ impl Gpu {
         })
     }
 
+    /// Puts a shader together as [`compose`](Self::compose) does, with more defined than
+    /// the device itself defines, and says what was wrong where something was.
+    pub fn compose_with(&self, source: &str, also: &[&str]) -> Result<String, compose::ComposeError> {
+        let mut defines = self.shader_defines();
+        defines.extend_from_slice(also);
+        self.shaders.compose(source, &defines)
+    }
+
     /// Compiles a shader file for this device, its imports taken in.
     pub fn shader(&self, shader: Shader) -> wgpu::ShaderModule {
         self.device.create_shader_module(wgpu::ShaderModuleDescriptor {

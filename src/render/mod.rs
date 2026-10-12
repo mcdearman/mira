@@ -158,6 +158,35 @@ pub struct Material {
 
 impl Component for Material {}
 
+/// A surface worked out by a shader of the game's own. The mesh is drawn as any other, with
+/// the engine's lighting, shadows and haze, and its [`Material`] and textures as the values;
+/// the shader has the last word on what is lit. `shader` names a module in the device's
+/// library ([`Gpu::shaders`]) that says:
+///
+/// ````wgsl
+/// fn surface(s: Surface, in: VertexOutput) -> Surface {
+///     var out = s;
+///     out.emissive = vec3<f32>(2.0, 0.4, 0.1) * (0.5 + 0.5 * sin(time() * 3.0));
+///     return out;
+/// }
+/// ````n///
+/// Every entity naming the same shader is drawn by the same pipelines. A shader that is not
+/// there or will not compile is said in the log, and its entities are drawn the standard way.
+/// See `docs/SHADERS.md`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Reflect)]
+#[reflect(name = "mira.Surface", default)]
+pub struct Surface {
+    pub shader: String,
+}
+
+impl Component for Surface {}
+
+impl Surface {
+    pub fn new(shader: impl Into<String>) -> Self {
+        Self { shader: shader.into() }
+    }
+}
+
 impl Default for Material {
     fn default() -> Self {
         Self {
@@ -671,7 +700,7 @@ fn extract(
     // Casters beyond this can't shadow anything the cascades cover.
     let shadow_reach = shadow_settings.max_distance * 1.2 + 40.0;
     let shadows = frame.shadows;
-    for (entity, mesh, lods, transform, material, no_shadow) in &objects {
+    for (entity, mesh, lods, transform, material, no_shadow, surface) in &objects {
         let distance = camera.distance(transform.translation());
         let (mesh, material) = match (lods, mesh) {
             (Some(lods), _) => match lods.pick(distance) {
@@ -706,7 +735,7 @@ fn extract(
         }
         if flags != 0 {
             frame.objects.push(RenderObject {
-                key: BatchKey::new(mesh.id(), &material),
+                key: BatchKey::new(mesh.id(), &material, surface.map_or(0, |surface| renderer.surface(&surface.shader))),
                 model: transform.0,
                 material,
                 flags,
@@ -724,6 +753,7 @@ type Drawable = (
     &'static GlobalTransform,
     Option<&'static Material>,
     Option<&'static NotShadowCaster>,
+    Option<&'static Surface>,
 );
 
 /// Planes `(normal, d)` bounding the view, inward-facing. With reversed, infinite Z there is
@@ -1214,6 +1244,7 @@ impl Plugin for RenderPlugin {
             .register_type::<crate::asset_server::Model>()
             .register_type::<Playing>()
             .register_type::<Material>()
+            .register_type::<Surface>()
             .register_type::<Lods>()
             .register_type::<NotShadowCaster>()
             .register_resource_type::<AmbientLight>()
