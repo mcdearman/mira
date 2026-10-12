@@ -26,28 +26,55 @@ other stages are taken away, since the report is made inside that stage.
 The roadmap's test for the renderer is 100,000 mesh instances at sixty frames a second,
 which is 16.7 ms a frame.
 
-Measured on 2026-10-12 on Windows 11 with an Intel Core i7-14700KF and an RTX 5070, Vulkan,
-ray tracing on, the window hidden, a tenth of the things moving. The roadmap's test names
-the M2 Pro, which has not been measured:
+Measured on Windows 11 with an Intel Core i7-14700KF and an RTX 5070, Vulkan, the window
+hidden, a tenth of the things moving unless said. The roadmap's test names the M2 Pro, which
+has not been measured.
 
-| Things | A frame (mean) | Extract | Prepare | Render | Frames a second |
+With ray tracing, as that machine runs by default:
+
+| Things | | A frame (mean) | Extract | Prepare | Render | Frames a second |
+|---|---|---|---|---|---|---|
+| 1,000 | before | 3.5 ms | 0.1 ms | 0.1 ms | 3.1 ms | 286 |
+| | now | 3.2 ms | 0.05 ms | 0.1 ms | 2.8 ms | 311 |
+| 20,000 | before | 12.4 ms | 2.7 ms | 2.0 ms | 7.0 ms | 81 |
+| | now | 8.3 ms | 0.9 ms | 1.2 ms | 5.5 ms | 120 |
+| 100,000 | before | 46.2 ms | 16.6 ms | 11.2 ms | 15.3 ms | 22 |
+| | now | 26.8 ms | 3.2 ms | 6.4 ms | 14.1 ms | 37 |
+
+Without it (`rays=off`), as a machine that cannot trace rays runs, at 100,000:
+
+| Moving | A frame (mean) | Extract | Prepare | Render | Frames a second |
 |---|---|---|---|---|---|
-| 1,000 | 3.5 ms | 0.1 ms | 0.1 ms | 3.1 ms | 286 |
-| 20,000 | 12.4 ms | 2.7 ms | 2.0 ms | 7.0 ms | 81 |
-| 100,000 | 46.2 ms | 16.6 ms | 11.2 ms | 15.3 ms | 22 |
+| a tenth | 21.0 ms | 3.4 ms | 3.9 ms | 10.5 ms | 48 |
+| none | 21.1 ms | 0.4 ms | 1.0 ms | 16.9 ms | 47 |
 
-What the numbers say:
+"Before" is 2026-10-12, when every instance was gathered and sent again each frame. "Now" is
+with instances kept on the card (below).
 
-- **Extract and Prepare grow with every thing there is, moving or not.** Each frame, every
-  entity is read, tested against the view, put in a list, sorted, and written out again as
-  an instance; the whole instance buffer (about 20 MB at 100,000) is sent to the card anew.
-  Nine tenths of the things had not moved.
-- **Recording the draws is nothing**: the main pass takes under 0.01 ms, because instances of
-  one mesh and material are already one draw.
-- **Render is mostly not the passes.** They come to about 4.5 ms at 100,000, of which ray
-  tracing's scene is 3.4; the rest is handing the frame's work and its buffers to the card.
-- On this machine ray tracing is on, which a machine without it does not pay for.
+## Instances kept on the card
 
-So the next work is to keep what was gathered: an instance stays on the card from frame to
-frame and is written only when its entity changes, and the card, not the processor, decides
-what is in view.
+An instance, one for each mesh an entity draws, is made once and stays on the card from
+frame to frame (`src/render/instances.rs`). Each frame only the entities whose transform,
+mesh, material, levels of detail or surface were written are looked at, and only their
+instances are sent again; an entity that is despawned or loses its mesh gives its instance
+back. Each view then decides what it sees and sends the card that list of numbers, four
+bytes for each, and the mesh shaders read an instance through its number.
+
+A level of detail is an instance of its own, seen over its own range of distances, so
+choosing the level is part of deciding what is seen.
+
+What the second table says:
+
+- **Gathering no longer grows with what stands still.** With nothing moving, Extract and
+  Prepare together are 1.4 ms at 100,000, where they were 28.
+- **The frame is the same 21 ms whether a tenth moves or nothing does**, and what Extract
+  and Prepare give up, Render takes. That is the mark of the card being what is waited for:
+  the processor's part is done and it stands idle until the card can take the next frame.
+  Each caster is still drawn into every one of the four shadow cascades, so the card draws
+  the field five times.
+- **With ray tracing the traced scene is the next cost**: every instance is put into it
+  again each frame, moved or not.
+
+So the next work is the card's: to decide on the card what each view and each cascade sees,
+with meshes in shared buffers so that a pipeline's draws are one call, and for the traced
+scene to keep what it was given as the instances now do.

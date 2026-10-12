@@ -4,7 +4,7 @@
 //!
 //! ```sh
 //! cargo run --release --example instances                        # 100,000, a tenth moving
-//! cargo run --release --example instances -- count=20000 moving=0.5
+//! cargo run --release --example instances -- count=20000 moving=0.5 rays=off
 //! MIRA_HIDDEN=1 cargo run --release --example instances -- frames=300   # measure, say, and stop
 //! ```
 //!
@@ -26,6 +26,8 @@ struct Asked {
     moving: f32,
     /// How many frames to run before saying what they cost and stopping; none to run on.
     frames: Option<u64>,
+    /// Whether rays are traced where the card can. A card that cannot does not pay for it.
+    rays: bool,
 }
 
 /// A thing that bobs up and down about where it was put.
@@ -36,13 +38,14 @@ struct Bob {
 }
 
 fn asked() -> Asked {
-    let mut asked = Asked { count: 100_000, moving: 0.1, frames: None };
+    let mut asked = Asked { count: 100_000, moving: 0.1, frames: None, rays: true };
     for arg in std::env::args().skip(1) {
         match arg.split_once('=') {
             Some(("count", value)) => asked.count = value.parse().expect("count=<how many>"),
             Some(("moving", value)) => asked.moving = value.parse::<f32>().expect("moving=<0 to 1>").clamp(0.0, 1.0),
             Some(("frames", value)) => asked.frames = Some(value.parse().expect("frames=<how many>")),
-            _ => panic!("not understood: {arg} (count=, moving=, frames=)"),
+            Some(("rays", value)) => asked.rays = value != "off",
+            _ => panic!("not understood: {arg} (count=, moving=, frames=, rays=off)"),
         }
     }
     asked
@@ -135,7 +138,8 @@ fn report(world: &mut World) {
 fn main() -> anyhow::Result<()> {
     let asked = asked();
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins)
+    app.insert_resource(RayTracingSettings { enabled: asked.rays, ..Default::default() })
+        .add_plugins(DefaultPlugins)
         .insert_resource(asked)
         .add_systems(Stage::Startup, field)
         .add_systems(Stage::Update, bob)

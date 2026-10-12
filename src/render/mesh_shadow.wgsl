@@ -10,14 +10,19 @@ struct VertexInput {
     @location(2) uv: vec2<f32>,
 };
 
-struct InstanceInput {
-    @location(3) model_0: vec4<f32>,
-    @location(4) model_1: vec4<f32>,
-    @location(5) model_2: vec4<f32>,
-    @location(6) model_3: vec4<f32>,
-    @location(10) color: vec4<f32>,
-    @location(12) params: vec4<f32>,
+// As in mesh.wgsl: the instances kept on the card, and the numbers of those to draw.
+struct Instance {
+    model: mat4x4<f32>,
+    normal: mat3x3<f32>,
+    color: vec4<f32>,
+    params: vec4<f32>,
+    emissive: vec4<f32>,
+    extra: vec4<f32>,
+    more: vec4<f32>,
 };
+
+@group(2) @binding(0) var<storage, read> instances: array<Instance>;
+@group(2) @binding(1) var<storage, read> seen: array<u32>;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -27,10 +32,10 @@ struct VertexOutput {
 };
 
 @vertex
-fn vs_main(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
-    let model = mat4x4<f32>(instance.model_0, instance.model_1, instance.model_2, instance.model_3);
+fn vs_main(vertex: VertexInput, @builtin(instance_index) at: u32) -> VertexOutput {
+    let instance = instances[seen[at]];
     var out: VertexOutput;
-    out.clip_position = light_view_proj * model * vec4<f32>(vertex.position, 1.0);
+    out.clip_position = light_view_proj * instance.model * vec4<f32>(vertex.position, 1.0);
     out.uv = vertex.uv;
     out.cutoff = instance.params.w;
     out.alpha = instance.color.a;

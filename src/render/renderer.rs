@@ -1,69 +1,18 @@
 use std::{collections::HashMap, ops::Range, sync::Mutex};
 
-use glam::{Mat3, Mat4, Vec3};
+use glam::Vec3;
 use wgpu::util::DeviceExt;
 
 use super::{
     gpu::{main_depth_state, main_multisample, Gpu, HDR_FORMAT},
     image::Image,
+    instances::{Instances, Viewpoint},
     mesh::{Mesh, Vertex},
     shadow::{shadow_depth_state, ShadowMaps},
     view::ViewBinding,
     Material, RenderFrame,
 };
 use crate::assets::Assets;
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct InstanceRaw {
-    model: [[f32; 4]; 4],
-    normal: [[f32; 3]; 3],
-    color: [f32; 4],
-    params: [f32; 4],
-    emissive: [f32; 4],
-    extra: [f32; 4],
-    more: [f32; 4],
-}
-
-impl InstanceRaw {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 12] = wgpu::vertex_attr_array![
-        3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4,
-        7 => Float32x3, 8 => Float32x3, 9 => Float32x3,
-        10 => Float32x4, 12 => Float32x4, 13 => Float32x4, 14 => Float32x4, 15 => Float32x4,
-    ];
-
-    fn layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &Self::ATTRIBUTES,
-        }
-    }
-
-    fn new(model: Mat4, m: &Material) -> Self {
-        // Inverse-transpose keeps normals perpendicular under non-uniform scale.
-        let normal = Mat3::from_mat4(model).inverse().transpose();
-        Self {
-            model: model.to_cols_array_2d(),
-            normal: normal.to_cols_array_2d(),
-            color: m.color.to_array(),
-            params: [
-                m.roughness,
-                m.metallic,
-                if m.normal_texture.is_some() { m.normal_strength } else { 0.0 },
-                m.alpha_cutoff.unwrap_or(0.0),
-            ],
-            emissive: [m.emissive.r, m.emissive.g, m.emissive.b, m.translucency],
-            extra: [
-                if m.height_texture.is_some() { m.height_scale } else { 0.0 },
-                m.subsurface,
-                m.weathering,
-                if m.decal { 1.0 } else { 0.0 },
-            ],
-            more: [m.puddles, m.waves, m.flow.x, m.flow.y],
-        }
-    }
-}
 
 /// What a batch of instances shares: the mesh, its textures and its pipeline variant.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -141,7 +90,7 @@ fn main_pipeline(
         vertex: wgpu::VertexState {
             module: shader,
             entry_point: Some("vs_main"),
-            buffers: &[Some(Vertex::layout()), Some(InstanceRaw::layout())],
+            buffers: &[Some(Vertex::layout())],
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -184,6 +133,16 @@ fn main_pipelines(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: 
     std::array::from_fn(|variant| main_pipeline(device, layout, shader, variant & 1 != 0, variant & 2 != 0, variant & 4 != 0, false))
 }
 
+/// The numbers of the instances a view sees, as the card holds them.
+struct SeenOnCard {
+    numbers: wgpu::Buffer,
+    /// How many numbers there is room for.
+    room: usize,
+    /// The instances and the numbers bound together for the mesh shaders, with the
+    /// generation of the instance buffer it was made for.
+    bound: Option<(u64, wgpu::BindGroup)>,
+}
+
 /// A surface shader an entity named, and the pipelines that draw with it.
 struct SurfacePipelines {
     /// None until they are made, and where the shader could not be built: such a surface is
@@ -215,10 +174,14 @@ pub struct MeshRenderer {
     defaults: [wgpu::TextureView; 4],
     images: HashMap<u32, wgpu::TextureView>,
     materials: HashMap<TextureSet, wgpu::BindGroup>,
-    instance_buffer: wgpu::Buffer,
-    instance_capacity: usize,
+    /// Every instance there is, kept from frame to frame, and its copy on the card.
+    pub(crate) scene: Instances,
+    /// What the mesh shaders read instances through: the instances, and the numbers of those
+    /// the view being drawn sees.
+    scene_layout: wgpu::BindGroupLayout,
+    /// Those numbers on the card.
+    seen: Option<SeenOnCard>,
     meshes: HashMap<u32, GpuMesh>,
-    instances: Vec<InstanceRaw>,
     batches: Vec<Batch>,
     shadow_batches: Vec<Batch>,
 }
@@ -255,9 +218,24 @@ impl MeshRenderer {
             ],
         });
 
+        let storage = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("instances layout"),
+            entries: &[storage(0), storage(1)],
+        });
+
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh pipeline layout"),
-            bind_group_layouts: &[Some(&view.layout), Some(&material_layout)],
+            bind_group_layouts: &[Some(&view.layout), Some(&material_layout), Some(&scene_layout)],
             immediate_size: 0,
         });
         let pipelines = main_pipelines(device, &layout, &shader);
@@ -268,7 +246,7 @@ impl MeshRenderer {
 
         let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh shadow layout"),
-            bind_group_layouts: &[Some(&shadows.layout), Some(&material_layout)],
+            bind_group_layouts: &[Some(&shadows.layout), Some(&material_layout), Some(&scene_layout)],
             immediate_size: 0,
         });
         let shadow_pipeline = |masked: bool| {
@@ -278,7 +256,7 @@ impl MeshRenderer {
                 vertex: wgpu::VertexState {
                     module: &shadow_shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[Some(Vertex::layout()), Some(InstanceRaw::layout())],
+                    buffers: &[Some(Vertex::layout())],
                     compilation_options: Default::default(),
                 },
                 fragment: masked.then(|| wgpu::FragmentState {
@@ -313,7 +291,6 @@ impl MeshRenderer {
             solid([0, 0, 0, 255], false),
         ];
 
-        let instance_capacity = 64;
         Self {
             pipelines,
             layout,
@@ -328,10 +305,10 @@ impl MeshRenderer {
             defaults,
             images: HashMap::new(),
             materials: HashMap::new(),
-            instance_buffer: create_instance_buffer(device, instance_capacity),
-            instance_capacity,
+            scene: Instances::default(),
+            scene_layout,
+            seen: None,
             meshes: HashMap::new(),
-            instances: Vec::new(),
             batches: Vec::new(),
             shadow_batches: Vec::new(),
         }
@@ -342,6 +319,12 @@ impl MeshRenderer {
     pub(crate) fn adopt_pipelines(&mut self, fresh: Self) {
         self.pipelines = fresh.pipelines;
         self.layout = fresh.layout;
+        // Its layout is the one the new pipelines were made with, so what is bound to it is
+        // bound again.
+        self.scene_layout = fresh.scene_layout;
+        if let Some(seen) = &mut self.seen {
+            seen.bound = None;
+        }
         // The surface shaders are built again from what they now say, when next drawn.
         self.surfaces.clear();
         self.wire = fresh.wire;
@@ -531,53 +514,59 @@ impl MeshRenderer {
         }
     }
 
+    /// How many instances are kept on the card: one for each mesh an entity draws, and one
+    /// for each of its levels of detail.
+    pub fn instance_count(&self) -> usize {
+        self.scene.len()
+    }
+
     /// The bounding sphere of an uploaded mesh, in mesh space.
     pub fn bounds(&self, mesh: u32) -> Option<(Vec3, f32)> {
         self.meshes.get(&mesh).map(|m| (m.center, m.radius))
     }
 
-    /// Sorts objects so each mesh and material becomes one contiguous range of instances,
-    /// once for the camera's view and once for the shadow cascades.
-    pub fn build_batches(&mut self, gpu: &Gpu, frame: &mut RenderFrame) {
+    /// Decides what the view sees and readies its draws: the instances that changed are
+    /// sent to the card, and then only the numbers of those in view, by batch, for the view
+    /// and for the shadow cascades.
+    pub(crate) fn prepare_draws(&mut self, gpu: &Gpu, frame: &mut RenderFrame, from: &Viewpoint) {
         self.build_surfaces(gpu);
-        frame.objects.sort_unstable_by_key(|o| o.key);
-        self.instances.clear();
-        self.batches.clear();
-        self.shadow_batches.clear();
-        for (flag, batches) in [(VISIBLE, &mut self.batches), (CASTS_SHADOW, &mut self.shadow_batches)] {
-            for object in frame.objects.iter().filter(|o| o.flags & flag != 0) {
-                let i = self.instances.len() as u32;
-                match batches.last_mut() {
-                    Some(batch) if batch.key == object.key => batch.instances.end = i + 1,
-                    _ => batches.push(Batch {
-                        key: object.key,
-                        instances: i..i + 1,
-                    }),
-                }
-                self.instances.push(InstanceRaw::new(object.model, &object.material));
-            }
-        }
-        let sets: Vec<_> = self
-            .batches
-            .iter()
-            .chain(&self.shadow_batches)
-            .map(|b| b.key.textures)
-            .collect();
+        self.scene.upload(gpu);
+        let meshes = &self.meshes;
+        let seen = self.scene.seen(from, |mesh| meshes.get(&mesh).map(|m| (m.center, m.radius)));
+        let batch = |(key, instances): &(BatchKey, Range<u32>)| Batch { key: *key, instances: instances.clone() };
+        self.batches = seen.batches.iter().map(batch).collect();
+        self.shadow_batches = seen.shadow_batches.iter().map(batch).collect();
+        frame.moved = seen.moved;
+        let sets: Vec<_> = self.batches.iter().chain(&self.shadow_batches).map(|b| b.key.textures).collect();
         for set in sets {
             self.material(gpu, set);
         }
 
-        if self.instances.len() > self.instance_capacity {
-            self.instance_capacity = self.instances.len().next_power_of_two();
-            self.instance_buffer = create_instance_buffer(&gpu.device, self.instance_capacity);
+        if self.seen.as_ref().is_none_or(|on_card| seen.numbers.len() > on_card.room) {
+            let room = seen.numbers.len().next_power_of_two().max(256);
+            let numbers = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("instances in view"),
+                size: (room * std::mem::size_of::<u32>()) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.seen = Some(SeenOnCard { numbers, room, bound: None });
         }
-        gpu.queue.write_buffer(
-            &self.instance_buffer,
-            0,
-            bytemuck::cast_slice(&self.instances),
-        );
+        let SeenOnCard { numbers, bound, .. } = self.seen.as_mut().unwrap();
+        gpu.queue.write_buffer(numbers, 0, bytemuck::cast_slice(&seen.numbers));
+        // Bound again whenever either buffer is another one.
+        if bound.as_ref().is_none_or(|(generation, _)| *generation != self.scene.generation) {
+            let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("instances"),
+                layout: &self.scene_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: self.scene.buffer().as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: numbers.as_entire_binding() },
+                ],
+            });
+            *bound = Some((self.scene.generation, group));
+        }
     }
-
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         match (&self.wire, self.wireframe) {
             (Some(wire), true) => self.draw_with(pass, &self.batches, |_| wire),
@@ -626,7 +615,10 @@ impl MeshRenderer {
         if batches.is_empty() {
             return;
         }
-        pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+        let Some((_, instances)) = self.seen.as_ref().and_then(|seen| seen.bound.as_ref()) else {
+            return;
+        };
+        pass.set_bind_group(2, instances, &[]);
         let mut current: Option<*const wgpu::RenderPipeline> = None;
         for batch in batches {
             let Some(mesh) = self.meshes.get(&batch.key.mesh) else {
@@ -646,26 +638,4 @@ impl MeshRenderer {
             pass.draw_indexed(0..mesh.index_count, 0, batch.instances.clone());
         }
     }
-}
-
-/// Drawn in the camera's view.
-pub(crate) const VISIBLE: u8 = 1;
-/// Drawn into the shadow cascades.
-pub(crate) const CASTS_SHADOW: u8 = 2;
-
-/// One mesh instance to draw this frame.
-pub(crate) struct RenderObject {
-    pub key: BatchKey,
-    pub model: Mat4,
-    pub material: Material,
-    pub flags: u8,
-}
-
-fn create_instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("instances"),
-        size: (capacity * std::mem::size_of::<InstanceRaw>()) as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
 }

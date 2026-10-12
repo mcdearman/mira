@@ -9,6 +9,7 @@ mod gltf_scene;
 mod gpu;
 pub mod graph;
 mod image;
+mod instances;
 mod mesh;
 mod motion;
 mod post;
@@ -25,7 +26,7 @@ mod view;
 mod views;
 mod volumetric;
 
-use glam::{Mat4, Vec2, Vec3, Vec4};
+use glam::{Mat4, Vec2, Vec3};
 
 pub use debug_lines::DebugLines;
 pub use environment::{direction_to_uv, uv_to_direction, Environment};
@@ -69,7 +70,7 @@ use crate::{
 };
 use environment::GpuEnvironment;
 use post::PostRenderer;
-use renderer::{BatchKey, RenderObject, CASTS_SHADOW, VISIBLE};
+use renderer::BatchKey;
 
 
 /// Linear RGBA color.
@@ -458,7 +459,8 @@ pub struct RenderFrame {
     pub sh: [Vec3; 9],
     pub fog: Fog,
     pub cascades: CascadeData,
-    pub(crate) objects: Vec<RenderObject>,
+    /// How far from the camera something may be and still cast a shadow that matters.
+    pub(crate) shadow_reach: f32,
     /// Skinned meshes to pose this frame.
     pub(crate) skinned: Vec<skin::SkinJob>,
     pub has_camera: bool,
@@ -467,8 +469,6 @@ pub struct RenderFrame {
     pub(crate) through: Option<crate::ecs::Entity>,
     /// The camera a frame ago, without the jitter.
     pub(crate) previous_view_proj: Mat4,
-    /// Where each mesh drawn last frame was, to tell what has moved.
-    pub(crate) previous_models: std::collections::HashMap<crate::ecs::Entity, Mat4>,
     /// The meshes in view that are not where they were (see `motion`).
     pub(crate) moved: Vec<motion::Moved>,
 }
@@ -632,8 +632,6 @@ fn extract(
     post: Res<PostProcess>,
     cameras: Query<(&Camera, &GlobalTransform, Option<&ViewTarget>)>,
     lights: Query<(&DirectionalLight, &GlobalTransform)>,
-    renderer: Res<MeshRenderer>,
-    objects: Query<Drawable>,
 ) {
     let frame = &mut *frame;
     frame.time = time.elapsed_secs();
@@ -688,66 +686,13 @@ fn extract(
         );
     }
 
-    frame.objects.clear();
     frame.moved.clear();
-    // What moves is found only when frames are blended over time, which is what asks.
-    let mut models = std::collections::HashMap::new();
-    if post.taa {
-        models.reserve(frame.previous_models.len());
-    }
-    let planes = frustum_planes(frame.view_proj);
-    let camera = frame.camera_position;
     // Casters beyond this can't shadow anything the cascades cover.
-    let shadow_reach = shadow_settings.max_distance * 1.2 + 40.0;
-    let shadows = frame.shadows;
-    for (entity, mesh, lods, transform, material, no_shadow, surface) in &objects {
-        let distance = camera.distance(transform.translation());
-        let (mesh, material) = match (lods, mesh) {
-            (Some(lods), _) => match lods.pick(distance) {
-                Some(level) => (level.mesh, level.material),
-                None => continue,
-            },
-            (None, Some(mesh)) => (mesh.0, material.copied().unwrap_or_default()),
-            (None, None) => continue,
-        };
-        let casts = no_shadow.is_none() && shadows && !material.decal;
-        let mut flags = VISIBLE | if casts { CASTS_SHADOW } else { 0 };
-        if let Some((center, radius)) = renderer.bounds(mesh.id()) {
-            let center = transform.0.transform_point3(center);
-            let scale = transform.0.x_axis.truncate().length()
-                .max(transform.0.y_axis.truncate().length())
-                .max(transform.0.z_axis.truncate().length());
-            let radius = radius * scale;
-            if planes.iter().any(|p| p.truncate().dot(center) + p.w < -radius * p.truncate().length()) {
-                flags &= !VISIBLE;
-            }
-            if center.distance(camera) - radius > shadow_reach {
-                flags &= !CASTS_SHADOW;
-            }
-        }
-        if post.taa && flags & VISIBLE != 0 && !material.decal {
-            models.insert(entity, transform.0);
-            if let Some(was) = frame.previous_models.get(&entity) {
-                if motion::has_moved(&transform.0, was) {
-                    frame.moved.push(motion::Moved { mesh: mesh.id(), model: transform.0, was: *was });
-                }
-            }
-        }
-        if flags != 0 {
-            frame.objects.push(RenderObject {
-                key: BatchKey::new(mesh.id(), &material, surface.map_or(0, |surface| renderer.surface(&surface.shader))),
-                model: transform.0,
-                material,
-                flags,
-            });
-        }
-    }
-    frame.previous_models = models;
+    frame.shadow_reach = shadow_settings.max_distance * 1.2 + 40.0;
 }
 
-/// What `extract` reads from each entity that might be drawn.
+/// What is read of an entity to work out what it draws.
 type Drawable = (
-    crate::ecs::Entity,
     Option<&'static Mesh3d>,
     Option<&'static Lods>,
     &'static GlobalTransform,
@@ -756,21 +701,74 @@ type Drawable = (
     Option<&'static Surface>,
 );
 
-/// Planes `(normal, d)` bounding the view, inward-facing. With reversed, infinite Z there is
-/// no far plane; the near plane is `z <= w`.
-fn frustum_planes(view_proj: Mat4) -> [Vec4; 5] {
-    let (x, y, z, w) = (
-        view_proj.row(0),
-        view_proj.row(1),
-        view_proj.row(2),
-        view_proj.row(3),
-    );
-    [w + x, w - x, w + y, w - y, w - z]
+/// Entities from which something that bears on what they draw has been taken away, or which
+/// are gone altogether, since instances were last brought up to date. Hooks fill it.
+#[derive(Default)]
+pub(crate) struct Undrawn(Vec<crate::ecs::Entity>);
+
+fn undrawn(world: &mut World, entity: crate::ecs::Entity) {
+    if let Some(undrawn) = world.get_resource_mut::<Undrawn>() {
+        undrawn.0.push(entity);
+    }
+}
+
+/// Brings the instances on the card up to date with the entities: only those whose transform,
+/// mesh, material, levels of detail or surface have been written since this last ran, and
+/// those that have lost one of them. Nothing is done for the rest.
+#[allow(clippy::too_many_arguments)]
+fn sync_instances(
+    time: Res<Time>,
+    mut renderer: ResMut<MeshRenderer>,
+    mut undrawn: ResMut<Undrawn>,
+    moved: Query<crate::ecs::Entity, crate::ecs::Changed<GlobalTransform>>,
+    painted: Query<crate::ecs::Entity, crate::ecs::Changed<Material>>,
+    meshed: Query<crate::ecs::Entity, crate::ecs::Changed<Mesh3d>>,
+    levelled: Query<crate::ecs::Entity, crate::ecs::Changed<Lods>>,
+    surfaced: Query<crate::ecs::Entity, crate::ecs::Changed<Surface>>,
+    unshadowed: Query<crate::ecs::Entity, crate::ecs::Added<NotShadowCaster>>,
+    drawables: Query<Drawable>,
+) {
+    renderer.scene.begin(time.frame_count());
+    // In order, and each once: an entity's parts lie near its neighbours' in the card's
+    // copy, which is then written through from end to end.
+    let mut touched: Vec<crate::ecs::Entity> = std::mem::take(&mut undrawn.0);
+    touched.extend(moved.iter().chain(painted.iter()).chain(meshed.iter()).chain(levelled.iter()).chain(surfaced.iter()).chain(unshadowed.iter()));
+    touched.sort_unstable();
+    touched.dedup();
+    let mut parts: Vec<instances::Part> = Vec::new();
+    for entity in touched {
+        // Gone, or with nothing left to draw it by.
+        let Some((mesh, lods, transform, material, no_shadow, surface)) = drawables.get(entity) else {
+            renderer.scene.forget(entity);
+            continue;
+        };
+        let surface = surface.map_or(0, |surface| renderer.surface(&surface.shader));
+        let part = |mesh: Handle<Mesh>, material: Material, seen: (f32, f32)| instances::Part {
+            key: BatchKey::new(mesh.id(), &material, surface),
+            model: transform.0,
+            material,
+            seen,
+            casts_shadow: no_shadow.is_none() && !material.decal,
+        };
+        parts.clear();
+        match (lods, mesh) {
+            // A level is seen from where the one before it ends to where it ends itself.
+            (Some(lods), _) => {
+                let mut from = 0.0;
+                for level in &lods.0 {
+                    parts.push(part(level.mesh, level.material, (from, level.max_distance)));
+                    from = level.max_distance.max(from);
+                }
+            }
+            (None, Some(mesh)) => parts.push(part(mesh.0, material.copied().unwrap_or_default(), (0.0, f32::INFINITY))),
+            (None, None) => {}
+        }
+        renderer.scene.set(entity, &parts);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare(
-    gpu: Res<Gpu>,
+fn prepare(    gpu: Res<Gpu>,
     mut view: ResMut<ViewBinding>,
     mut sky: ResMut<SkyRenderer>,
     environment: Res<Environment>,
@@ -794,7 +792,14 @@ fn prepare(
     shadows.write(&gpu, &frame.cascades);
     renderer.sync_meshes(&gpu, &mut meshes);
     renderer.sync_images(&gpu, &mut images);
-    renderer.build_batches(&gpu, &mut frame);
+    let from = instances::Viewpoint {
+        view_proj: frame.view_proj,
+        camera: frame.camera_position,
+        shadows: frame.shadows,
+        shadow_reach: frame.shadow_reach,
+        blended: frame.temporal,
+    };
+    renderer.prepare_draws(&gpu, &mut frame, &from);
     skinner.prepare(&gpu, &renderer, &meshes, &frame.skinned);
 
     // Everything opaque near enough to matter goes into the traced scene, seen or not: what's
@@ -802,7 +807,7 @@ fn prepare(
     if let Some(rt) = rt.as_deref_mut() {
         rt.begin_frame();
         let reach = rt.settings.max_distance;
-        for object in &frame.objects {
+        for object in renderer.scene.traced(frame.camera_position) {
             // Moving water stays out too: its traced copy would be frozen flat while the surface
             // ripples through it.
             if object.material.alpha_cutoff.is_some() || object.material.decal || object.material.waves > 0.0 {
@@ -812,7 +817,7 @@ fn prepare(
             if at.distance(frame.camera_position) > reach {
                 continue;
             }
-            let id = object.key.mesh();
+            let id = object.mesh;
             let geometry = if frame.skinned.iter().any(|job| job.mesh == id) {
                 match (meshes.get_by_id(id), renderer.vertex_buffer(id), renderer.index_buffer(id)) {
                     (Some(mesh), Some(vertices), Some(indices)) => Some(rt.skinned_geometry(&gpu, id, mesh, vertices, indices)),
@@ -822,7 +827,7 @@ fn prepare(
                 rt.mesh_geometry(&gpu, &meshes, id)
             };
             if let Some(geometry) = geometry {
-                let m = &object.material;
+                let m = object.material;
                 let texture = m
                     .base_color_texture
                     .map_or(0, |t| rt.texture_slot(t.id(), renderer.image_view(t.id())));
@@ -1277,10 +1282,18 @@ impl Plugin for RenderPlugin {
             .add_systems(Stage::PreUpdate, resize)
             .add_systems(Stage::PostUpdate, (animation::follow_playing, animate, gait::walk, reach::reach))
             .add_systems(Stage::Last, follow_sun)
-            .add_systems(Stage::Extract, (extract, extract_skins))
+            .add_systems(Stage::Extract, (sync_instances, extract, extract_skins))
             .add_systems(Stage::Prepare, prepare)
             .add_systems(Stage::Render, render);
         app.world.insert_resource(frame_graph());
+        // What an entity draws is kept on the card, so the card is told when it stops.
+        app.world.init_resource::<Undrawn>();
+        app.world.on_remove::<Mesh3d>(undrawn);
+        app.world.on_remove::<Lods>(undrawn);
+        app.world.on_remove::<GlobalTransform>(undrawn);
+        app.world.on_remove::<Material>(undrawn);
+        app.world.on_remove::<Surface>(undrawn);
+        app.world.on_remove::<NotShadowCaster>(undrawn);
         app.world.init_resource::<Overlays>();
         app.world.init_resource::<views::ExtraViews>();
         app.world.init_resource::<DebugLines>();

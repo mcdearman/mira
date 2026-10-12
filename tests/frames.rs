@@ -186,3 +186,48 @@ fn the_sacred_sites_look_as_they_did() {
     }
     let _ = std::fs::remove_file(scratch);
 }
+
+/// How many instances the card holds, once it has stopped at `wanted` or time is up.
+fn instances(scene: &Scene, wanted: i64) -> i64 {
+    let started = Instant::now();
+    loop {
+        let status = scene.ask(r#"{"cmd": "status"}"#).expect("status");
+        let Some(Value::Int(now)) = status.field("instances") else {
+            panic!("no count of instances: {status:?}");
+        };
+        if *now == wanted || started.elapsed() > Duration::from_secs(10) {
+            return *now;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// What an entity draws is kept on the card from frame to frame, so the card has to hear
+/// when an entity goes, or stops having a mesh to draw.
+#[test]
+fn what_the_card_holds_follows_the_entities() {
+    if !asked_for() {
+        return;
+    }
+    let scene = Scene::start("sacred_sites");
+    let listed = scene.ask(r#"{"cmd": "entities", "with": "mira.Mesh3d"}"#).expect("the entities");
+    let Some(Value::List(meshed)) = listed.field("entities") else {
+        panic!("entities: {listed:?}");
+    };
+    let ids: Vec<i64> = meshed.iter().filter_map(|entity| entity.field("entity").and_then(Value::as_f64)).map(|id| id as i64).collect();
+    let all = ids.len() as i64;
+    assert!(all >= 3, "the scene has things to draw");
+    // One instance for each entity with a mesh.
+    assert_eq!(instances(&scene, all), all);
+
+    // One despawned, and one that keeps living without its mesh.
+    scene.ask(&format!(r#"{{"cmd": "despawn", "entity": {}}}"#, ids[0])).expect("despawning");
+    assert_eq!(instances(&scene, all - 1), all - 1);
+    scene.ask(&format!(r#"{{"cmd": "remove", "entity": {}, "component": "mira.Mesh3d"}}"#, ids[1])).expect("removing");
+    assert_eq!(instances(&scene, all - 2), all - 2);
+    // What is left is still drawn: the frame can still be taken.
+    let scratch = std::env::temp_dir().join(format!("mira-frame-{}-left.png", std::process::id()));
+    let frame = scene.frame_after(2, &scratch);
+    assert!(frame.width() > 0);
+    let _ = std::fs::remove_file(scratch);
+}
