@@ -350,7 +350,11 @@ dying in any order; the timer is right in every case because no code ever sets i
       what moves, which is the only one built again when something does (see
       [PERFORMANCE.md](PERFORMANCE.md))
 - [ ] The rest of the scene on the GPU: shared vertex and index buffers, bindless textures
-- [ ] Culling in compute against the frustum and a depth pyramid; multi-draw indirect
+- [x] What each view and each shadow cascade sees decided on the card, in a compute pass,
+      and drawn with indirect draws (`src/render/cull.rs`; see
+      [PERFORMANCE.md](PERFORMANCE.md))
+- [ ] Culling against a depth pyramid as well, so that what is hidden behind other things is
+      not drawn; a pipeline's draws as one multi-draw
 - [ ] Visibility buffer or deferred shading, replacing forward + MSAA
 - [x] Point and spot lights, clustered: sorted each frame into cells of the view, so a
       surface goes through only the lights that reach it (see [LIGHTS.md](LIGHTS.md))

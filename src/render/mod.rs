@@ -1,5 +1,6 @@
 mod animation;
 mod card_clock;
+mod cull;
 pub mod compose;
 mod debug_lines;
 mod environment;
@@ -1059,8 +1060,9 @@ fn frame_graph() -> RenderGraph {
         .target(MOTION, TargetDesc::new(gpu::MOTION_FORMAT).samples(MSAA_SAMPLES))
         .add(Pass::new("skinning", pose_skins).writes(&[SKINNED]))
         .add(Pass::new("ray tracing", build_traced_scene).reads(&[SKINNED]).writes(&[TRACED_SCENE]))
-        .add(Pass::new("shadows", draw_shadows).reads(&[SKINNED]).writes(&[SHADOW_MAPS]))
-        .add(Pass::new("main", draw_scene).reads(&[SKINNED, SHADOW_MAPS, TRACED_SCENE]).writes(&[HDR_MSAA, HDR, DEPTH]))
+        .add(Pass::new("culling", cull_scene).writes(&[SEEN]))
+        .add(Pass::new("shadows", draw_shadows).reads(&[SKINNED, SEEN]).writes(&[SHADOW_MAPS]))
+        .add(Pass::new("main", draw_scene).reads(&[SKINNED, SEEN, SHADOW_MAPS, TRACED_SCENE]).writes(&[HDR_MSAA, HDR, DEPTH]))
         .add(Pass::new("light shafts", draw_shafts).reads(&[HDR, DEPTH, SHADOW_MAPS]).writes(&[HDR]))
         .add(Pass::new("motion", draw_motion).reads(&[DEPTH]).writes(&[MOTION]))
         .add(Pass::new("blend over time", blend_over_time).reads(&[HDR, DEPTH, MOTION]).writes(&[SCENE]))
@@ -1091,6 +1093,11 @@ fn build_traced_scene(world: &mut World, cx: &mut PassContext) {
                 .bake(world.resource::<Gpu>(), &mut cx.encoder, view, &mut rt.probes);
         }
     });
+}
+
+/// Where the card decides what each view sees, it does so here, before anything is drawn.
+fn cull_scene(world: &mut World, cx: &mut PassContext) {
+    world.resource::<MeshRenderer>().cull(&mut cx.encoder);
 }
 
 /// The sun's shadow cascades.

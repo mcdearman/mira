@@ -47,8 +47,9 @@ Adding a pass with the name of one that is there replaces it, so a plugin can pu
 |---|---|---|
 | `skinning` | | `skinned` |
 | `ray tracing` | `skinned` | `traced scene` |
-| `shadows` | `skinned` | `shadow maps` |
-| `main` | `skinned`, `shadow maps`, `traced scene` | `hdr msaa`, `hdr`, `depth` |
+| `culling` | | `seen` |
+| `shadows` | `skinned`, `seen` | `shadow maps` |
+| `main` | `skinned`, `seen`, `shadow maps`, `traced scene` | `hdr msaa`, `hdr`, `depth` |
 | `light shafts` | `hdr`, `depth`, `shadow maps` | `hdr` |
 | `motion` | `depth` | `motion` |
 | `blend over time` | `hdr`, `depth`, `motion` | `scene` |

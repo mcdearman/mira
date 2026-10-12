@@ -34,6 +34,8 @@ pub mod slots {
     pub const TRACED_SCENE: Slot = "traced scene";
     /// The sun's shadow cascades.
     pub const SHADOW_MAPS: Slot = "shadow maps";
+    /// What each view sees of the scene, where the card decides it.
+    pub const SEEN: Slot = "seen";
     /// The scene's colour, lit, before anything is done to the picture as a whole.
     pub const HDR: Slot = "hdr";
     /// The multisampled target `HDR` is resolved from, at the end of the main pass.
@@ -507,7 +509,7 @@ mod tests {
         let mut graph = super::super::frame_graph();
         assert_eq!(
             names(&mut graph),
-            ["skinning", "ray tracing", "shadows", "main", "light shafts", "motion", "blend over time", "post", "debug lines", "overlays"]
+            ["skinning", "ray tracing", "culling", "shadows", "main", "light shafts", "motion", "blend over time", "post", "debug lines", "overlays"]
         );
         // A pass a plugin adds, saying only what it reads and writes, falls between the
         // scene being drawn and the picture being finished.

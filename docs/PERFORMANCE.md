@@ -253,13 +253,48 @@ second).
 
 What is left, with a tenth moving: that gathering (Extract, 2.3 ms), and deciding what the
 view and the cascades see and sending it (Prepare, 4 ms).
+## What is seen, decided on the card
+
+Deciding what the frame's view and each shadow cascade see went through every instance
+every frame on the processor, and sent the card the numbers of those seen: 2 ms at 100,000
+things with levels of detail, moving or not.
+
+The card now decides it (`src/render/cull.rs`, `cull.wgsl`). It holds where each instance
+is already; it is told once what else it needs, the size of the instance's mesh, the
+distances it is drawn over, and its batch. A compute pass goes through the instances, lists
+what each view sees batch by batch, and writes how many there are into the draw each batch
+is then drawn with. The processor sends five numbers a batch for each view, and nothing for
+an instance that has not changed.
+
+At 100,000 things with levels of detail, without ray tracing unless said:
+
+| Moving | | On the processor | On the card | Frames a second |
+|---|---|---|---|---|
+| none | on the processor | 3.6 ms | 3.3 ms | 274 |
+| | on the card | 1.4 ms | 3.7 ms | 273 |
+| a tenth | on the processor | 10.5 ms | 3.7 ms | 95 |
+| | on the card | 9.7 ms | 4.1 ms | 103 |
+| a tenth, 1,000 lights | on the processor | 11.8 ms | 4.7 ms | 85 |
+| | on the card | 8.9 ms | 5.1 ms | 113 |
+| a tenth, with rays | on the processor | 15.1 ms | 7.4 ms | 66 |
+| | on the card | 14.3 ms | 7.8 ms | 70 |
+
+The pass itself costs the card 0.04 ms. What else it costs the card, about 0.4 ms, is a draw
+for every batch for every view, seen or not.
+
+It wants a card that can begin an indirect draw's instances at a number of our choosing;
+where it cannot, or with `MIRA_CULL=cpu`, the processor decides as before. The order of
+instances within a batch is then whatever the card's threads came to them in.
+
+What it does not do yet: leave out what is hidden behind other things, and leave out the
+draws of batches nothing of which is seen.
 ## What is next
 
 On the processor, with things moving, where the time now is:
 
-- Deciding what each view and each cascade sees (Prepare, 7 ms with a tenth moving) and
-  gathering what changed (Extract, 3.5 ms): deciding it on the card, with meshes in shared
-  buffers so that a pipeline's draws are one call, which wants a benchmark of many different
-  meshes and materials first.
+- Gathering what moved (Extract, 2.4 ms for 10,000 things) and the blend over time's list of
+  it (the motion pass, 1.2 ms).
+- Meshes in shared buffers, so that a pipeline's draws are one call, which wants a
+  benchmark of many different meshes and materials first.
 
 On the card, for a scene that gives no levels of detail: coarser meshes made by the engine.
