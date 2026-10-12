@@ -242,6 +242,33 @@ impl Instances {
         }
     }
 
+    /// Moves what an entity draws to where the entity now is, for one of which nothing else
+    /// has changed: its meshes, materials and batches are left as they are. Answers false
+    /// for an entity that draws nothing yet, which is to be [`set`](Self::set).
+    pub fn moved(&mut self, entity: Entity, model: Mat4) -> bool {
+        let Some(numbers) = self.of.get(&entity) else { return false };
+        for &number in numbers {
+            let slot = self.slots[number as usize].as_mut().expect("an entity's instance is there");
+            if slot.part.model == model {
+                continue;
+            }
+            let sight = &mut self.sight[number as usize];
+            if motion::has_moved(&model, &slot.part.model) {
+                slot.was = slot.part.model;
+                sight.moved = self.frame;
+            }
+            // The mesh's place in the world is worked out again when it is next looked at.
+            (sight.origin, sight.radius) = (model.w_axis.truncate(), -1.0);
+            slot.part.model = model;
+            self.on_card[number as usize] = PlaceRaw::new(model);
+            self.stale.push(number);
+            if self.traced {
+                self.for_tracing.push(number);
+            }
+        }
+        true
+    }
+
     /// Lets go of everything an entity drew.
     pub fn forget(&mut self, entity: Entity) {
         for number in self.of.remove(&entity).unwrap_or_default() {
@@ -627,6 +654,34 @@ mod tests {
         scene.begin(10);
         scene.set(mover, &[part(1, ahead)]);
         assert!(scene.seen(&Viewpoint { blended: false, ..viewpoint() }, unit_sphere).moved.is_empty());
+    }
+
+    #[test]
+    fn an_entity_that_only_moved_has_only_its_place_brought_up_to_date() {
+        let mut world = World::new();
+        let (mover, stranger) = (world.spawn(()), world.spawn(()));
+        let mut scene = Instances::default();
+        let ahead = Vec3::new(0.0, 0.0, -10.0);
+        scene.begin(3);
+        scene.set(mover, &[part(1, ahead), part(2, ahead)]);
+        assert!(!scene.moved(stranger, Mat4::IDENTITY), "one that draws nothing yet is to be set");
+        let _ = scene.take_traced_changes();
+        scene.stale.clear();
+        scene.stale_looks.clear();
+        scene.begin(4);
+        // Where it was already: nothing to send.
+        assert!(scene.moved(mover, Mat4::from_translation(ahead)));
+        assert!(scene.stale.is_empty());
+        // Elsewhere: both its instances are sent, where they are and not how they look, and
+        // the view is told they moved and from where.
+        assert!(scene.moved(mover, Mat4::from_translation(ahead + Vec3::X)));
+        assert_eq!(scene.stale, [0, 1]);
+        assert!(scene.stale_looks.is_empty());
+        assert_eq!(scene.take_traced_changes(), [0, 1]);
+        let seen = scene.seen(&viewpoint(), unit_sphere);
+        assert_eq!(seen.moved.len(), 2);
+        assert_eq!(seen.moved[0].was, Mat4::from_translation(ahead));
+        assert_eq!(scene.batches.len(), 2);
     }
 
     #[test]

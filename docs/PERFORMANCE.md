@@ -246,8 +246,13 @@ At 100,000 things with levels of detail, without ray tracing unless said:
 The tables further up were measured before this, and their processor's figures are that
 much too high.
 
-What is left, with a tenth moving: gathering what changed (Extract, 3.6 ms), and deciding
-what the view and the cascades see and sending it (Prepare, 4.5 ms).
+Gathering what changed went through each changed entity whole, its meshes, materials and
+batches. One that has only moved, as most have, now has only where its instances are
+brought up to date: 3.6 ms became 2.3 for 10,000 of them, and the frame 10.0 ms (100 a
+second).
+
+What is left, with a tenth moving: that gathering (Extract, 2.3 ms), and deciding what the
+view and the cascades see and sending it (Prepare, 4 ms).
 ## What is next
 
 On the processor, with things moving, where the time now is:
