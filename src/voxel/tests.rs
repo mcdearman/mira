@@ -210,6 +210,80 @@ fn layered(stone: BlockId) -> ChunkData {
     data
 }
 
+/// How much of each of the six faces' directions a mesh covers, in block faces.
+fn covered(mesh: &ChunkMesh) -> [f32; 6] {
+    let mut area = [0.0; 6];
+    for tri in mesh.indices.chunks(3) {
+        let [a, b, c] = [0, 1, 2].map(|i| mesh.vertices[tri[i] as usize]);
+        let (pa, pb, pc) = (Vec3::from(a.position), Vec3::from(b.position), Vec3::from(c.position));
+        let face = (a.packed & 7) as usize;
+        // Wound the way its face looks, which a triangle turned over would take away from.
+        area[face] += (pb - pa).cross(pc - pa).dot(FACES[face].0.as_vec3()) * 0.5;
+    }
+    area
+}
+
+/// How many block faces of each direction a chunk shows, counted one block at a time.
+fn shown(world: &VoxelWorld, registry: &BlockRegistry, chunk: IVec3) -> [f32; 6] {
+    let mut count = [0.0; 6];
+    for z in 0..CHUNK_SIZE {
+        for y in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                let at = chunk * CHUNK_SIZE + IVec3::new(x, y, z);
+                if world.get_block(at).is_some_and(|block| registry.is_solid(block)) {
+                    for (face, (normal, _, _)) in FACES.iter().enumerate() {
+                        if !world.get_block(at + *normal).is_some_and(|block| registry.is_solid(block)) {
+                            count[face] += 1.0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    count
+}
+
+#[test]
+fn flat_faces_are_joined_into_large_quads_that_cover_the_same() {
+    let (registry, stone) = registry();
+    let mut world = VoxelWorld::default();
+    for z in -1..=1 {
+        for x in -1..=1 {
+            world.insert_generated(IVec3::new(x, 0, z), layered(stone));
+            world.insert_chunk(IVec3::new(x, 1, z), ChunkData::default());
+            world.insert_chunk(IVec3::new(x, -1, z), ChunkData::default());
+        }
+    }
+    // Flat ground with ground all round it: the top is one quad and the underside another,
+    // and the texture repeats across each, once a block.
+    let flat = mesh(&world, &registry, IVec3::ZERO);
+    assert_eq!((flat.vertices.len(), flat.indices.len()), (8, 12));
+    let size = CHUNK_SIZE as f32;
+    assert!(flat.vertices.iter().any(|vertex| vertex.uv == [size, size]));
+    assert_eq!(covered(&flat), shown(&world, &registry, IVec3::ZERO));
+
+    // Things standing on it, a hole in it and a wall across it: fewer quads than faces by a
+    // long way, covering exactly what the faces did, each the right way round.
+    world.set_block(IVec3::new(10, 4, 10), stone);
+    world.set_block(IVec3::new(11, 4, 10), stone);
+    world.set_block(IVec3::new(20, 3, 7), BlockId::AIR);
+    for x in 3..25 {
+        for y in 4..9 {
+            world.set_block(IVec3::new(x, y, 22), stone);
+        }
+    }
+    let built = mesh(&world, &registry, IVec3::ZERO);
+    let faces: f32 = shown(&world, &registry, IVec3::ZERO).iter().sum();
+    assert_eq!(covered(&built), shown(&world, &registry, IVec3::ZERO));
+    assert!((built.indices.len() / 6) as f32 * 4.0 < faces, "{} quads for {faces} faces", built.indices.len() / 6);
+    // A face lit unevenly, as beside the wall's foot, is left a face of its own.
+    for quad in built.vertices.chunks(4) {
+        let ao: Vec<u32> = quad.iter().map(|vertex| vertex.packed >> 3 & 3).collect();
+        let (wide, high) = (quad.iter().map(|vertex| vertex.uv[0]).fold(0.0, f32::max), quad.iter().map(|vertex| vertex.uv[1]).fold(0.0, f32::max));
+        assert!(ao.iter().all(|corner| *corner == ao[0]) || (wide, high) == (1.0, 1.0));
+    }
+}
+
 #[test]
 fn a_chunk_survives_being_turned_into_runs_and_back() {
     let (_, stone) = registry();

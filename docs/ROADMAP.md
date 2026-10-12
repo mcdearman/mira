@@ -363,7 +363,9 @@ dying in any order; the timer is right in every case because no code ever sets i
 - [ ] Shadows for more lights at once, in an atlas with maps sized by how near the light is;
       the lights in traced reflections and the probes
 - [ ] GPU particles, sorted or order-independent transparency, temporal upscaling
-- [ ] Voxels: greedy meshing, transparent-block pass, chunk draws through the same indirect path
+- [x] Voxels: faces that lie side by side joined into large quads (greedy meshing)
+- [ ] Voxels: a pass for blocks that are seen through, and chunk draws through the same
+      indirect path as meshes
 
 **Exit test:** 100,000 mesh instances and 1,000 shadow-less lights at 60 fps on the M2 Pro.
 
