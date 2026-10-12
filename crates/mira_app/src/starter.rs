@@ -279,7 +279,7 @@ pub fn scene(mut commands: Commands, mut server: ResMut<AssetServer>, mut meshes
         ("Lamp", Vec3::new(-9.0, 3.4, -7.0), Color::rgb(1.0, 0.55, 0.2), 40.0, 10.0),
         ("Arch lamp", Vec3::new(-8.0, 2.4, 8.0), Color::rgb(0.3, 0.55, 1.0), 30.0, 9.0),
     ] {
-        commands.spawn((Transform::from_translation(at), PointLight { color, intensity, range }, Name::new(name)));
+        commands.spawn((Transform::from_translation(at), PointLight { color, intensity, range, shadows: false }, Name::new(name)));
     }
 
     // The player: a capsule that walks, the camera at its eyes, the gun in front of that.

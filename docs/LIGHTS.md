@@ -13,7 +13,7 @@ its entity faces:
 ```rust
 commands.spawn((
     Transform::from_xyz(2.0, 3.0, 0.0),
-    PointLight { color: Color::rgb(1.0, 0.6, 0.25), intensity: 40.0, range: 10.0 },
+    PointLight { color: Color::rgb(1.0, 0.6, 0.25), intensity: 40.0, range: 10.0, ..Default::default() },
 ));
 commands.spawn((
     Transform::from_xyz(0.0, 4.0, 0.0).looking_at(Vec3::ZERO, Vec3::X),
@@ -26,7 +26,7 @@ commands.spawn((
 | `color`, `intensity` | how bright a metre away, in the sun's units |
 | `range` | how far it reaches, in metres: it weakens with the square of the distance and is brought to nothing there |
 | `inner`, `outer` | a spot light's cone, as half angles in radians: full inside the first, none outside the second |
-| `shadows` | a spot light's: whether what stands in its light casts a shadow |
+| `shadows` | whether what stands in its light casts a shadow |
 
 Both are components like any other: saved in scenes, set in the inspector, moved by moving
 their entity.
@@ -35,16 +35,18 @@ They light a surface as the sun does, colour and shine.
 
 ## Shadows
 
-A spot light with `shadows: true` is hidden by what stands in its light. It has a shadow
-map of its own, 1,024 across, drawn each frame from where the light is with what casts into
-its cone. There are eight such maps: of the lights that ask, the eight nearest the camera
-have one, and the rest shine through things until the camera comes nearer. Eight of them
-over a field of 100,000 things cost the graphics card 0.2 ms a frame.
+A light with `shadows: true` is hidden by what stands in its light. It is drawn a shadow
+map each frame, 1,024 across, from where the light is, of what casts into it: one map for a
+spot light's cone, and six for a point light, one for each way it shines.
 
-A point light casts no shadows. Nor does a spot light where the graphics card cannot decide
-for itself what each view sees (see [PERFORMANCE.md](PERFORMANCE.md)), since that is how what
-casts into a light's map is found.
+There are sixteen such maps. The lights that ask are given them nearest the camera first, so
+sixteen spot lights may cast at once, or two point lights and four spot lights; a light left
+without shines through things until the camera comes nearer. Eight spot lights over a field
+of 100,000 things cost the graphics card 0.2 ms a frame.
 
+No light with a place casts shadows where the graphics card cannot decide for itself what
+each view sees (see [PERFORMANCE.md](PERFORMANCE.md)), since that is how what casts into a
+light's map is found.
 ## Many of them
 
 A scene may hold thousands, because a surface is lit only by the few that reach it. The
