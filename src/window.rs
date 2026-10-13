@@ -187,6 +187,10 @@ pub(crate) fn put_away(world: &mut crate::ecs::World) {
         gpu.let_go_of_surface();
         log::info!("the window is put away");
     }
+    // Nothing is heard from an app that is away.
+    if let Some(audio) = world.get_resource::<crate::audio::Audio>() {
+        audio.set_held(true);
+    }
 }
 
 /// The app was brought back, with a window again: what is drawn on is taken up anew.
@@ -199,6 +203,9 @@ pub(crate) fn brought_back(world: &mut crate::ecs::World) {
             Ok(()) => log::info!("the window is back"),
             Err(err) => log::error!("no surface for the window that came back: {err:#}"),
         }
+    }
+    if let Some(audio) = world.get_resource::<crate::audio::Audio>() {
+        audio.set_held(false);
     }
 }
 
