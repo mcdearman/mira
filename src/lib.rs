@@ -13,6 +13,7 @@ pub mod input;
 pub mod live;
 pub mod logging;
 pub mod mcp;
+pub mod nav;
 pub mod physics;
 pub mod plugin;
 pub mod prefab;
@@ -41,6 +42,7 @@ pub mod prelude {
         ecs::prelude::*,
         input::{ButtonInput, KeyCode, Mouse, MouseButton},
         live::{Failure, FrameStats, History, Live},
+        nav::{NavGrid, Navigator, Walker},
         physics::{
             fluid::{Emitter, ParticleFluid, WaterSurface},
             BodyKind, CharacterController, Collider, Joint, JointKind, PhysicsPlugin, PhysicsWorld,

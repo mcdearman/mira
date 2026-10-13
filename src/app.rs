@@ -370,7 +370,8 @@ impl Plugin for DefaultPlugins {
             .add_plugins(TransformPlugin)
             .add_plugins(crate::prefab::PrefabPlugin)
             .add_plugins(RenderPlugin)
-            .add_plugins(crate::audio::AudioPlugin);
+            .add_plugins(crate::audio::AudioPlugin)
+            .add_plugins(crate::nav::NavPlugin);
         app.listen_for_debugger_from_env();
     }
 }
