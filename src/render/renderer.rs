@@ -181,6 +181,9 @@ pub struct MeshRenderer {
     sampler: wgpu::Sampler,
     defaults: [wgpu::TextureView; 4],
     images: HashMap<u32, wgpu::TextureView>,
+    /// The pictures that are drawn with their pixels sharp, and the sampler that does it.
+    pixelated: std::collections::HashSet<u32>,
+    sharp: wgpu::Sampler,
     materials: HashMap<TextureSet, wgpu::BindGroup>,
     /// Every instance there is, kept from frame to frame, and its copy on the card.
     pub(crate) scene: Instances,
@@ -302,6 +305,17 @@ impl MeshRenderer {
             anisotropy_clamp: 16,
             ..Default::default()
         });
+        // For pixel art: the nearest pixel where a picture is shown larger than it is, and
+        // smoothed as any other where it is shown smaller.
+        let sharp = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("pixelated material sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
         let solid = |rgba, srgb| Image::solid(rgba, srgb).upload(device, &gpu.queue);
         let defaults = [
             solid([255, 255, 255, 255], true),
@@ -323,6 +337,8 @@ impl MeshRenderer {
             sampler,
             defaults,
             images: HashMap::new(),
+            pixelated: Default::default(),
+            sharp,
             materials: HashMap::new(),
             scene: Instances::default(),
             scene_layout,
@@ -419,9 +435,17 @@ impl MeshRenderer {
         }
         for id in &removed {
             self.images.remove(id);
+            self.pixelated.remove(id);
         }
         // Mip chains take a while for big textures; make them on every core at once.
         let arrived: Vec<(u32, &Image)> = modified.iter().filter_map(|id| images.get_by_id(*id).map(|image| (*id, image))).collect();
+        for (id, image) in &arrived {
+            if image.pixelated {
+                self.pixelated.insert(*id);
+            } else {
+                self.pixelated.remove(id);
+            }
+        }
         // What was processed ahead of time goes up as it is.
         for (id, image) in &arrived {
             if let Some(processed) = &image.processed {
@@ -487,7 +511,8 @@ impl MeshRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    // A material whose colour is pixel art is drawn sharp throughout.
+                    resource: wgpu::BindingResource::Sampler(if self.pixelated.contains(&set.base_color) { &self.sharp } else { &self.sampler }),
                 },
             ],
         });

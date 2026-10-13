@@ -7,8 +7,8 @@
 //! ```
 //!
 //! Seen from straight above. Hop with W A S D or the arrow keys. Reach the far verge and the
-//! next road is wider and faster. A car is the end of you, and of your run: back to the
-//! first road, with nothing. Tab shows the score; R starts over. The best you have done is
+//! next road is wider and faster, and is shown for a moment before you may set out on it. A
+//! car is the end of you, and of your run: back to the first road, with nothing. Tab shows the score; R starts over. The best you have done is
 //! kept from one day to the next.
 //!
 //! Everything seen is drawn a pixel at a time in `art.rs`, and everything heard is made
@@ -32,6 +32,9 @@ const CARS_TURN_BACK: f32 = 15.6;
 const HOP_SECONDS: f32 = 0.11;
 /// How long the squirrel lies there before the run begins again.
 const DEAD_SECONDS: f32 = 1.5;
+/// How long a road is looked at before the squirrel may set out on it: time to take the
+/// fingers off the keys and see what is coming.
+const READY_SECONDS: f32 = 1.4;
 /// How high above the ground each kind of thing is drawn: what is higher is over what is
 /// lower.
 const SPLAT_UP: f32 = 0.02;
@@ -96,6 +99,11 @@ struct Game {
     /// The road is to be laid out again, for the level as it now is.
     lay_out: bool,
     lanes: i32,
+    /// Seconds still to wait before the squirrel may set out on this road: a new road does
+    /// not begin under fingers that are still hopping across the last.
+    wait: f32,
+    /// A key held since before this road was laid out does not hop: only one pressed anew.
+    held_over: bool,
     /// Whether the score board is up.
     board: bool,
     quiet: bool,
@@ -110,6 +118,7 @@ impl Game {
 
     fn back_to_start(&mut self) {
         (self.cell, self.furthest, self.hop, self.facing, self.dead) = ((0, 0), 0, None, 0.0, None);
+        (self.wait, self.held_over) = (READY_SECONDS, true);
     }
 
     /// Notes the best that has been done, and keeps it where it will be found next time.
@@ -353,10 +362,21 @@ fn hop(time: Res<Time>, actions: Res<Actions>, audio: Res<Audio>, sounds: Res<As
         }
         game.keep_best();
     }
-    // A key just pressed hops at once; one held hops again as each hop ends.
     let wanted = [("up", (0, 1)), ("down", (0, -1)), ("left", (-1, 0)), ("right", (1, 0))];
-    let pressed = wanted.iter().find(|(action, _)| actions.just_pressed(action)).or_else(|| wanted.iter().find(|(action, _)| actions.pressed(action)));
-    let Some((_, (across, forward))) = pressed else { return };
+    // A road just laid out is looked at first: nothing hops until the wait is over, and a
+    // key that was already down when it began does nothing until it has been let go.
+    if game.held_over && !wanted.iter().any(|(action, _)| actions.pressed(action)) {
+        game.held_over = false;
+    }
+    if game.wait > 0.0 {
+        game.wait -= time.delta_secs();
+        return;
+    }
+    // A key just pressed hops at once; one held hops again as each hop ends.
+    let anew = wanted.iter().find(|(action, _)| actions.just_pressed(action));
+    let held = wanted.iter().find(|(action, _)| actions.pressed(action)).filter(|_| !game.held_over);
+    let Some((_, (across, forward))) = anew.or(held) else { return };
+    game.held_over = false;
     let to = (game.cell.0 + across, game.cell.1 + forward);
     // Not off the sides, and not back past the verge it started on.
     if to.0.abs() > SIDE || to.1 < -1 {
@@ -446,9 +466,17 @@ struct Written {
 fn board(mut commands: Commands, game: Res<Game>, made: Res<Made>, mut images: ResMut<Assets<Image>>, cameras: Query<&Transform, With<Camera>>, old: Query<Entity, With<OfTheBoard>>, mut kept: Local<Written>) {
     // The letters made so far, and what the board last said.
     let Written { letters, said: written } = &mut *kept;
-    let lines = [format!("SCORE {}", game.score), format!("ROAD {}", game.level), format!("BEST {}", game.best_score), format!("BEST ROAD {}", game.best_level)];
+    // The whole board when it is asked for; otherwise, while a new road is being looked at,
+    // only which road it is.
+    let announcing = !game.board && game.wait > 0.0 && game.dead.is_none();
+    let lines = if announcing {
+        vec![format!("ROAD {}", game.level)]
+    } else {
+        vec![format!("SCORE {}", game.score), format!("ROAD {}", game.level), format!("BEST {}", game.best_score), format!("BEST ROAD {}", game.best_level)]
+    };
     let Some(over) = cameras.iter().next().map(|camera| camera.translation) else { return };
-    let saying = if game.board { format!("{}@{:.2},{:.2}", lines.join("/"), over.x, over.z) } else { String::new() };
+    let up = game.board || announcing;
+    let saying = if up { format!("{}@{:.2},{:.2}", lines.join("/"), over.x, over.z) } else { String::new() };
     if *written == saying {
         return;
     }
@@ -456,11 +484,14 @@ fn board(mut commands: Commands, game: Res<Game>, made: Res<Made>, mut images: R
     for entity in &old {
         commands.entity(entity).despawn_recursive();
     }
-    if !game.board {
+    if !up {
         return;
     }
-    let middle = Vec3::new(over.x, BOARD_UP, over.z);
-    commands.spawn((flat(&made, made.board, middle, Vec2::new(9.6, 6.0), 0.0), OfTheBoard));
+    // An announcement is small and toward the top, clear of the road about to be crossed.
+    let rows = lines.len() as f32;
+    let middle = Vec3::new(over.x, BOARD_UP, over.z - if announcing { 4.4 } else { 0.0 });
+    let size = if announcing { Vec2::new(5.4, 1.9) } else { Vec2::new(9.6, 6.0) };
+    commands.spawn((flat(&made, made.board, middle, size, 0.0), OfTheBoard));
     // A letter is three pixels by five, with a pixel between one and the next.
     let pixel = 0.16;
     for (row, line) in lines.iter().enumerate() {
@@ -474,7 +505,7 @@ fn board(mut commands: Commands, game: Res<Game>, made: Res<Made>, mut images: R
             if known.is_none() {
                 letters.push((of, picture));
             }
-            let at = middle + Vec3::new(-across * 0.5 + (place as f32 * 4.0 + 1.5) * pixel, 0.05, (row as f32 - 1.5) * 7.5 * pixel);
+            let at = middle + Vec3::new(-across * 0.5 + (place as f32 * 4.0 + 1.5) * pixel, 0.05, (row as f32 - (rows - 1.0) * 0.5) * 7.5 * pixel);
             commands.spawn((flat(&made, picture, at, Vec2::new(3.0 * pixel, 5.0 * pixel), 0.0), OfTheBoard));
         }
     }
@@ -484,7 +515,7 @@ fn board(mut commands: Commands, game: Res<Game>, made: Res<Made>, mut images: R
 /// would, so that everything a person's play goes through is gone through. It hops on when
 /// the lane ahead will be clear for long enough, and back when the lane it is in will not.
 fn watch_itself(game: Res<Game>, cars: Query<(&Car, &Transform)>, mut keys: ResMut<mira::input::InjectedInput>, mut waited: Local<u32>) {
-    if !game.watch || game.dead.is_some() || game.hop.is_some() || game.lay_out {
+    if !game.watch || game.dead.is_some() || game.hop.is_some() || game.lay_out || game.wait > 0.0 {
         return;
     }
     // A moment between hops, as fingers have.
@@ -531,6 +562,8 @@ fn main() -> anyhow::Result<()> {
         dead: None,
         lay_out: true,
         lanes: 0,
+        wait: READY_SECONDS,
+        held_over: true,
         board: asked("board"),
         quiet: asked("quiet"),
         watch: asked("watch"),

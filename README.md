@@ -122,6 +122,8 @@ Saved games: [docs/SAVES.md](docs/SAVES.md).
 
 Finding the way round a level: [docs/NAVIGATION.md](docs/NAVIGATION.md).
 
+Flat games and pixel art: [docs/FLAT.md](docs/FLAT.md).
+
 AI agents driving a running game over MCP: [docs/MCP.md](docs/MCP.md).
 
 Interface inside the game, on Armature: [docs/UI.md](docs/UI.md).

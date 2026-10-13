@@ -398,6 +398,10 @@ dying in any order; the timer is right in every case because no code ever sets i
 - [x] Tabs, a choice between options, lists and scrolling (`kit::tabs`, `choice`, `list`,
       `scroll`)
 - [ ] Dropdowns and other pop-ups; interface in the world; gamepad focus
+- [x] Flat games: pictures drawn with their pixels sharp (`Image::pixelated`), and how a
+      game seen from above is made of what there is (see [FLAT.md](FLAT.md))
+- [ ] Flat games: sprite sheets, tiles as one mesh, and text that a game can write without
+      a font of its own
 - [x] Audio: sounds mixed, heard from where they are, and music read as it plays (see
       [AUDIO.md](AUDIO.md))
 - [ ] Audio: sounds loaded by name and sources saved in scenes; buses and effects
