@@ -3,6 +3,7 @@ extern crate self as mira;
 
 pub mod app;
 pub mod asset_cache;
+pub mod audio;
 pub mod asset_server;
 pub mod assets;
 /// The entity component system, which is a crate of its own: `mira_ecs`.
@@ -33,6 +34,7 @@ pub mod prelude {
         app::{App, AppExit, DefaultPlugins, Plugin, Stage},
         asset_server::{AssetServer, Model},
         assets::{Assets, Handle},
+        audio::{Audio, AudioListener, AudioSource, Playback, Sound},
         ecs::prelude::*,
         input::{ButtonInput, KeyCode, Mouse, MouseButton},
         live::{Failure, FrameStats, History, Live},
