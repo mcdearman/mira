@@ -1,6 +1,7 @@
 // Lets the derive macros name this crate as `::mira` from inside it too.
 extern crate self as mira;
 
+pub mod actions;
 pub mod app;
 pub mod asset_cache;
 pub mod audio;
@@ -31,6 +32,7 @@ pub use glam;
 
 pub mod prelude {
     pub use crate::{
+        actions::{Actions, Binding},
         app::{App, AppExit, DefaultPlugins, Plugin, Stage},
         asset_server::{AssetServer, Model},
         assets::{Assets, Handle},
