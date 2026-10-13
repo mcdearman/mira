@@ -407,7 +407,9 @@ dying in any order; the timer is right in every case because no code ever sets i
 - [ ] Audio: sounds loaded by name and sources saved in scenes; buses and effects
 - [x] Input: named actions and axes, rebinding, and bindings kept in a file (see
       [INPUT.md](INPUT.md))
-- [ ] Input: gamepads, and touch (see Phase 10, mobile)
+- [x] Input: touch. Fingers, taps and swipes, bound to the same actions as keys (see
+      [INPUT.md](INPUT.md)); not yet tried on a phone
+- [ ] Input: gamepads; two-finger gestures, a stick and buttons drawn on the screen
 - [ ] Animation graph: state machines, blend trees, retargeting, root motion
 - [ ] Physics: convex hulls, continuous collision, ragdolls; decide here whether to keep the
       custom solver or adopt Rapier

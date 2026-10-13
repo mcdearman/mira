@@ -26,6 +26,7 @@ pub mod signal;
 pub mod state;
 pub mod tasks;
 pub mod time;
+pub mod touch;
 pub mod transform;
 pub mod voxel;
 pub mod window;
@@ -64,6 +65,7 @@ pub mod prelude {
         },
         state::{in_state, NextState, State, States},
         time::{FixedTime, Time},
+        touch::{Gesture, Swipe, Touches},
         transform::{
             Children, GlobalTransform, HierarchyCommands, Interpolate, Name, Parent, Transform,
         },

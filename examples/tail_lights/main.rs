@@ -189,12 +189,18 @@ struct OfTheLevel;
 #[derive(Component)]
 struct OfTheBoard;
 
-fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut images: ResMut<Assets<Image>>, mut sounds: ResMut<Assets<Sound>>, mut actions: ResMut<Actions>, audio: Res<Audio>, game: Res<Game>) {
-    actions.bind("up", KeyCode::KeyW).bind("up", KeyCode::ArrowUp);
-    actions.bind("down", KeyCode::KeyS).bind("down", KeyCode::ArrowDown);
-    actions.bind("left", KeyCode::KeyA).bind("left", KeyCode::ArrowLeft);
-    actions.bind("right", KeyCode::KeyD).bind("right", KeyCode::ArrowRight);
+/// What plays the game, by key and by finger: a swipe hops the way it went, and a tap hops
+/// on. At a desk the left mouse button is the finger.
+fn controls(mut actions: ResMut<Actions>, mut touches: ResMut<Touches>) {
+    actions.bind("up", KeyCode::KeyW).bind("up", KeyCode::ArrowUp).bind("up", Swipe::Up).bind("up", Binding::Tap);
+    actions.bind("down", KeyCode::KeyS).bind("down", KeyCode::ArrowDown).bind("down", Swipe::Down);
+    actions.bind("left", KeyCode::KeyA).bind("left", KeyCode::ArrowLeft).bind("left", Swipe::Left);
+    actions.bind("right", KeyCode::KeyD).bind("right", KeyCode::ArrowRight).bind("right", Swipe::Right);
     actions.bind("restart", KeyCode::KeyR).bind("score", KeyCode::Tab);
+    touches.mouse_too = true;
+}
+
+fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut images: ResMut<Assets<Image>>, mut sounds: ResMut<Assets<Sound>>, audio: Res<Audio>, game: Res<Game>) {
     if game.quiet {
         audio.set_master_volume(0.0);
     }
@@ -577,7 +583,7 @@ fn main() -> anyhow::Result<()> {
         .insert_resource(PostProcess { taa: false, bloom: 0.0, vignette: 0.0, grain: 0.0, sharpen: 0.0, ..Default::default() })
         .add_plugins(DefaultPlugins)
         .insert_resource(ViewMode::Unlit)
-        .add_systems(Stage::Startup, setup)
+        .add_systems(Stage::Startup, (controls, setup))
         .add_systems(Stage::First, watch_itself)
         .add_systems(Stage::Update, (lay_out, hop, drive, squirrel, follow, board));
     app.run()

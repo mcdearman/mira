@@ -264,6 +264,17 @@ impl ApplicationHandler for Runner {
                     };
                 }
             }
+            WindowEvent::Touch(touch) => {
+                let at = Vec2::new(touch.location.x as f32, touch.location.y as f32);
+                if let Some(touches) = self.resource::<crate::touch::Touches>() {
+                    match touch.phase {
+                        winit::event::TouchPhase::Started => touches.began(touch.id, at),
+                        winit::event::TouchPhase::Moved => touches.moved(touch.id, at),
+                        winit::event::TouchPhase::Ended => touches.ended(touch.id, at),
+                        winit::event::TouchPhase::Cancelled => touches.cancelled(touch.id),
+                    }
+                }
+            }
             WindowEvent::RedrawRequested => {
                 self.app.update();
                 if self.app.should_exit() {
