@@ -27,12 +27,22 @@ use glam::Vec2;
 
 use crate::{
     ecs::{Res, ResMut},
+    gamepad::{Gamepads, PadAxis, PadButton},
     input::{key_named, ButtonInput, KeyCode, MouseButton},
     touch::{Swipe, Touches},
 };
 
-/// What an action can be bound to: a key, a mouse button, or what a finger does on a
-/// screen. A swipe or a tap is over in the frame it happens: it presses its action for that
+/// Everything an action can be pressed by, as it is this frame.
+#[derive(Clone, Copy)]
+pub struct Inputs<'a> {
+    pub keys: &'a ButtonInput<KeyCode>,
+    pub buttons: &'a ButtonInput<MouseButton>,
+    pub touches: Option<&'a Touches>,
+    pub pads: Option<&'a Gamepads>,
+}
+
+/// What an action can be bound to: a key, a mouse button, a button of a controller, or
+/// what a finger does on a screen. A swipe or a tap is over in the frame it happens: it presses its action for that
 /// frame, as a key struck and let go at once would.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Binding {
@@ -40,6 +50,13 @@ pub enum Binding {
     Mouse(MouseButton),
     Swipe(Swipe),
     Tap,
+    Pad(PadButton),
+}
+
+impl From<PadButton> for Binding {
+    fn from(button: PadButton) -> Self {
+        Self::Pad(button)
+    }
 }
 
 impl From<Swipe> for Binding {
@@ -74,6 +91,7 @@ impl Binding {
             Self::Mouse(MouseButton::Other(number)) => format!("Mouse{number}"),
             Self::Swipe(way) => format!("Swipe{way:?}"),
             Self::Tap => "Tap".into(),
+            Self::Pad(button) => button.name(),
         }
     }
 
@@ -88,6 +106,9 @@ impl Binding {
             "swiperight" => return Some(Self::Swipe(Swipe::Right)),
             _ => {}
         }
+        if let Some(button) = PadButton::named(name) {
+            return Some(Self::Pad(button));
+        }
         if let Some(button) = name.strip_prefix("Mouse").or_else(|| name.strip_prefix("mouse")) {
             return Some(Self::Mouse(match button.to_ascii_lowercase().as_str() {
                 "left" => MouseButton::Left,
@@ -101,12 +122,13 @@ impl Binding {
         key_named(name).map(Self::Key)
     }
 
-    fn down(&self, keys: &ButtonInput<KeyCode>, buttons: &ButtonInput<MouseButton>, touches: Option<&Touches>) -> bool {
+    fn down(&self, from: &Inputs) -> bool {
         match self {
-            Self::Key(key) => keys.pressed(*key),
-            Self::Mouse(button) => buttons.pressed(*button),
-            Self::Swipe(way) => touches.is_some_and(|touches| touches.swiped() == Some(*way)),
-            Self::Tap => touches.is_some_and(|touches| touches.tapped().is_some()),
+            Self::Key(key) => from.keys.pressed(*key),
+            Self::Mouse(button) => from.buttons.pressed(*button),
+            Self::Swipe(way) => from.touches.is_some_and(|touches| touches.swiped() == Some(*way)),
+            Self::Tap => from.touches.is_some_and(|touches| touches.tapped().is_some()),
+            Self::Pad(button) => from.pads.is_some_and(|pads| pads.pressed(*button)),
         }
     }
 }
@@ -118,6 +140,8 @@ pub struct Actions {
     buttons: BTreeMap<String, Vec<Binding>>,
     /// An axis's pairs: the first of a pair pulls it toward -1, the second toward 1.
     axes: BTreeMap<String, Vec<(Binding, Binding)>>,
+    /// An axis's sticks and triggers, which say where it is themselves.
+    sticks: BTreeMap<String, Vec<PadAxis>>,
     down: BTreeSet<String>,
     went_down: BTreeSet<String>,
     went_up: BTreeSet<String>,
@@ -146,10 +170,21 @@ impl Actions {
         self
     }
 
+    /// Binds an axis to a stick or a trigger of a controller, besides its pairs: the axis
+    /// is where the stick is, past its dead zone.
+    pub fn bind_stick(&mut self, axis: &str, stick: PadAxis) -> &mut Self {
+        let sticks = self.sticks.entry(axis.to_owned()).or_default();
+        if !sticks.contains(&stick) {
+            sticks.push(stick);
+        }
+        self
+    }
+
     /// Takes every binding from an action or an axis.
     pub fn unbind(&mut self, name: &str) -> &mut Self {
         self.buttons.remove(name);
         self.axes.remove(name);
+        self.sticks.remove(name);
         self
     }
 
@@ -163,9 +198,19 @@ impl Actions {
         self.axes.get(axis).map_or(&[], Vec::as_slice)
     }
 
+    /// The sticks and triggers an axis is bound to.
+    pub fn stick_bindings(&self, axis: &str) -> &[PadAxis] {
+        self.sticks.get(axis).map_or(&[], Vec::as_slice)
+    }
+
+    /// The names of the axes: those with pairs and those with sticks.
+    fn axis_names(&self) -> BTreeSet<&str> {
+        self.axes.keys().chain(self.sticks.keys()).map(String::as_str).collect()
+    }
+
     /// The actions there are, and the axes, in the order of their names.
     pub fn names(&self) -> (Vec<&str>, Vec<&str>) {
-        (self.buttons.keys().map(String::as_str).collect(), self.axes.keys().map(String::as_str).collect())
+        (self.buttons.keys().map(String::as_str).collect(), self.axis_names().into_iter().collect())
     }
 
     /// Whether the action is held down.
@@ -213,16 +258,17 @@ impl Actions {
 
     /// Brings what is pressed up to date with the keys and buttons, once a frame.
     pub fn update(&mut self, keys: &ButtonInput<KeyCode>, buttons: &ButtonInput<MouseButton>) {
-        self.update_with(keys, buttons, None);
+        self.update_from(&Inputs { keys, buttons, touches: None, pads: None });
     }
 
-    /// The same, with what fingers have done on a screen as well.
-    pub fn update_with(&mut self, keys: &ButtonInput<KeyCode>, buttons: &ButtonInput<MouseButton>, touches: Option<&Touches>) {
+    /// The same, with fingers and controllers as well: everything there is to be pressed by.
+    pub fn update_from(&mut self, from: &Inputs) {
+        let (keys, buttons) = (from.keys, from.buttons);
         self.went_down.clear();
         self.went_up.clear();
         if let Some(action) = self.hearing.clone() {
             // The first thing newly pressed is the action's from now on.
-            let pressed = keys.get_just_pressed().next().map(|key| Binding::Key(*key)).or_else(|| buttons.get_just_pressed().next().map(|button| Binding::Mouse(*button)));
+            let pressed = keys.get_just_pressed().next().map(|key| Binding::Key(*key)).or_else(|| buttons.get_just_pressed().next().map(|button| Binding::Mouse(*button))).or_else(|| from.pads.and_then(|pads| pads.get_just_pressed().next()).map(Binding::Pad));
             if let Some(binding) = pressed {
                 self.buttons.insert(action, vec![binding]);
                 self.hearing = None;
@@ -233,7 +279,7 @@ impl Actions {
             return;
         }
         for (action, bindings) in &self.buttons {
-            let now = bindings.iter().any(|binding| binding.down(keys, buttons, touches));
+            let now = bindings.iter().any(|binding| binding.down(from));
             match (now, self.down.contains(action)) {
                 (true, false) => {
                     self.down.insert(action.clone());
@@ -254,8 +300,17 @@ impl Actions {
         }
         self.values.clear();
         for (axis, pairs) in &self.axes {
-            let pull: f32 = pairs.iter().map(|(less, more)| more.down(keys, buttons, touches) as i32 as f32 - less.down(keys, buttons, touches) as i32 as f32).sum();
-            self.values.insert(axis.clone(), pull.clamp(-1.0, 1.0));
+            let pull: f32 = pairs.iter().map(|(less, more)| more.down(from) as i32 as f32 - less.down(from) as i32 as f32).sum();
+            self.values.insert(axis.clone(), pull);
+        }
+        if let Some(pads) = from.pads {
+            for (axis, sticks) in &self.sticks {
+                let pull: f32 = sticks.iter().map(|stick| pads.axis(*stick)).sum();
+                *self.values.entry(axis.clone()).or_default() += pull;
+            }
+        }
+        for value in self.values.values_mut() {
+            *value = value.clamp(-1.0, 1.0);
         }
     }
 
@@ -267,8 +322,9 @@ impl Actions {
             let names: Vec<String> = bindings.iter().map(Binding::name).collect();
             text += &format!("{action} = {}\n", names.join(", "));
         }
-        for (axis, pairs) in &self.axes {
-            let names: Vec<String> = pairs.iter().map(|(less, more)| format!("{}/{}", less.name(), more.name())).collect();
+        for axis in self.axis_names() {
+            let pairs = self.axis_bindings(axis).iter().map(|(less, more)| format!("{}/{}", less.name(), more.name()));
+            let names: Vec<String> = pairs.chain(self.stick_bindings(axis).iter().map(PadAxis::name)).collect();
             text += &format!("{axis} = {}\n", names.join(", "));
         }
         text
@@ -292,24 +348,37 @@ impl Actions {
             }
             let known = |part: &str| Binding::named(part).ok_or_else(|| wrong(&format!("`{}` is not a key or a mouse button", part.trim())));
             let parts: Vec<&str> = bound.split(',').map(str::trim).filter(|part| !part.is_empty()).collect();
-            if parts.iter().any(|part| part.contains('/')) {
-                let mut pairs = Vec::new();
+            if parts.iter().any(|part| part.contains('/') || PadAxis::named(part).is_some()) {
+                let (mut pairs, mut sticks) = (Vec::new(), Vec::new());
                 for part in parts {
-                    let (less, more) = part.split_once('/').ok_or_else(|| wrong("an axis is pairs, each `Less/More`"))?;
+                    if let Some(stick) = PadAxis::named(part) {
+                        sticks.push(stick);
+                        continue;
+                    }
+                    let (less, more) = part.split_once('/').ok_or_else(|| wrong("an axis is pairs, each `Less/More`, and sticks"))?;
                     pairs.push((known(less)?, known(more)?));
                 }
-                axes.push((name.to_owned(), pairs));
+                axes.push((name.to_owned(), pairs, sticks));
             } else {
                 buttons.push((name.to_owned(), parts.into_iter().map(known).collect::<Result<Vec<_>, _>>()?));
             }
         }
         for (name, bindings) in buttons {
             self.axes.remove(&name);
+            self.sticks.remove(&name);
             self.buttons.insert(name, bindings);
         }
-        for (name, pairs) in axes {
+        for (name, pairs, sticks) in axes {
             self.buttons.remove(&name);
-            self.axes.insert(name, pairs);
+            // An axis with only sticks has no pairs, and one with only pairs no sticks.
+            self.axes.remove(&name);
+            self.sticks.remove(&name);
+            if !pairs.is_empty() {
+                self.axes.insert(name.clone(), pairs);
+            }
+            if !sticks.is_empty() {
+                self.sticks.insert(name, sticks);
+            }
         }
         Ok(())
     }
@@ -332,8 +401,8 @@ impl Actions {
 
 /// Brings the actions up to date with the frame's keys and buttons, before the game reads
 /// them.
-pub(crate) fn update_actions(mut actions: ResMut<Actions>, keys: Res<ButtonInput<KeyCode>>, buttons: Res<ButtonInput<MouseButton>>, touches: Option<Res<Touches>>) {
-    actions.update_with(&keys, &buttons, touches.as_deref());
+pub(crate) fn update_actions(mut actions: ResMut<Actions>, keys: Res<ButtonInput<KeyCode>>, buttons: Res<ButtonInput<MouseButton>>, touches: Option<Res<Touches>>, pads: Option<Res<Gamepads>>) {
+    actions.update_from(&Inputs { keys: &keys, buttons: &buttons, touches: touches.as_deref(), pads: pads.as_deref() });
 }
 
 #[cfg(test)]
@@ -443,6 +512,57 @@ mod tests {
         // Pressed once, held for three frames and let go: one jump.
         assert_eq!(app.world.resource::<Jumps>().0, 1);
         assert!(!app.world.resource::<Actions>().pressed("jump"));
+    }
+
+    #[test]
+    fn a_controller_presses_actions_and_its_sticks_are_axes() {
+        let (mut keys, buttons) = inputs();
+        let mut pads = Gamepads::default();
+        let mut actions = Actions::default();
+        actions.bind("jump", KeyCode::Space).bind("jump", PadButton::South);
+        actions.bind_axis("across", KeyCode::KeyA, KeyCode::KeyD).bind_stick("across", PadAxis::LeftX);
+        actions.bind_stick("gas", PadAxis::RightPull);
+        let update = |actions: &mut Actions, keys: &ButtonInput<KeyCode>, pads: &Gamepads| actions.update_from(&Inputs { keys, buttons: &buttons, touches: None, pads: Some(pads) });
+
+        pads.press(1, PadButton::South);
+        pads.set_axis(1, PadAxis::LeftX, 0.575);
+        pads.set_axis(1, PadAxis::RightPull, 1.0);
+        update(&mut actions, &keys, &pads);
+        assert!(actions.just_pressed("jump"));
+        assert!((actions.value("across") - 0.5).abs() < 1e-5, "{}", actions.value("across"));
+        assert_eq!(actions.value("gas"), 1.0);
+        // A key and the stick the same way are no more than one; against each other they
+        // cancel as far as the stick is pushed.
+        keys.press(KeyCode::KeyD);
+        update(&mut actions, &keys, &pads);
+        assert_eq!(actions.value("across"), 1.0);
+        keys.release(KeyCode::KeyD);
+        keys.press(KeyCode::KeyA);
+        update(&mut actions, &keys, &pads);
+        assert!((actions.value("across") + 0.5).abs() < 1e-5);
+        // Unplugged: the button is let go and the stick is at rest.
+        keys.release(KeyCode::KeyA);
+        pads.disconnected(1);
+        update(&mut actions, &keys, &pads);
+        assert!(actions.just_released("jump") && actions.value("across") == 0.0 && actions.value("gas") == 0.0);
+
+        // Written down and read back, sticks beside pairs and alone.
+        let text = actions.to_text();
+        assert_eq!(text, "jump = Space, PadSouth\nacross = KeyA/KeyD, PadLeftX\ngas = PadRightPull\n");
+        let mut read = Actions::default();
+        read.read_text(&text).unwrap();
+        assert_eq!(read.to_text(), text);
+        assert_eq!(read.names(), (vec!["jump"], vec!["across", "gas"]));
+        // A file that leaves the stick out takes it away.
+        read.read_text("across = KeyA/KeyD").unwrap();
+        assert!(read.stick_bindings("across").is_empty() && read.axis_bindings("across").len() == 1);
+
+        // Choosing a button for an action hears a controller's as it hears a key.
+        keys.clear();
+        actions.rebind("jump");
+        pads.press(2, PadButton::East);
+        update(&mut actions, &keys, &pads);
+        assert_eq!(actions.bindings("jump"), [Binding::Pad(PadButton::East)]);
     }
 
     #[test]

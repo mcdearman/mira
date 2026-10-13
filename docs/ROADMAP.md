@@ -33,7 +33,7 @@ The work that is particular to it is listed under Phase 10.
 | Voxels | Chunked storage, threaded generation and meshing with ambient occlusion, streaming, raycasts, saving edits | Greedy meshing, chunk LOD, transparent blocks, voxel lighting |
 | Simulation | Rigid bodies with sleeping, joints, character controller, fluids; shapes: sphere, box, capsule, plane, static triangle mesh | Convex hulls, continuous collision, ragdolls, vehicles, cloth, destruction |
 | Animation | Clips, cross-fades, masks, two-bone IK, procedural gait, skins loaded from glTF | State machines, blend trees, retargeting, compression |
-| Runtime | Keyboard and mouse; text and panels in the game, with a first set of controls | Audio, gamepad, input mapping, navigation, AI, networking, save games |
+| Runtime | Keyboard, mouse, touch and game controllers, bound to named actions; sound; saved games; finding a way on a grid; text and panels in the game, with a first set of controls | Behaviour trees, a true navigation mesh, networking, a game run on a phone |
 | Plugins | Native plugins over a C interface (`include/mira.h`) in any language, hot-reloaded with their data intact; Rust and Haskell bindings; a whole game as a plugin | Animation, joints and much else of the engine from a plugin (see Phase 1A) |
 | Tools | The engine app: the game in a window with its entities, an inspector, signals, assets and an agent beside it; a debug connection and an MCP server; screenshots and image-diff tests; CI on Linux and macOS with clippy, Miri and ThreadSanitizer | Play in editor, material editor, a profiler's timeline |
 
@@ -409,7 +409,9 @@ dying in any order; the timer is right in every case because no code ever sets i
       [INPUT.md](INPUT.md))
 - [x] Input: touch. Fingers, taps and swipes, bound to the same actions as keys (see
       [INPUT.md](INPUT.md)); not yet tried on a phone
-- [ ] Input: gamepads; two-finger gestures, a stick and buttons drawn on the screen
+- [x] Input: game controllers. Buttons bound to actions and sticks to axes, beside keys
+      (see [INPUT.md](INPUT.md)); not yet tried with one plugged in
+- [ ] Input: two-finger gestures, a stick and buttons drawn on the screen; rumble
 - [ ] Animation graph: state machines, blend trees, retargeting, root motion
 - [ ] Physics: convex hulls, continuous collision, ragdolls; decide here whether to keep the
       custom solver or adopt Rapier
@@ -557,7 +559,7 @@ depends on resolution rather than scene size.
       an interface that fits a small screen and its cut-outs; sound and saved games in the
       places a phone allows; a renderer that holds its frame rate on a phone's graphics
       (no ray tracing, compressed textures a phone reads, a render scale chosen for it)
-- [ ] Game controllers on every platform
+- [ ] Game controllers on phones (on Windows, macOS and Linux they are heard from)
 - [ ] Pipeline caching, crash reports, localization, accessibility settings
 - [ ] Documentation, a book, and sample projects
 

@@ -63,10 +63,48 @@ a game made for a phone. A test or an agent draws a finger across the screen wit
 `InjectedInput::swipe(from, to, frames)`, or from outside the game with
 `mira-debug input touch=[300,500] touch_to=[300,380] frames=3` (leave `touch_to` out for a tap).
 
+## Controllers
+
+`Gamepads` has every game controller that is plugged in. Buttons are named by where they
+are, not by what is printed on them: `PadButton::South` is the lowest of the four on the
+right, whatever its maker calls it.
+
+```rust
+actions.bind("jump", KeyCode::Space).bind("jump", PadButton::South);
+actions.bind_axis("across", KeyCode::KeyA, KeyCode::KeyD).bind_stick("across", PadAxis::LeftX);
+actions.bind_stick("gas", PadAxis::RightPull);     // a trigger, from 0 to 1
+```
+
+An axis is then where the stick is or which key is held, whichever the player has in hand,
+and `actions.direction("across", "along")` is a direction from either. A stick let go does
+not come quite to rest, so the first 15% from its middle reads as nought
+(`gamepads.dead_zone`), and from there to its end as nought to one.
+
+Any controller plays: a button is pressed if it is down on any of them, and an axis is where
+the one pushed furthest has it. For a game with a controller each, `gamepads.iter()` gives
+them one by one, each with an `id`, a `name`, `pressed(button)` and `axis(axis)`.
+
+In a bindings file they are `PadSouth`, `PadEast`, `PadWest`, `PadNorth`, `PadLeftBumper`,
+`PadRightBumper`, `PadLeftTrigger`, `PadRightTrigger`, `PadSelect`, `PadStart`,
+`PadLeftStick`, `PadRightStick`, `PadUp`, `PadDown`, `PadLeft`, `PadRight`, and for axes
+`PadLeftX`, `PadLeftY`, `PadRightX`, `PadRightY`, `PadLeftPull`, `PadRightPull`:
+
+```
+jump = Space, PadSouth
+across = KeyA/KeyD, PadLeftX
+```
+
+`rebind` hears a controller's button as it hears a key. A test or an agent plays one in
+with `Played::PadButton` and `Played::PadAxis`, or from outside with
+`mira-debug input pad_button=South` and `mira-debug input pad_axis=LeftX value=-1`.
+
+Controllers are heard from on Windows, macOS and Linux (building on Linux needs
+`libudev-dev`). Not yet on a phone.
+
 ## Letting the player choose
 
 ```rust
-actions.rebind("jump");          // the next key or mouse button pressed is jump's from now on
+actions.rebind("jump");          // the next key, mouse or controller button pressed is jump's from now on
 actions.rebinding();             // Some("jump") until one is
 actions.cancel_rebind();
 ```
@@ -95,6 +133,6 @@ it is told of, with the line, and changes nothing.
 
 ## What there is not yet
 
-Gamepads, and sticks and triggers as axes. Two fingers together (a pinch, a turn), a
+Controllers on a phone, their rumble, and which controller is whose. Two fingers together (a pinch, a turn), a
 finger held as a stick, and buttons drawn on the screen. Choosing a swipe or a tap with
 ebind: it listens for keys and mouse buttons only.

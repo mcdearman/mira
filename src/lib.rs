@@ -9,6 +9,7 @@ pub mod asset_server;
 pub mod assets;
 /// The entity component system, which is a crate of its own: `mira_ecs`.
 pub use mira_ecs as ecs;
+pub mod gamepad;
 pub mod input;
 pub mod live;
 pub mod logging;
@@ -41,6 +42,7 @@ pub mod prelude {
         assets::{Assets, Handle},
         audio::{Audio, AudioListener, AudioSource, Playback, Sound},
         ecs::prelude::*,
+        gamepad::{Gamepads, PadAxis, PadButton},
         input::{ButtonInput, KeyCode, Mouse, MouseButton},
         live::{Failure, FrameStats, History, Live},
         nav::{NavGrid, Navigator, Walker},

@@ -135,6 +135,9 @@ struct Runner {
     last_frame: Option<std::time::Instant>,
     /// The app is put away, and has no window to draw in until it is brought back.
     away: bool,
+    /// The system's game controllers, heard from before each frame.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    pads: Option<crate::gamepad::Heard>,
 }
 
 /// The activity a game on Android was started in, which its window and its files come from.
@@ -207,6 +210,8 @@ pub(crate) fn run(app: App) -> anyhow::Result<()> {
         hidden: false,
         last_frame: None,
         away: false,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        pads: None,
     };
     event_loop.run_app(&mut runner)?;
     Ok(())
@@ -221,6 +226,15 @@ impl Runner {
 
     fn resource<R: 'static>(&mut self) -> Option<&mut R> {
         self.app.world.get_resource_mut::<R>()
+    }
+
+    /// Runs a frame, with what the game controllers have done since the last.
+    fn frame(&mut self) {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        if let Some(pads) = self.app.world.get_resource_mut::<crate::gamepad::Gamepads>() {
+            self.pads.get_or_insert_with(crate::gamepad::Heard::new).pass_on(pads);
+        }
+        self.app.update();
     }
 }
 
@@ -350,7 +364,7 @@ impl ApplicationHandler for Runner {
                 }
             }
             WindowEvent::RedrawRequested => {
-                self.app.update();
+                self.frame();
                 if self.app.should_exit() {
                     event_loop.exit();
                 }
@@ -387,7 +401,7 @@ impl ApplicationHandler for Runner {
             }
         }
         self.last_frame = Some(std::time::Instant::now());
-        self.app.update();
+        self.frame();
         if self.app.should_exit() {
             event_loop.exit();
         }
