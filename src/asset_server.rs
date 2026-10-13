@@ -1114,6 +1114,15 @@ mod tests {
                 .save(self.0.join(name))
                 .unwrap();
         }
+
+        /// Saves a picture again, at a time that is surely later than it was saved before.
+        /// Two saves one straight after the other can fall within one tick of a file
+        /// system's clock, and a picture the same size is then not seen to have changed.
+        fn png_again(&self, name: &str, rgba: [u8; 4]) {
+            self.png(name, rgba);
+            let file = std::fs::File::options().write(true).open(self.0.join(name)).unwrap();
+            file.set_modified(SystemTime::now() + Duration::from_secs(2)).unwrap();
+        }
     }
 
     impl Drop for TempDir {
@@ -1264,7 +1273,7 @@ mod tests {
 
         // Saved again: reloaded under the same handle.
         assert_eq!(server.reload_changed(), 0);
-        dir.png("red.png", [0, 0, 255, 255]);
+        dir.png_again("red.png", [0, 0, 255, 255]);
         assert_eq!(server.reload_changed(), 2, "both readings of the file");
         server.wait(&mut images);
         assert_eq!(pixel(&images, red), Some([0, 0, 255, 255]));
@@ -1287,7 +1296,7 @@ mod tests {
         let handle = server.load_image(&mut images, "a.png");
         server.wait(&mut images);
 
-        dir.png("a.png", [9, 9, 9, 255]);
+        dir.png_again("a.png", [9, 9, 9, 255]);
         server.check_files();
         assert_eq!(server.loading(), 0, "seen, not yet read");
         server.check_files();
