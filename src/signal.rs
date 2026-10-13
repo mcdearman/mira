@@ -226,6 +226,9 @@ pub struct Signals {
     /// Where each signal's box was put in a drawing of the graph, by whoever draws it. The
     /// rules don't depend on it; it is kept with them so a drawing can be the same next time.
     places: HashMap<String, [f32; 2]>,
+    /// How many times the rules have been changed: what a node is, what it reads, its
+    /// name, or whether it is there. See [`Signals::revision`].
+    revision: u64,
 }
 
 impl Signals {
@@ -234,6 +237,11 @@ impl Signals {
             // Redefined: its value and what it has timed carry over, so that changing a
             // rule while the game runs doesn't restart its clocks.
             Some(&index) => {
+                let same = match (&self.nodes[index].kind, &kind) {
+                    (Kind::Op(was), Kind::Op(now)) => was == now,
+                    _ => false,
+                };
+                self.revision += !(same && self.nodes[index].inputs == inputs) as u64;
                 // The order only depends on who reads whom.
                 if self.nodes[index].inputs != inputs {
                     self.order.clear();
@@ -243,6 +251,7 @@ impl Signals {
             }
             None => {
                 self.order.clear();
+                self.revision += 1;
                 self.names.insert(name.to_owned(), self.nodes.len());
                 self.nodes.push(Node {
                     name: name.to_owned(),
@@ -321,7 +330,15 @@ impl Signals {
         };
         *slot = to.to_owned();
         self.order.clear();
+        self.revision += 1;
         true
+    }
+
+    /// A number that goes up whenever the rules change: a node defined otherwise than it
+    /// was, rewired, renamed or removed. Values changing do not move it, nor does defining
+    /// a rule again as it is. For keeping something else the same as the rules.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Records where a signal's box sits in a drawing of the graph.
@@ -352,6 +369,7 @@ impl Signals {
             .map(|&index| &mut self.nodes[index].kind)
         {
             Some(Kind::Op(current)) => {
+                self.revision += (*current != op) as u64;
                 *current = op;
                 true
             }
@@ -374,6 +392,7 @@ impl Signals {
         }
         self.nodes[index].inputs = inputs.into_iter().map(Into::into).collect();
         self.order.clear();
+        self.revision += 1;
         true
     }
 
@@ -419,6 +438,7 @@ impl Signals {
         if let Some(at) = self.places.remove(name) {
             self.places.insert(to.to_owned(), at);
         }
+        self.revision += 1;
         Ok(())
     }
 
@@ -433,6 +453,7 @@ impl Signals {
             *other -= (*other > index) as usize;
         }
         self.order.clear();
+        self.revision += 1;
         true
     }
 

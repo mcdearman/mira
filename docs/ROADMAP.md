@@ -180,6 +180,13 @@ game's state, change it, and control time and code. The means is the Model Conte
 - [x] A report of state that is not reflected, and so invisible (`unregistered`)
 - [ ] Total knowledge: registering what that report lists in the engine itself (the
       renderer's and physics' resources, `GlobalTransform`, animation)
+- [x] Signal rules as text, and the text and the graph kept the same: a file saved changes
+      the running rules, and a rule changed in the graph rewrites its line and no other
+      (see [SIGNALS.md](SIGNALS.md#rules-as-text)). The first step toward the node editor below
+- [ ] A node editor for scripts, as Blueprint is, that is a view of the code: an edit to
+      either changes the other at once. For Meadow, whose tools must give a syntax tree
+      that loses nothing, types for the wires, and names for definitions that outlast an edit
+- [ ] The rules' text beside their graph in the panel; where boxes sit kept with the text
 - [x] Events pushed, not polled, over the debug connection: failures, signal changes, pauses
       (`watch`, `mira-debug events`)
 - [ ] The same events through MCP; log lines and plugin reloads as events
