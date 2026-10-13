@@ -265,6 +265,10 @@ Things to know:
 
 - **It needs GHC** (tested with 9.12) with dynamic libraries, which the standard installers
   provide. A rebuild takes a few seconds.
+- **On Windows** run the script from Git's shell (`sh bindings/haskell/build-plugin.sh …`);
+  it writes `<name>.dll`. GHC has no runtime to share between libraries there, so each
+  plugin carries its own: a library is some ten megabytes, and two Haskell plugins are two
+  runtimes side by side.
 - **No long collection pauses.** Plugins run on GHC's threaded runtime with the non-moving
   collector for the old generation, which marks concurrently on its own thread. A frame only
   ever waits for a young-generation collection. Because the runtime is threaded, a thread
