@@ -550,7 +550,9 @@ depends on resolution rather than scene size.
 - [x] Windows in CI beside Linux and macOS: built, tested and linted on every change
 - [x] Native plugins on Windows: C and Rust plugins are built, loaded, reloaded and tested
       there (the tests compile C with clang)
-- [ ] Haskell plugins on Windows: their build is a shell script
+- [x] Haskell plugins on Windows: built by the same script, run from Git's `sh`; each
+      library carries its own GHC runtime there, as GHC has none to share on Windows
+- [ ] Scripts built by the engine itself, so that no shell is needed on any system
 - [x] The engine is built for Android on every change (see [ANDROID.md](ANDROID.md)); a
       game there is told its activity, and keeps its saved games among the app's own files
 - [ ] Mobile, so that a game can be made for phones and tablets: a game run on a real

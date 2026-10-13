@@ -29,6 +29,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Windows' own headers define `near` and `far` as nothing, left over from sixteen-bit
+ * pointers. A camera here has a near and a far distance, so a plugin that has taken those
+ * headers in gives the two words back. */
+#ifdef near
+#undef near
+#endif
+#ifdef far
+#undef far
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

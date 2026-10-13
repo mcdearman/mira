@@ -1283,14 +1283,8 @@ pluginMain = plugin $ \app -> do
 "#;
 
 /// Whether the Haskell tests can run. Without GHC they are skipped, loudly; where the suite
-/// must be complete (CI sets `MIRA_REQUIRE_GHC=1`) a missing GHC fails them instead. On
-/// Windows they are skipped whatever is installed.
+/// must be complete (CI sets `MIRA_REQUIRE_GHC=1`) a missing GHC fails them instead.
 fn have_ghc() -> bool {
-    // A Haskell plugin is built by a shell script, which Windows cannot run as it is.
-    if cfg!(windows) {
-        eprintln!("skipped: Haskell plugins are not yet built on Windows");
-        return false;
-    }
     if Command::new("ghc").arg("--version").output().is_ok() {
         return true;
     }
@@ -1302,16 +1296,25 @@ fn have_ghc() -> bool {
     false
 }
 
+/// Runs the script that builds a Haskell plugin. Windows cannot run a shell script itself,
+/// so there it is handed to `sh` (Git's), with the paths written the way that reads them.
+fn haskell_build(name: &str, source: &Path, out: &Path) -> std::process::Output {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("bindings/haskell/build-plugin.sh");
+    let written = |path: &Path| path.to_string_lossy().replace('\\', "/");
+    let mut build = if cfg!(windows) {
+        let mut sh = Command::new("sh");
+        sh.arg(written(&script));
+        sh
+    } else {
+        Command::new(&script)
+    };
+    build.arg(name).arg(written(source)).arg(written(out)).output().expect("the Haskell build script could not be run (on Windows it needs `sh`, which Git brings)")
+}
+
 fn build_haskell(workspace: &Workspace, step: &str) -> PathBuf {
     let source = workspace.dir.join("Stepper.hs");
     std::fs::write(&source, HASKELL.replace("STEP", step)).unwrap();
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("bindings/haskell/build-plugin.sh");
-    let output = Command::new(script)
-        .arg("stepper")
-        .arg(&source)
-        .arg(&workspace.dir)
-        .output()
-        .unwrap();
+    let output = haskell_build("stepper", &source, &workspace.dir);
     assert!(
         output.status.success(),
         "building the Haskell plugin failed:\n{}",
@@ -1442,12 +1445,7 @@ fn the_haskell_game_plays() {
     }
     let workspace = Workspace::new("chase");
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let output = Command::new(root.join("bindings/haskell/build-plugin.sh"))
-        .arg("chase")
-        .arg(root.join("plugins/chase/Chase.hs"))
-        .arg(&workspace.dir)
-        .output()
-        .unwrap();
+    let output = haskell_build("chase", &root.join("plugins/chase/Chase.hs"), &workspace.dir);
     assert!(
         output.status.success(),
         "building the game failed:\n{}",
@@ -1570,14 +1568,7 @@ fn two_haskell_plugins_can_load_at_the_same_moment() {
                 .replace("STEP", "1")
                 .replace("hs.Frames", &format!("{name}.Frames"));
             std::fs::write(&source, module).unwrap();
-            let script =
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("bindings/haskell/build-plugin.sh");
-            let output = Command::new(script)
-                .arg(name)
-                .arg(&source)
-                .arg(&workspace.dir)
-                .output()
-                .unwrap();
+            let output = haskell_build(name, &source, &workspace.dir);
             assert!(
                 output.status.success(),
                 "{}",
