@@ -355,7 +355,9 @@ dying in any order; the timer is right in every case because no code ever sets i
       [PERFORMANCE.md](PERFORMANCE.md))
 - [ ] Culling against a depth pyramid as well, so that what is hidden behind other things is
       not drawn; a pipeline's draws as one multi-draw
-- [ ] Visibility buffer or deferred shading, replacing forward + MSAA
+- [x] Multisampling made a choice (`Multisampling`), for scenes whose edges the blend over
+      time smooths well enough (see [PERFORMANCE.md](PERFORMANCE.md))
+- [ ] Visibility buffer or deferred shading, so that each pixel is shaded once
 - [x] Point and spot lights, clustered: sorted each frame into cells of the view, so a
       surface goes through only the lights that reach it (see [LIGHTS.md](LIGHTS.md))
 - [x] Shadows for lights with a place: sixteen maps, one to a spot light and six to a point

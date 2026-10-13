@@ -12,10 +12,18 @@ struct Taa {
 
 @group(0) @binding(0) var current: texture_2d<f32>;
 @group(0) @binding(1) var history: texture_2d<f32>;
+#ifdef MSAA
 @group(0) @binding(2) var depth: texture_depth_multisampled_2d;
+#else
+@group(0) @binding(2) var depth: texture_depth_2d;
+#endif
 @group(0) @binding(3) var linear_sampler: sampler;
 @group(0) @binding(4) var<uniform> taa: Taa;
+#ifdef MSAA
 @group(0) @binding(5) var moved: texture_multisampled_2d<f32>;
+#else
+@group(0) @binding(5) var moved: texture_2d<f32>;
+#endif
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {

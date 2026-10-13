@@ -271,5 +271,11 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) front: bool) -> @location(0)
     if alpha <= 0.0 {
         discard;
     }
+#ifndef MSAA
+    // With one sample a pixel there is no covering a part of it: cut out or not.
+    if cutoff > 0.0 && alpha < 0.5 {
+        discard;
+    }
+#endif
     return vec4<f32>(color, alpha);
 }

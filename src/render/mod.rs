@@ -36,8 +36,9 @@ pub use debug_lines::DebugLines;
 pub use environment::{direction_to_uv, uv_to_direction, Environment};
 pub use gltf_scene::{GltfPart, GltfScene, Imported};
 pub use gpu::{
+    samples,
     main_depth_state, main_multisample, Gpu, DEPTH_CLEAR, DEPTH_COMPARE, DEPTH_FORMAT,
-    HDR_FORMAT, MSAA_SAMPLES,
+    HDR_FORMAT, Multisampling, MSAA_SAMPLES,
 };
 pub use compose::{ComposeError, ShaderLibrary};
 use card_clock::CardClock;
@@ -520,6 +521,14 @@ struct SkyRenderer {
 
 fn init_gpu(world: &mut World) {
     let rt_settings = world.get_resource::<RayTracingSettings>().copied().unwrap_or_default();
+    // Whether the scene is multisampled is settled before anything is made to draw it.
+    let multisampled = match std::env::var("MIRA_MSAA").as_deref() {
+        Ok("0") => false,
+        Ok(_) => true,
+        Err(_) => world.get_resource::<Multisampling>().copied().unwrap_or_default().0,
+    };
+    gpu::set_multisampling(multisampled);
+    scene_targets(world.resource_mut::<RenderGraph>());
     let gpu = match world.remove_resource::<Host>() {
         // A host's device, and no window: frames go to a texture the host shows.
         Some(host) => Gpu::hosted(host.device, host.queue, host.format, host.width, host.height),
@@ -1062,6 +1071,22 @@ fn render(world: &mut World) {
     world.insert_resource(clock);
 }
 
+/// Has the graph make what the scene is drawn into: at the scene's own size, which the blend
+/// over time makes into a picture of the frame's size after, and with as many samples a
+/// pixel as the scene is drawn with. Where it is one, the scene is drawn straight into `HDR`
+/// and there is nothing to resolve.
+fn scene_targets(graph: &mut RenderGraph) {
+    use slots::*;
+    let samples = gpu::samples();
+    graph
+        .target(DEPTH, TargetDesc::new(DEPTH_FORMAT).samples(samples).of_scene())
+        .target(HDR, TargetDesc::new(HDR_FORMAT).of_scene())
+        .target(MOTION, TargetDesc::new(gpu::MOTION_FORMAT).samples(samples).of_scene());
+    if samples > 1 {
+        graph.target(HDR_MSAA, TargetDesc::new(HDR_FORMAT).samples(samples).usage(wgpu::TextureUsages::RENDER_ATTACHMENT).of_scene());
+    }
+}
+
 /// The engine's own passes, as the frame starts out. A plugin adds to them, or replaces one
 /// by adding a pass of its name.
 fn frame_graph() -> RenderGraph {
@@ -1069,12 +1094,8 @@ fn frame_graph() -> RenderGraph {
     let mut graph = RenderGraph::default();
     graph
         // Depth is read after the main pass, by the light shafts and the blend over time.
-        // The scene is drawn at its own size, and made into a picture of the frame's size
-        // after: by the blend over time where there is one.
-        .target(DEPTH, TargetDesc::new(DEPTH_FORMAT).samples(MSAA_SAMPLES).of_scene())
-        .target(HDR_MSAA, TargetDesc::new(HDR_FORMAT).samples(MSAA_SAMPLES).usage(wgpu::TextureUsages::RENDER_ATTACHMENT).of_scene())
-        .target(HDR, TargetDesc::new(HDR_FORMAT).of_scene())
-        .target(MOTION, TargetDesc::new(gpu::MOTION_FORMAT).samples(MSAA_SAMPLES).of_scene())
+        // The targets the scene is drawn into are made once the renderer starts, when it is
+        // known how many samples a pixel of them has: see `scene_targets`.
         .add(Pass::new("skinning", pose_skins).writes(&[SKINNED]))
         .add(Pass::new("ray tracing", build_traced_scene).reads(&[SKINNED]).writes(&[TRACED_SCENE]))
         .add(Pass::new("culling", cull_scene).writes(&[SEEN]))
@@ -1153,16 +1174,20 @@ fn draw_shadows(world: &mut World, cx: &mut PassContext) {
 
 /// The scene itself: everything opaque, the sky, then what is blended over them.
 fn draw_scene(world: &mut World, cx: &mut PassContext) {
-    let (colour, resolved, depth) = (cx.view(slots::HDR_MSAA).clone(), cx.view(slots::HDR).clone(), cx.view(slots::DEPTH).clone());
+    // With several samples a pixel the scene is drawn into a target of its own and resolved
+    // into `HDR`; with one, straight into `HDR`.
+    let multisampled = gpu::samples() > 1;
+    let (resolved, depth) = (cx.view(slots::HDR).clone(), cx.view(slots::DEPTH).clone());
+    let colour = if multisampled { cx.view(slots::HDR_MSAA).clone() } else { resolved.clone() };
     let mut pass = cx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("main pass"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view: &colour,
-            resolve_target: Some(&resolved),
+            resolve_target: multisampled.then_some(&resolved),
             depth_slice: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                store: wgpu::StoreOp::Discard,
+                store: if multisampled { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store },
             },
         })],
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {

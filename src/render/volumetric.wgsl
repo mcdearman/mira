@@ -8,7 +8,11 @@ struct Shafts {
     more: vec4<f32>,
 };
 
+#ifdef MSAA
 @group(1) @binding(0) var scene_depth: texture_depth_multisampled_2d;
+#else
+@group(1) @binding(0) var scene_depth: texture_depth_2d;
+#endif
 @group(1) @binding(1) var<uniform> shafts: Shafts;
 
 @vertex

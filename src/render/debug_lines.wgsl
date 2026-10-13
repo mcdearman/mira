@@ -8,7 +8,11 @@ struct View {
 }
 
 @group(0) @binding(0) var<uniform> view: View;
+#ifdef MSAA
 @group(0) @binding(1) var depth: texture_depth_multisampled_2d;
+#else
+@group(0) @binding(1) var depth: texture_depth_2d;
+#endif
 
 struct Out {
     @builtin(position) position: vec4<f32>,

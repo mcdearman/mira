@@ -30,6 +30,9 @@ use super::Shader;
 pub const PBR: &str = "mira::pbr";
 /// Defined for shaders built on a device that traces rays.
 pub const RAY_TRACING: &str = "RAY_TRACING";
+/// Defined where the scene is drawn with several samples a pixel, and its depth and what
+/// moved are read as such.
+pub const MSAA: &str = "MSAA";
 
 /// Where a module's text comes from.
 #[derive(Clone)]
