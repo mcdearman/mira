@@ -397,7 +397,8 @@ dying in any order; the timer is right in every case because no code ever sets i
 - [ ] Physics: convex hulls, continuous collision, ragdolls; decide here whether to keep the
       custom solver or adopt Rapier
 - [ ] Navigation: navmesh for meshes, grid pathfinding for voxels; behaviour trees
-- [ ] Save games, built on Phase 1
+- [x] Save games, built on Phase 1: the world saved under a name and loaded in any run (see
+      [SAVES.md](SAVES.md))
 - [ ] Voxels: save edited chunks to region files; player collision against blocks
 
 **Exit test:** ship a small complete game (menu, saves, sound, enemies that find their way)
