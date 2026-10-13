@@ -7,7 +7,12 @@
 //! cargo run --bin mira-debug -- watch           # in another terminal: the signal graph, live
 //! cargo run --bin mira-debug -- signal_set name=win_after value=20
 //! cargo run --bin mira-debug -- signal_force name=blue.contesting value=false
+//! cargo run --example sacred_sites -- --rules sites.rules   # the rules kept in a file as text
 //! ```
+//!
+//! With `--rules`, the file and the running rules are one thing seen two ways: it is written
+//! if it is not there, saving it changes the game at once, and what is changed from outside
+//! (or rewired in a panel) is written back into it, comments and all.
 //!
 //! Red holds both sites, and wins when its clock reaches `win_after`. The clock stops while a
 //! blue unit stands on any site red holds. Two blue scouts wander on and off the sites; no
@@ -24,6 +29,10 @@ mod game;
 fn main() -> anyhow::Result<()> {
     let headless = std::env::args().any(|arg| arg == "--headless");
     let mut app = game::build(headless)?;
+    let mut args = std::env::args();
+    if let Some(rules) = args.by_ref().skip_while(|arg| arg != "--rules").nth(1) {
+        app.signal_rules(rules);
+    }
     if !headless {
         return app.run();
     }

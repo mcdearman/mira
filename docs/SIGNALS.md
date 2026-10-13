@@ -188,9 +188,65 @@ path=rules.json` and `signals_load`.
 ]}
 ```
 
+## Rules as text
+
+The rules can also be kept as text, a line each, and the text and the graph are then one
+thing seen two ways:
+
+```text
+-- Red wins by holding every site for a minute without a break.
+win_after = 60
+blue.calm = not blue.contesting
+red.clock = timer(red.holds_all and blue.calm, not red.holds_all)
+red.wins = red.clock >= win_after
+```
+
+```rust
+app.signal_rules("sites.rules");
+```
+
+From then on the file and the running graph are kept the same. Save the file and the game
+follows at once, keeping what its clocks have timed. Rewire a node in the panel, or change
+something over the debug connection, and the file follows: only the lines whose rules
+changed are written again, and comments, blank lines and every other line stay exactly as
+they were typed. If the file is not there it is written from the rules the game's code
+defines. Try it with `cargo run --example sacred_sites -- --rules sites.rules` and the file
+open in an editor beside it.
+
+A file saved half typed changes nothing: the graph stays as it was, the mistake is logged
+with its line and column (and is in `RulesFile::problem`), and nothing is written over the
+file until it can be read again.
+
+| Written | Is |
+|---|---|
+| `a and b and c`, `a or b`, `not a` | true when all are, when any is, when it is not |
+| `a < b`, `<=`, `==`, `>=`, `>` | a comparison |
+| `a + b + 3` | the sum |
+| `if a then b else c` | `b` while `a` is true, otherwise `c` |
+| `timer(a)`, `timer(a, reset)` | the seconds `a` has been true; a true `reset` sets it back to nought |
+| `held(a, 3)` | true once `a` has been true for 3 seconds without a break |
+| `count(a, b, c)` | how many are true |
+| `600`, `true` | a number, a truth |
+| `-- …` | a comment, to the end of the line |
+
+A name is letters, digits, `_`, `.` and `#`; any other is written between backticks. A rule
+is one line. An expression of more than one operation is several nodes in the graph, the
+inner ones named after the rule (`red.clock#1`, …); they are written inside their rule's
+line, and a node named that way that something else comes to read gets a line of its own.
+Sources are the game's code and have no line: they are only named.
+
+In code, `Rules::read(text)` reads a text, `rules.apply(&mut signals)` makes the graph what it
+says, `rules.follow(&signals)` makes it say what the graph is, and `Expr::read` and
+`to_text` do one expression.
+
+Keep a rule in one place. A plugin that defines a rule every frame will put it back as the
+plugin has it, whatever the file or the panel made of it.
+
 ## What isn't here yet
 
-- A graphical viewer, with the graph laid out and edited by hand: a panel of the editor.
+- The text beside the graph in the panel itself: for now it is a file, open in any editor.
+- Where the panel's boxes sit, kept with the text (it is kept with the JSON rules).
+- Rules over more than one line.
 - Sources written in a plugin as functions the engine calls (a plugin sets its facts from a
   system instead).
 - Signals that carry more than a truth or a number (an entity, a set of entities).

@@ -24,6 +24,7 @@ pub mod save;
 pub mod remote;
 pub mod render;
 pub mod signal;
+pub mod signal_rules;
 pub mod state;
 pub mod tasks;
 pub mod time;
