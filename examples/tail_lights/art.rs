@@ -66,47 +66,85 @@ const INK: [u8; 3] = [24, 18, 16];
 const BLOOD: [u8; 3] = [150, 22, 22];
 const BLOOD_DARK: [u8; 3] = [96, 12, 16];
 
-const SQUIRREL: &[(char, [u8; 3])] = &[('H', FUR), ('B', FUR), ('p', FUR_DARK), ('e', FUR_DARK), ('T', TAIL), ('t', CREAM), ('k', INK), ('n', [70, 40, 30])];
+/// The squirrel's colours: an outline, three browns of fur, the cream of its cheeks, the
+/// tail and its lighter middle, the pink inside an ear, an eye and the light in it, a nose.
+const SQUIRREL: &[(char, [u8; 3])] = &[
+    ('o', [64, 34, 18]),
+    ('F', FUR),
+    ('f', [184, 112, 56]),
+    ('d', FUR_DARK),
+    ('c', CREAM),
+    ('T', TAIL),
+    ('t', [230, 166, 88]),
+    ('p', [214, 132, 122]),
+    ('k', INK),
+    ('w', [244, 244, 236]),
+    ('n', [58, 30, 24]),
+];
 
-/// The squirrel from above, nose to the top: sitting, and stretched out in a hop.
+/// A picture drawn as its left half, the right being the same turned about.
+fn both_sides(left: &[&str]) -> Image {
+    let rows: Vec<String> = left.iter().map(|half| half.chars().chain(half.chars().rev()).collect()).collect();
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    picture(&rows, SQUIRREL)
+}
+
+/// The squirrel from above, nose to the top: sitting, and stretched out in a hop. It is
+/// drawn finer than the ground it stands on, twenty-four pixels square.
 pub fn squirrel() -> [Image; 2] {
     let sitting = [
-        "................",
-        "......e..e......",
-        ".....eHnnHe.....",
-        ".....HkHHkH.....",
-        ".....HHHHHH.....",
-        "......HHHH......",
-        "....pBBBBBBp....",
-        "....BBBBBBBB....",
-        "....BBBBBBBB....",
-        "....pBBBBBBp....",
-        ".....BBBBBB.....",
-        "......TTTT......",
-        ".....TTtTTT.....",
-        ".....TTttTT.....",
-        "......TTTT......",
-        "................",
+        "............",
+        "........oo..",
+        ".......opdoo",
+        ".......odFFF",
+        "......oFFFFF",
+        "......oFkwFf",
+        "......oFkkFf",
+        "......ocFFfn",
+        ".......occfn",
+        ".....oo.oFFF",
+        "....odFoFFff",
+        "....oFFFFfff",
+        "....oFFFFfff",
+        "...odFFFFFff",
+        "...odFFFFFFF",
+        "...ooddFFFdd",
+        "....oooTTTTT",
+        "....oTTTTttt",
+        "...oTdTTtttt",
+        "...oTTTttttt",
+        "...oTTdTtttt",
+        "....oTTTTttt",
+        ".....ooTTTTt",
+        ".......ooooo",
     ];
     let hopping = [
-        "......e..e......",
-        ".....eHnnHe.....",
-        ".....HkHHkH.....",
-        "...p.HHHHHH.p...",
-        "...pp.HHHH.pp...",
-        "....pBBBBBBp....",
-        ".....BBBBBB.....",
-        ".....BBBBBB.....",
-        "....pBBBBBBp....",
-        "...pp.BBBB.pp...",
-        "...p..TTTT..p...",
-        "......TTTT......",
-        "......TtTT......",
-        "......TttT......",
-        "......TTTT......",
-        ".......TT.......",
+        "........oo..",
+        ".......opdoo",
+        ".......odFFF",
+        "......oFFFFF",
+        "......oFkwFf",
+        "......oFkkFf",
+        "...oo.ocFFfn",
+        "...odo.occfn",
+        "....odFoFFFF",
+        ".....oFFFfff",
+        ".....oFFFfff",
+        ".....oFFFfff",
+        "....odFFFFff",
+        "...odFooFFFF",
+        "...oFo.oFFdd",
+        "...oo..oTTTT",
+        "......oTTttt",
+        "......oTdttt",
+        "......oTTttt",
+        "......oTTttt",
+        "......oTdTtt",
+        ".......oTTtt",
+        ".......ooTTt",
+        ".........ooo",
     ];
-    [picture(&sitting, SQUIRREL), picture(&hopping, SQUIRREL)]
+    [both_sides(&sitting), both_sides(&hopping)]
 }
 
 /// What is left of it, a moment at a time: the splat spreading, and then lying there.
