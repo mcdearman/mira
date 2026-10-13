@@ -32,9 +32,19 @@ pub struct Image {
     /// The picture as the graphics card will hold it, when that was made ahead of time.
     /// It is what gets drawn: after changing `data`, set this to `None`.
     pub processed: Option<std::sync::Arc<Processed>>,
+    /// Drawn with its pixels square and sharp-edged however large it is shown, where a
+    /// picture is otherwise smoothed between them: for pixel art. Read where the picture is
+    /// a material's colour.
+    pub pixelated: bool,
 }
 
 impl Image {
+    /// The picture, to be drawn with its pixels square and sharp: see [`pixelated`](Self::pixelated).
+    pub fn pixelated(mut self) -> Self {
+        self.pixelated = true;
+        self
+    }
+
     /// Decodes a PNG or JPEG.
     pub fn from_bytes(bytes: &[u8], srgb: bool) -> anyhow::Result<Self> {
         let image = image::load_from_memory(bytes)
@@ -51,6 +61,7 @@ impl Image {
             data,
             srgb,
             processed: None,
+            pixelated: false,
         }
     }
 
@@ -62,6 +73,7 @@ impl Image {
             data: Vec::new(),
             srgb: processed.format.is_srgb(),
             processed: Some(std::sync::Arc::new(processed)),
+            pixelated: false,
         }
     }
 
@@ -303,6 +315,14 @@ mod tests {
         assert!((kept.average() - image.average()).length() < 1e-6);
         // Sides that are not multiples of four can't be held in blocks.
         assert!(Image::from_rgba(6, 4, vec![0; 96], false).process().is_none());
+    }
+
+    #[test]
+    fn a_picture_is_smoothed_unless_it_asks_to_be_sharp() {
+        let plain = Image::from_rgba(2, 2, vec![255; 16], true);
+        assert!(!plain.pixelated && !Image::solid([0, 0, 0, 255], true).pixelated);
+        let sharp = plain.clone().pixelated();
+        assert!(sharp.pixelated && sharp.data == plain.data);
     }
 
     #[test]

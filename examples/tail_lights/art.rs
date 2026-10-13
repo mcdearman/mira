@@ -1,36 +1,29 @@
 //! The game's pictures, drawn here a pixel at a time, and its sounds, made from nothing.
 //!
 //! A picture is rows of letters, each letter a colour and a dot nothing at all. It is made
-//! into an image with every pixel several texels wide, so that it stays sharp-edged however
-//! the card smooths what it draws.
+//! into an image as small as it is drawn here, and marked to be shown with its pixels sharp
+//! however large it is on the screen.
 
 use mira::prelude::*;
-
-/// How many texels wide a pixel of a picture is made.
-const TEXELS: u32 = 8;
 
 /// Makes a picture from its rows. `colours` says what each letter is; a dot is see-through.
 pub fn picture(rows: &[&str], colours: &[(char, [u8; 3])]) -> Image {
     let (wide, high) = (rows[0].len() as u32, rows.len() as u32);
-    let mut data = vec![0u8; (wide * TEXELS * high * TEXELS * 4) as usize];
-    for (y, row) in rows.iter().enumerate() {
+    let mut data = Vec::with_capacity((wide * high * 4) as usize);
+    for row in rows {
         assert_eq!(row.len() as u32, wide, "every row of a picture is as wide as the first: {row}");
-        for (x, letter) in row.chars().enumerate() {
-            let Some((_, [r, g, b])) = colours.iter().find(|(known, _)| *known == letter) else {
-                assert_eq!(letter, '.', "a letter with no colour");
-                continue;
-            };
-            for ty in 0..TEXELS {
-                for tx in 0..TEXELS {
-                    let at = (((y as u32 * TEXELS + ty) * wide * TEXELS + x as u32 * TEXELS + tx) * 4) as usize;
-                    data[at..at + 4].copy_from_slice(&[*r, *g, *b, 255]);
+        for letter in row.chars() {
+            match colours.iter().find(|(known, _)| *known == letter) {
+                Some((_, [r, g, b])) => data.extend([*r, *g, *b, 255]),
+                None => {
+                    assert_eq!(letter, '.', "a letter with no colour");
+                    data.extend([0, 0, 0, 0]);
                 }
             }
         }
     }
-    Image::from_rgba(wide * TEXELS, high * TEXELS, data, true)
+    Image::from_rgba(wide, high, data, true).pixelated()
 }
-
 /// A number from nought up to one that is always the same for the same two numbers: what
 /// scatters the specks on a tile.
 fn scatter(a: u32, b: u32) -> f32 {
