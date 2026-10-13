@@ -60,7 +60,8 @@ A swipe or a tap is over in the frame it happens, so it presses its action for t
 
 `touches.mouse_too = true` has the left mouse button stand for a finger, to try at a desk
 a game made for a phone. A test or an agent draws a finger across the screen with
-`InjectedInput::swipe(from, to, frames)`.
+`InjectedInput::swipe(from, to, frames)`, or from outside the game with
+`mira-debug input touch=[300,500] touch_to=[300,380] frames=3` (leave `touch_to` out for a tap).
 
 ## Letting the player choose
 

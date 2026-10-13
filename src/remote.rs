@@ -701,13 +701,29 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 injected.type_text(text.clone());
                 played += 1;
             }
+            // A finger: down at one place, drawn to another over the frames, and lifted.
+            if let Some(from) = pair("touch")? {
+                let to = pair("touch_to")?.unwrap_or(from);
+                injected.swipe(from, to, frames);
+                played += 1;
+            }
             if played == 0 {
                 return Err(
-                    "give a `key`, a `mouse_button`, `mouse_motion`, `mouse_position`, `mouse_scroll` or `text`"
+                    "give a `key`, a `mouse_button`, `mouse_motion`, `mouse_position`, `mouse_scroll`, `text` or `touch`"
                         .to_owned(),
                 );
             }
             Ok(Value::Int(played))
+        }
+        "window" => {
+            // What a phone does to an app, to be tried anywhere: its window taken as it is
+            // put away, and another given as it is brought back.
+            match text(request, "to")? {
+                "away" => crate::window::put_away(&mut app.world),
+                "back" => crate::window::brought_back(&mut app.world),
+                other => return Err(format!("`to` is away or back, not `{other}`")),
+            }
+            done
         }
         "time_scale" => {
             let scale = number(request, "scale")? as f32;
@@ -1659,6 +1675,30 @@ mod tests {
         );
         let answer = json::parse(&respond(&mut app, r#"{"id": 12, "cmd": "status"}"#)).unwrap();
         assert_eq!(answer.field("id"), Some(&Value::Int(12)));
+    }
+
+    #[test]
+    fn a_finger_is_played_in_from_outside() {
+        use crate::{actions::Actions, touch::Swipe};
+        let mut app = app();
+        app.add_plugins(crate::input::InputPlugin);
+        app.world.resource_mut::<Actions>().bind("up", Swipe::Up).bind("fire", crate::actions::Binding::Tap);
+        // Drawn up the screen over three frames: "up" is pressed the frame it has gone far
+        // enough, and no longer.
+        ask(&mut app, "{'cmd': 'input', 'touch': [300, 500], 'touch_to': [300, 380], 'frames': 3}");
+        let mut pressed = Vec::new();
+        for _ in 0..5 {
+            app.update();
+            pressed.push(app.world.resource::<Actions>().just_pressed("up"));
+        }
+        assert_eq!(pressed.iter().filter(|pressed| **pressed).count(), 1, "{pressed:?}");
+        // Put down and lifted where it was: a tap.
+        ask(&mut app, "{'cmd': 'input', 'touch': [40, 40]}");
+        app.update();
+        assert!(!app.world.resource::<Actions>().just_pressed("fire"));
+        app.update();
+        assert!(app.world.resource::<Actions>().just_pressed("fire"));
+        assert!(refused(&mut app, "{'cmd': 'input', 'touch': 4}").contains("two numbers"));
     }
 
     #[test]

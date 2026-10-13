@@ -79,6 +79,10 @@ pub struct Gpu {
     /// The window's surface. None when a host owns the device and shows the frames itself:
     /// see [`Gpu::hosted`].
     pub surface: Option<wgpu::Surface<'static>>,
+    /// What a surface is made from, kept for making another: a phone takes an app's window
+    /// when it is put away and gives it a new one when it is brought back. None when a
+    /// host owns the device.
+    instance: Option<wgpu::Instance>,
     pub config: wgpu::SurfaceConfiguration,
     /// Hardware ray queries are available and enabled.
     pub ray_tracing: bool,
@@ -122,20 +126,20 @@ impl Gpu {
             if let Ok(surface) = surface {
                 if let Some(adapter) = pick(&instance, &surface) {
                     if adapter.features().contains(rt_features) {
-                        chosen = Some((surface, adapter, true));
+                        chosen = Some((instance, surface, adapter, true));
                     } else {
                         log::info!("{:?} can't trace rays; using shadow maps only", adapter.get_info().name);
                     }
                 }
             }
         }
-        let (surface, adapter, traced) = match chosen {
+        let (instance, surface, adapter, traced) = match chosen {
             Some(c) => c,
             None => {
                 let (instance, surface) = open(wgpu::Backends::all());
                 let surface = surface?;
                 let adapter = pick(&instance, &surface).context("no compatible GPU adapter")?;
-                (surface, adapter, false)
+                (instance, surface, adapter, false)
             }
         };
         let info = adapter.get_info();
@@ -222,6 +226,7 @@ impl Gpu {
             device,
             queue,
             surface: Some(surface),
+            instance: Some(instance),
             config,
             ray_tracing: traced,
             shaders: ShaderLibrary::engine(),
@@ -255,6 +260,7 @@ impl Gpu {
             device,
             queue,
             surface: None,
+            instance: None,
             config,
             ray_tracing: false,
             shaders: ShaderLibrary::engine(),
@@ -274,6 +280,30 @@ impl Gpu {
         if let Some(surface) = &self.surface {
             surface.configure(&self.device, &self.config);
         }
+    }
+
+    /// Lets go of the window's surface, as must be done when a phone puts the app away and
+    /// takes its window. Frames are drawn off screen until another is taken up.
+    pub fn let_go_of_surface(&mut self) {
+        self.surface = None;
+    }
+
+    /// Takes up a surface for the window, as when the app is brought back and has a window
+    /// again. Only the surface is made anew: the device, and all that is on it, is as it was.
+    pub fn take_up_surface(&mut self, window: Arc<winit::window::Window>) -> anyhow::Result<()> {
+        let Some(instance) = &self.instance else {
+            return Ok(());
+        };
+        // A window has one surface at a time.
+        self.surface = None;
+        let size = window.inner_size();
+        let surface = instance.create_surface(window)?;
+        if size.width > 0 && size.height > 0 {
+            (self.config.width, self.config.height) = (size.width, size.height);
+        }
+        surface.configure(&self.device, &self.config);
+        self.surface = Some(surface);
+        Ok(())
     }
 
     pub fn aspect_ratio(&self) -> f32 {

@@ -133,6 +133,8 @@ struct Runner {
     /// loop itself, at about sixty a second.
     hidden: bool,
     last_frame: Option<std::time::Instant>,
+    /// The app is put away, and has no window to draw in until it is brought back.
+    away: bool,
 }
 
 /// The activity a game on Android was started in, which its window and its files come from.
@@ -175,6 +177,28 @@ fn event_loop() -> anyhow::Result<EventLoop<()>> {
     Ok(EventLoop::new()?)
 }
 
+/// The app was put away: a phone takes its window, and what is drawn on must be let go of
+/// before it goes. The game is not run while it is away.
+pub(crate) fn put_away(world: &mut crate::ecs::World) {
+    if let Some(gpu) = world.get_resource_mut::<crate::render::Gpu>() {
+        gpu.let_go_of_surface();
+        log::info!("the window is put away");
+    }
+}
+
+/// The app was brought back, with a window again: what is drawn on is taken up anew.
+pub(crate) fn brought_back(world: &mut crate::ecs::World) {
+    let Some(handle) = world.get_resource::<Window>().map(|window| window.handle.clone()) else {
+        return;
+    };
+    if let Some(gpu) = world.get_resource_mut::<crate::render::Gpu>() {
+        match gpu.take_up_surface(handle) {
+            Ok(()) => log::info!("the window is back"),
+            Err(err) => log::error!("no surface for the window that came back: {err:#}"),
+        }
+    }
+}
+
 pub(crate) fn run(app: App) -> anyhow::Result<()> {
     let event_loop = event_loop()?;
     let mut runner = Runner {
@@ -182,6 +206,7 @@ pub(crate) fn run(app: App) -> anyhow::Result<()> {
         window: None,
         hidden: false,
         last_frame: None,
+        away: false,
     };
     event_loop.run_app(&mut runner)?;
     Ok(())
@@ -202,6 +227,10 @@ impl Runner {
 impl ApplicationHandler for Runner {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
+            // Brought back after being put away, as happens on a phone.
+            if std::mem::take(&mut self.away) {
+                brought_back(&mut self.app.world);
+            }
             return;
         }
         let settings = self
@@ -238,6 +267,11 @@ impl ApplicationHandler for Runner {
         self.app.world.pin_to_main_thread::<Window>();
         self.window = Some(handle);
         self.app.startup();
+    }
+
+    fn suspended(&mut self, _: &ActiveEventLoop) {
+        self.away = true;
+        put_away(&mut self.app.world);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -337,6 +371,9 @@ impl ApplicationHandler for Runner {
         let Some(window) = &self.window else {
             return;
         };
+        if self.away {
+            return;
+        }
         if !self.hidden {
             window.request_redraw();
             return;
