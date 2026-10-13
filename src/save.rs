@@ -56,8 +56,13 @@ impl SaveGames {
     /// under the game's name: `%APPDATA%\<game>\saves` on Windows,
     /// `~/Library/Application Support/<game>/saves` on a Mac, and `$XDG_DATA_HOME` or
     /// `~/.local/share` elsewhere. Beside the program, in `saves`, where none of those can
-    /// be found.
+    /// be found. On Android they are among the app's own files, which need no name: the
+    /// system keeps each app's apart.
     pub fn for_game(game: &str) -> Self {
+        #[cfg(target_os = "android")]
+        if let Some(files) = crate::window::android_files() {
+            return Self::in_folder(files.join("saves"));
+        }
         let var = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty()).map(PathBuf::from);
         let home = if cfg!(windows) {
             var("APPDATA")
