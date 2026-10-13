@@ -28,13 +28,24 @@ use glam::Vec2;
 use crate::{
     ecs::{Res, ResMut},
     input::{key_named, ButtonInput, KeyCode, MouseButton},
+    touch::{Swipe, Touches},
 };
 
-/// A key or a mouse button: what an action can be bound to.
+/// What an action can be bound to: a key, a mouse button, or what a finger does on a
+/// screen. A swipe or a tap is over in the frame it happens: it presses its action for that
+/// frame, as a key struck and let go at once would.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Binding {
     Key(KeyCode),
     Mouse(MouseButton),
+    Swipe(Swipe),
+    Tap,
+}
+
+impl From<Swipe> for Binding {
+    fn from(way: Swipe) -> Self {
+        Self::Swipe(way)
+    }
 }
 
 impl From<KeyCode> for Binding {
@@ -61,12 +72,22 @@ impl Binding {
             Self::Mouse(MouseButton::Back) => "MouseBack".into(),
             Self::Mouse(MouseButton::Forward) => "MouseForward".into(),
             Self::Mouse(MouseButton::Other(number)) => format!("Mouse{number}"),
+            Self::Swipe(way) => format!("Swipe{way:?}"),
+            Self::Tap => "Tap".into(),
         }
     }
 
     /// The binding with that name, if there is one.
     pub fn named(name: &str) -> Option<Self> {
         let name = name.trim();
+        match name.to_ascii_lowercase().as_str() {
+            "tap" => return Some(Self::Tap),
+            "swipeup" => return Some(Self::Swipe(Swipe::Up)),
+            "swipedown" => return Some(Self::Swipe(Swipe::Down)),
+            "swipeleft" => return Some(Self::Swipe(Swipe::Left)),
+            "swiperight" => return Some(Self::Swipe(Swipe::Right)),
+            _ => {}
+        }
         if let Some(button) = name.strip_prefix("Mouse").or_else(|| name.strip_prefix("mouse")) {
             return Some(Self::Mouse(match button.to_ascii_lowercase().as_str() {
                 "left" => MouseButton::Left,
@@ -80,10 +101,12 @@ impl Binding {
         key_named(name).map(Self::Key)
     }
 
-    fn down(&self, keys: &ButtonInput<KeyCode>, buttons: &ButtonInput<MouseButton>) -> bool {
+    fn down(&self, keys: &ButtonInput<KeyCode>, buttons: &ButtonInput<MouseButton>, touches: Option<&Touches>) -> bool {
         match self {
             Self::Key(key) => keys.pressed(*key),
             Self::Mouse(button) => buttons.pressed(*button),
+            Self::Swipe(way) => touches.is_some_and(|touches| touches.swiped() == Some(*way)),
+            Self::Tap => touches.is_some_and(|touches| touches.tapped().is_some()),
         }
     }
 }
@@ -190,6 +213,11 @@ impl Actions {
 
     /// Brings what is pressed up to date with the keys and buttons, once a frame.
     pub fn update(&mut self, keys: &ButtonInput<KeyCode>, buttons: &ButtonInput<MouseButton>) {
+        self.update_with(keys, buttons, None);
+    }
+
+    /// The same, with what fingers have done on a screen as well.
+    pub fn update_with(&mut self, keys: &ButtonInput<KeyCode>, buttons: &ButtonInput<MouseButton>, touches: Option<&Touches>) {
         self.went_down.clear();
         self.went_up.clear();
         if let Some(action) = self.hearing.clone() {
@@ -205,7 +233,7 @@ impl Actions {
             return;
         }
         for (action, bindings) in &self.buttons {
-            let now = bindings.iter().any(|binding| binding.down(keys, buttons));
+            let now = bindings.iter().any(|binding| binding.down(keys, buttons, touches));
             match (now, self.down.contains(action)) {
                 (true, false) => {
                     self.down.insert(action.clone());
@@ -226,7 +254,7 @@ impl Actions {
         }
         self.values.clear();
         for (axis, pairs) in &self.axes {
-            let pull: f32 = pairs.iter().map(|(less, more)| more.down(keys, buttons) as i32 as f32 - less.down(keys, buttons) as i32 as f32).sum();
+            let pull: f32 = pairs.iter().map(|(less, more)| more.down(keys, buttons, touches) as i32 as f32 - less.down(keys, buttons, touches) as i32 as f32).sum();
             self.values.insert(axis.clone(), pull.clamp(-1.0, 1.0));
         }
     }
@@ -304,8 +332,8 @@ impl Actions {
 
 /// Brings the actions up to date with the frame's keys and buttons, before the game reads
 /// them.
-pub(crate) fn update_actions(mut actions: ResMut<Actions>, keys: Res<ButtonInput<KeyCode>>, buttons: Res<ButtonInput<MouseButton>>) {
-    actions.update(&keys, &buttons);
+pub(crate) fn update_actions(mut actions: ResMut<Actions>, keys: Res<ButtonInput<KeyCode>>, buttons: Res<ButtonInput<MouseButton>>, touches: Option<Res<Touches>>) {
+    actions.update_with(&keys, &buttons, touches.as_deref());
 }
 
 #[cfg(test)]
@@ -415,6 +443,42 @@ mod tests {
         // Pressed once, held for three frames and let go: one jump.
         assert_eq!(app.world.resource::<Jumps>().0, 1);
         assert!(!app.world.resource::<Actions>().pressed("jump"));
+    }
+
+    #[test]
+    fn a_finger_presses_an_action_as_a_key_does() {
+        use crate::app::{App, Stage};
+        #[derive(Default)]
+        struct Did(Vec<&'static str>);
+        let mut app = App::new();
+        app.add_plugins(crate::time::TimePlugin).add_plugins(crate::input::InputPlugin);
+        app.init_resource::<Did>().add_systems(Stage::Update, |actions: Res<Actions>, mut did: ResMut<Did>| {
+            did.0.extend(["up", "left", "fire"].into_iter().filter(|action| actions.just_pressed(action)));
+        });
+        app.world.resource_mut::<Actions>().bind("up", KeyCode::KeyW).bind("up", Swipe::Up).bind("left", Swipe::Left).bind("fire", Binding::Tap);
+        // A finger drawn up the screen over three frames, then one put down and lifted, then
+        // one drawn to the left.
+        app.world.resource_mut::<crate::input::InjectedInput>().swipe(Vec2::new(300.0, 500.0), Vec2::new(305.0, 380.0), 3);
+        for _ in 0..5 {
+            app.update();
+        }
+        app.world.resource_mut::<crate::input::InjectedInput>().swipe(Vec2::new(100.0, 100.0), Vec2::new(100.0, 100.0), 1);
+        for _ in 0..3 {
+            app.update();
+        }
+        app.world.resource_mut::<crate::input::InjectedInput>().swipe(Vec2::new(400.0, 300.0), Vec2::new(300.0, 310.0), 2);
+        for _ in 0..4 {
+            app.update();
+        }
+        // Each pressed its action once, for the frame it happened, and no longer.
+        assert_eq!(app.world.resource::<Did>().0, ["up", "fire", "left"]);
+        assert!(!app.world.resource::<Actions>().pressed("up"));
+        // And they are written down and read back as keys are.
+        let text = app.world.resource::<Actions>().to_text();
+        assert_eq!(text, "fire = Tap\nleft = SwipeLeft\nup = KeyW, SwipeUp\n");
+        let mut read = Actions::default();
+        read.read_text(&text).unwrap();
+        assert_eq!(read.to_text(), text);
     }
 
     #[test]

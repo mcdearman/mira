@@ -5,7 +5,7 @@ pub use winit::{event::MouseButton, keyboard::KeyCode};
 
 use crate::{
     app::{App, Plugin, Stage},
-    ecs::{ResMut, World},
+    ecs::{IntoSystems, ResMut, World},
 };
 
 /// Pressed state for keys or mouse buttons. `just_*` sets are cleared at the end of each frame.
@@ -94,9 +94,11 @@ fn clear_input(
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut buttons: ResMut<ButtonInput<MouseButton>>,
     mut mouse: ResMut<Mouse>,
+    mut touches: ResMut<crate::touch::Touches>,
 ) {
     keys.clear();
     buttons.clear();
+    touches.clear();
     mouse.delta = Vec2::ZERO;
     mouse.scroll = Vec2::ZERO;
 }
@@ -112,6 +114,11 @@ pub enum Played {
     Cursor(Vec2),
     /// The wheel turned, in lines: up and to the left are positive.
     Scroll(Vec2),
+    /// A finger went down on the screen, moved, or was lifted: which finger, and where, in
+    /// physical pixels.
+    TouchDown(u64, Vec2),
+    TouchMove(u64, Vec2),
+    TouchUp(u64, Vec2),
 }
 
 /// Input waiting to be played into the game. It arrives at the start of the next frame the
@@ -142,6 +149,18 @@ impl InjectedInput {
     /// break in it is Enter.
     pub fn type_text(&mut self, text: impl Into<String>) {
         self.typed.push(text.into());
+    }
+
+    /// Draws a finger across the screen from one place to another over `frames` frames,
+    /// and lifts it: a swipe, where it goes far enough, and a tap where the two are the
+    /// same place.
+    pub fn swipe(&mut self, from: Vec2, to: Vec2, frames: u32) {
+        let frames = frames.max(1);
+        self.play(Played::TouchDown(0, from));
+        for frame in 1..frames {
+            self.play_after(frame, Played::TouchMove(0, from.lerp(to, frame as f32 / frames as f32)));
+        }
+        self.play_after(frames, Played::TouchUp(0, to));
     }
 
     /// Presses a key and lets it go `frames` frames later.
@@ -209,6 +228,9 @@ pub(crate) fn play_injected(world: &mut World, running: bool) {
                 });
             }
             Played::Motion(delta) => world.resource_mut::<Mouse>().delta += delta,
+            Played::TouchDown(id, at) => world.resource_mut::<crate::touch::Touches>().began(id, at),
+            Played::TouchMove(id, to) => world.resource_mut::<crate::touch::Touches>().moved(id, to),
+            Played::TouchUp(id, at) => world.resource_mut::<crate::touch::Touches>().ended(id, at),
             Played::Scroll(lines) => {
                 world.resource_mut::<Mouse>().scroll += lines;
                 heard.push(winit::event::WindowEvent::MouseWheel {
@@ -342,8 +364,10 @@ impl Plugin for InputPlugin {
             .init_resource::<Mouse>()
             .init_resource::<InjectedInput>()
             .init_resource::<crate::actions::Actions>()
-            // Before anything of the game reads them.
-            .add_systems(Stage::First, crate::actions::update_actions)
+            .init_resource::<crate::touch::Touches>()
+            // Before anything of the game reads them: the mouse as a finger where that is
+            // asked for, and then the actions, which fingers press as keys do.
+            .add_systems(Stage::First, (crate::touch::mouse_as_a_finger, crate::actions::update_actions).chain())
             .add_systems(Stage::Last, clear_input);
     }
 }

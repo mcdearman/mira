@@ -33,6 +33,35 @@ fn play(actions: Res<Actions>) {
 They are brought up to date at the start of each frame, from whatever pressed the keys: a
 person, a test, or an agent playing input in from outside.
 
+## Fingers
+
+`Touches` has the fingers that are down on a screen (`iter()`: each with an `id`, where it
+went down and where it is), and what they did this frame that a game would name:
+
+```rust
+touches.swiped();    // Some(Swipe::Up), the frame a finger has gone far enough that way
+touches.tapped();    // Some(where), the frame a finger is lifted from where it went down
+touches.gestures();  // all of them, where there was more than one finger
+```
+
+A swipe is told as soon as the finger is `swipe_distance` (36 pixels, to begin with) from
+where it went down, not when it is lifted, so the game answers at once. A finger swipes
+once, and one that has swiped is no tap when lifted.
+
+Actions are bound to these as they are to keys, and the game does not know which it was:
+
+```rust
+actions.bind("up", KeyCode::KeyW).bind("up", Swipe::Up).bind("up", Binding::Tap);
+```
+
+A swipe or a tap is over in the frame it happens, so it presses its action for that frame:
+`just_pressed` is the question to ask. In a bindings file they are `SwipeUp`, `SwipeDown`,
+`SwipeLeft`, `SwipeRight` and `Tap`.
+
+`touches.mouse_too = true` has the left mouse button stand for a finger, to try at a desk
+a game made for a phone. A test or an agent draws a finger across the screen with
+`InjectedInput::swipe(from, to, frames)`.
+
 ## Letting the player choose
 
 ```rust
@@ -65,4 +94,6 @@ it is told of, with the line, and changes nothing.
 
 ## What there is not yet
 
-Gamepads, and sticks and triggers as axes.
+Gamepads, and sticks and triggers as axes. Two fingers together (a pinch, a turn), a
+finger held as a stick, and buttons drawn on the screen. Choosing a swipe or a tap with
+ebind: it listens for keys and mouse buttons only.
