@@ -46,7 +46,7 @@ game logs, and what a panic says, is in the phone's log: `adb logcat -s mira`.
 |---|---|
 | Input | Fingers: see [INPUT.md](INPUT.md). Bind swipes and taps beside keys and the game is the same game. |
 | Saved games | `SaveGames::for_game` keeps them among the app's own files, which the system keeps apart for each app. |
-| Sound | Goes out through the system's own (AAudio, by way of Oboe), as it does through ALSA or WASAPI elsewhere. |
+| Sound | Goes out through the system's own (AAudio), as it does through ALSA or WASAPI elsewhere. Android 8 or later. |
 | Ray tracing, culling on the card | Used where the phone's graphics have them and gone without where they have not, as on any machine. |
 
 ## Put away and brought back
