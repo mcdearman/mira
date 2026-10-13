@@ -11,6 +11,17 @@ months. Sizes assume one person working with agents and are rough.
 Each phase has an **exit test**: something concrete that works at the end and did not before.
 A phase is not done until its exit test passes. Tick items off here as they land.
 
+## What it runs on
+
+mira is to be cross-platform, and games made with it are to ship on phones and tablets as
+well as on desktops: Windows, macOS and Linux, and iOS and Android. This holds for every
+phase, not only the last. A feature is not done while it works on one system only, and what
+is added should not close off a phone: no assuming a keyboard and mouse, a large screen, a
+desktop graphics card, or files beside the program. Where something cannot be had on a
+platform (ray tracing, say), the engine goes without it there and still runs.
+
+The work that is particular to it is listed under Phase 10.
+
 ## Where we are (October 2026)
 
 | Area | Have | Missing |
@@ -392,7 +403,7 @@ dying in any order; the timer is right in every case because no code ever sets i
 - [ ] Audio: sounds loaded by name and sources saved in scenes; buses and effects
 - [x] Input: named actions and axes, rebinding, and bindings kept in a file (see
       [INPUT.md](INPUT.md))
-- [ ] Input: gamepads
+- [ ] Input: gamepads, and touch (see Phase 10, mobile)
 - [ ] Animation graph: state machines, blend trees, retargeting, root motion
 - [ ] Physics: convex hulls, continuous collision, ragdolls; decide here whether to keep the
       custom solver or adopt Rapier
@@ -528,6 +539,14 @@ depends on resolution rather than scene size.
 ## Phase 10: Shipping (L, ongoing)
 
 - [ ] Packaged builds for Windows, Linux and macOS; a web build on WebGPU
+- [ ] Windows in CI beside Linux and macOS, so that all three are checked on every change
+- [ ] Mobile, so that a game can be made for phones and tablets: builds and packaging for
+      Android and iOS; the app's life on a phone (put away, brought back, the screen turned,
+      the surface lost and made again); touch as input, through the same actions as keys;
+      an interface that fits a small screen and its cut-outs; sound and saved games in the
+      places a phone allows; a renderer that holds its frame rate on a phone's graphics
+      (no ray tracing, compressed textures a phone reads, a render scale chosen for it)
+- [ ] Game controllers on every platform
 - [ ] Pipeline caching, crash reports, localization, accessibility settings
 - [ ] Documentation, a book, and sample projects
 

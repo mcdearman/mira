@@ -31,6 +31,19 @@ screenshot, Esc to release the mouse and again to quit.
 
 ## Demos
 
+```sh
+cargo run --release --example tail_lights
+```
+
+**Tail Lights.** You are a squirrel, and the acorns are across the road. Seen from straight
+above, in pixels: hop with WASD or the arrow keys; each road crossed is wider and faster than
+the last; a car ends the run, with a splat, and it begins again at the first road. Tab shows
+the score, R starts over, `-- quiet` plays without sound, and `-- watch` has it play itself.
+The best you have done is kept between runs. Every picture in it is drawn a pixel at a time
+in `examples/tail_lights/art.rs`, and every sound, the tune with them, is made there from
+nothing. A small game made from the engine's parts: keys bound by name, sounds heard from
+where they are, and a folder of the game's own for what it keeps.
+
 ```
 cargo run --release --example napoleonic
 ```
