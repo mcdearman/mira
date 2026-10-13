@@ -396,7 +396,11 @@ dying in any order; the timer is right in every case because no code ever sets i
 - [ ] Animation graph: state machines, blend trees, retargeting, root motion
 - [ ] Physics: convex hulls, continuous collision, ragdolls; decide here whether to keep the
       custom solver or adopt Rapier
-- [ ] Navigation: navmesh for meshes, grid pathfinding for voxels; behaviour trees
+- [x] Navigation: a grid of where there is standing, made from a level's colliders or a
+      world's blocks; the way over it; and a component that walks it (see
+      [NAVIGATION.md](NAVIGATION.md))
+- [ ] Navigation: more than one height to a cell (a true navmesh), walkers keeping out of
+      each other's way; behaviour trees
 - [x] Save games, built on Phase 1: the world saved under a name and loaded in any run (see
       [SAVES.md](SAVES.md))
 - [ ] Voxels: save edited chunks to region files; player collision against blocks

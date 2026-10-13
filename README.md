@@ -107,6 +107,8 @@ Input by what it is for, with keys the player can change: [docs/INPUT.md](docs/I
 
 Saved games: [docs/SAVES.md](docs/SAVES.md).
 
+Finding the way round a level: [docs/NAVIGATION.md](docs/NAVIGATION.md).
+
 AI agents driving a running game over MCP: [docs/MCP.md](docs/MCP.md).
 
 Interface inside the game, on Armature: [docs/UI.md](docs/UI.md).

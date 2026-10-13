@@ -452,3 +452,31 @@ fn a_character_jumps_and_comes_down_again() {
     }
     assert!(highest < standing + 0.45, "it went through the roof, to {highest}");
 }
+
+#[test]
+fn a_level_of_colliders_is_made_into_somewhere_to_walk() {
+    use crate::nav::{NavGrid, Walker};
+    let mut sim = Sim::new();
+    sim.ground();
+    // A wall across the middle with a gap at one end, a beam at chest height, a block
+    // low enough to step onto, and a crate that can be pushed about.
+    sim.world.spawn((Transform::from_xyz(5.0, 1.5, -1.0), GlobalTransform::default(), Collider::cuboid(Vec3::new(0.5, 1.5, 3.0))));
+    sim.world.spawn((Transform::from_xyz(2.5, 1.2, 0.5), GlobalTransform::default(), Collider::cuboid(Vec3::new(0.5, 0.2, 0.5))));
+    sim.world.spawn((Transform::from_xyz(8.5, 0.15, 0.5), GlobalTransform::default(), Collider::cuboid(Vec3::new(0.5, 0.15, 0.5))));
+    sim.body(Vec3::new(7.5, 0.5, -2.5), Collider::cuboid(Vec3::splat(0.5)), RigidBody::dynamic());
+    sim.run(0.5);
+    let physics = sim.world.resource::<PhysicsWorld>();
+    let grid = NavGrid::from_physics(physics, Vec3::new(0.0, -1.0, -4.0), Vec3::new(10.0, 6.0, 4.0), 1.0, Walker::default());
+    assert_eq!(grid.size(), (10, 8));
+    let ground = |x: f32, z: f32| grid.cell_at(Vec3::new(x, 0.0, z)).and_then(|cell| grid.height(cell));
+    assert!(ground(0.5, 0.5).is_some_and(|height| height.abs() < 1e-3), "open ground");
+    assert!(ground(5.0, -1.5).is_some_and(|height| (height - 3.0).abs() < 1e-3), "the top of the wall is ground of its own");
+    assert!(ground(2.5, 0.5).is_some_and(|height| (height - 1.4).abs() < 1e-3), "the beam's top is the ground there, too high to step onto: there is no walking under it");
+    assert!(ground(8.5, 0.5).is_some_and(|height| (height - 0.3).abs() < 1e-3), "onto the low block");
+    assert!(ground(7.5, -2.5).is_some_and(|height| height.abs() < 1e-3), "a crate that moves is not ground, nor in the way");
+    // From one side of the wall to the other is by the gap, since its top is too high to
+    // step onto.
+    let way = grid.path(Vec3::new(1.5, 0.0, -2.5), Vec3::new(8.5, 0.0, -2.5)).unwrap();
+    assert!(way.iter().any(|point| point.z > 2.0), "{way:?}");
+    assert!(way.iter().all(|point| point.y < 0.5), "{way:?}");
+}
