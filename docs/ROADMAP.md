@@ -387,7 +387,9 @@ dying in any order; the timer is right in every case because no code ever sets i
 - [x] Tabs, a choice between options, lists and scrolling (`kit::tabs`, `choice`, `list`,
       `scroll`)
 - [ ] Dropdowns and other pop-ups; interface in the world; gamepad focus
-- [ ] Audio: mixing, 3D positioning, streaming music
+- [x] Audio: sounds mixed, heard from where they are, and music read as it plays (see
+      [AUDIO.md](AUDIO.md))
+- [ ] Audio: sounds loaded by name and sources saved in scenes; buses and effects
 - [ ] Input: named actions, rebinding, gamepads
 - [ ] Animation graph: state machines, blend trees, retargeting, root motion
 - [ ] Physics: convex hulls, continuous collision, ragdolls; decide here whether to keep the

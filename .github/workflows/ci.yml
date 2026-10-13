@@ -29,6 +29,10 @@ jobs:
     - uses: actions/checkout@v4
     - name: Rust
       run: rustup update stable && rustup default stable && rustup component add clippy
+    # Sound goes out through ALSA on Linux, whose headers the build needs.
+    - name: ALSA headers
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y libasound2-dev
     - uses: Swatinem/rust-cache@v2
     # Haskell is the default plugin language; its bindings are tested by building and
     # hot-reloading real plugins.

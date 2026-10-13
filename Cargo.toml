@@ -15,6 +15,9 @@ mira_ecs = { path = "crates/mira_ecs" }
 libloading = "0.8"
 anyhow = "1"
 bytemuck = { version = "1.13", features = ["derive"] }
+# Sound: the machine's output, and reading Ogg Vorbis. WAV files are read by hand.
+cpal = "0.15"
+lewton = "0.10"
 env_logger = "0.11"
 glam = { version = "0.30", features = ["bytemuck"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "hdr"] }

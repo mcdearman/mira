@@ -101,6 +101,8 @@ The sun, and lamps by the thousand: [docs/LIGHTS.md](docs/LIGHTS.md).
 
 Smoke, dust, spray and flashes: [docs/PARTICLES.md](docs/PARTICLES.md).
 
+Sound, heard from where it is, and music: [docs/AUDIO.md](docs/AUDIO.md).
+
 AI agents driving a running game over MCP: [docs/MCP.md](docs/MCP.md).
 
 Interface inside the game, on Armature: [docs/UI.md](docs/UI.md).
