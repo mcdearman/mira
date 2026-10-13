@@ -65,7 +65,7 @@ pub(crate) struct Drawn<'a> {
 impl Taa {
     pub(crate) fn new(gpu: &Gpu) -> Self {
         let device = &gpu.device;
-        let shader = crate::shader!("taa.wgsl").module(device);
+        let shader = gpu.shader(crate::shader!("taa.wgsl"));
         let texture = |binding, sample_type, multisampled| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -82,8 +82,9 @@ impl Taa {
             entries: &[
                 texture(0, float, false),
                 texture(1, float, false),
-                texture(2, wgpu::TextureSampleType::Depth, true),
-                texture(5, wgpu::TextureSampleType::Float { filterable: false }, true),
+                // The scene's depth and what moved have as many samples as the scene is drawn with.
+                texture(2, wgpu::TextureSampleType::Depth, super::gpu::samples() > 1),
+                texture(5, wgpu::TextureSampleType::Float { filterable: false }, super::gpu::samples() > 1),
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,

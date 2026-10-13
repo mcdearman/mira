@@ -9,7 +9,7 @@
 use glam::Mat4;
 
 use super::{
-    gpu::{Gpu, DEPTH_COMPARE, DEPTH_FORMAT, MOTION_CLEAR, MOTION_FORMAT, MSAA_SAMPLES},
+    gpu::{Gpu, DEPTH_COMPARE, DEPTH_FORMAT, MOTION_CLEAR, MOTION_FORMAT},
     mesh::Vertex,
     renderer::MeshRenderer,
     RenderFrame,
@@ -114,7 +114,7 @@ impl MotionRenderer {
                 stencil: Default::default(),
                 bias: wgpu::DepthBiasState { constant: 8, slope_scale: 1.5, clamp: 0.0 },
             }),
-            multisample: wgpu::MultisampleState { count: MSAA_SAMPLES, mask: !0, alpha_to_coverage_enabled: false },
+            multisample: wgpu::MultisampleState { count: super::gpu::samples(), mask: !0, alpha_to_coverage_enabled: false },
             multiview_mask: None,
             cache: None,
         });

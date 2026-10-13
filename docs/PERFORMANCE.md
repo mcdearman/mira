@@ -316,6 +316,19 @@ default is 1. Without the blend over time (`taa` off) a smaller scene is only st
 
 The instances example takes `scale=`: at 2,560 by 1,440 with levels of detail, 100,000
 things at rest go from 11.1 ms on the card to 8.2 at 0.67.
+
+## One sample a pixel
+
+The scene is drawn with four samples a pixel (multisampling), which smooths the edges of
+things as they are drawn. The blend over time smooths them too, from frame to frame, and a
+scene that has it may do without the other: `Multisampling(false)`, inserted before
+`DefaultPlugins`, or `MIRA_MSAA=0`. The scene is then drawn straight into the target the
+later passes read, with a quarter of the samples to shade at edges and to store.
+
+Paris at 2,560 by 1,440 with rays: the main pass goes from 17.0 ms to 12.4, and the frame
+from 22.8 ms to 18.5 (44 frames a second to 54), with edges that look the same in a still.
+It is read once, when the renderer starts, and the default is still four samples. Without
+the blend over time, one sample a pixel leaves edges as steps.
 ## What is next
 
 On the processor, with things moving, where the time now is:

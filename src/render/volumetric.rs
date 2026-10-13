@@ -62,7 +62,7 @@ impl Shafts {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
-                        multisampled: true,
+                        multisampled: super::gpu::samples() > 1,
                         view_dimension: wgpu::TextureViewDimension::D2,
                         sample_type: wgpu::TextureSampleType::Depth,
                     },

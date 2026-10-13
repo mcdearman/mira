@@ -227,7 +227,7 @@ pub(crate) struct LineRenderer {
 impl LineRenderer {
     fn new(gpu: &Gpu) -> Self {
         let device = &gpu.device;
-        let shader = crate::shader!("debug_lines.wgsl").module(device);
+        let shader = gpu.shader(crate::shader!("debug_lines.wgsl"));
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("debug lines layout"),
             entries: &[
@@ -245,7 +245,7 @@ impl LineRenderer {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
-                        multisampled: true,
+                        multisampled: super::gpu::samples() > 1,
                         view_dimension: wgpu::TextureViewDimension::D2,
                         sample_type: wgpu::TextureSampleType::Depth,
                     },

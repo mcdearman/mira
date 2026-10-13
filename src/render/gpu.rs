@@ -7,7 +7,39 @@ use super::{compose::{self, ShaderLibrary}, Shader};
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// The scene is lit and blended in linear HDR, then tone mapped onto the swapchain.
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// How many samples a pixel of the scene has where it is multisampled: see [`samples`].
 pub const MSAA_SAMPLES: u32 = 4;
+
+/// Whether the scene is drawn with several samples a pixel (multisampling), which smooths
+/// the edges of things as they are drawn. Read once, when the renderer starts: insert it
+/// before `DefaultPlugins`. `MIRA_MSAA=0` or `=1` turns it off or on whatever this says.
+///
+/// The blend over time (`PostProcess::taa`) smooths edges too, from frame to frame, so with
+/// that on a scene may do without this, and the card then shades and stores a quarter as
+/// many samples: where it is shading that costs, as with rays traced for every fragment,
+/// that is most of a frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Multisampling(pub bool);
+
+impl Default for Multisampling {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+static SAMPLES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(MSAA_SAMPLES);
+
+/// How many samples a pixel of the scene has: [`MSAA_SAMPLES`], or one where the scene is
+/// not multisampled. Pipelines that draw into the main pass, and targets they draw into, are
+/// made for this many; [`main_multisample`] says so for a pipeline.
+pub fn samples() -> u32 {
+    SAMPLES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Says whether the scene is multisampled, before anything is made for drawing it.
+pub(crate) fn set_multisampling(on: bool) {
+    SAMPLES.store(if on { MSAA_SAMPLES } else { 1 }, std::sync::atomic::Ordering::Relaxed);
+}
 /// How far things have moved across the picture in a frame (see `motion.rs`).
 pub const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 /// What the motion target holds where nothing that moved was drawn: further than anything
@@ -30,12 +62,12 @@ pub fn main_depth_state(write: bool) -> wgpu::DepthStencilState {
 }
 
 /// Multisample state for pipelines drawing into the main pass. `alpha_to_coverage` gives
-/// alpha-tested foliage soft, anti-aliased edges.
+/// alpha-tested foliage soft, anti-aliased edges, where there are samples to cover.
 pub fn main_multisample(alpha_to_coverage: bool) -> wgpu::MultisampleState {
     wgpu::MultisampleState {
-        count: MSAA_SAMPLES,
+        count: samples(),
         mask: !0,
-        alpha_to_coverage_enabled: alpha_to_coverage,
+        alpha_to_coverage_enabled: alpha_to_coverage && samples() > 1,
     }
 }
 
@@ -252,7 +284,11 @@ impl Gpu {
 impl Gpu {
     /// What is defined for shaders built on this device: `RAY_TRACING` where it traces rays.
     pub fn shader_defines(&self) -> Vec<&'static str> {
-        if self.ray_tracing { vec![compose::RAY_TRACING] } else { vec![] }
+        let mut defines = if self.ray_tracing { vec![compose::RAY_TRACING] } else { vec![] };
+        if samples() > 1 {
+            defines.push(compose::MSAA);
+        }
+        defines
     }
 
     /// Puts a shader together for this device: the modules it imports taken in from
