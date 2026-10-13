@@ -103,6 +103,8 @@ Smoke, dust, spray and flashes: [docs/PARTICLES.md](docs/PARTICLES.md).
 
 Sound, heard from where it is, and music: [docs/AUDIO.md](docs/AUDIO.md).
 
+Input by what it is for, with keys the player can change: [docs/INPUT.md](docs/INPUT.md).
+
 AI agents driving a running game over MCP: [docs/MCP.md](docs/MCP.md).
 
 Interface inside the game, on Armature: [docs/UI.md](docs/UI.md).

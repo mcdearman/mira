@@ -58,6 +58,11 @@ impl<T: Copy + Eq + Hash> ButtonInput<T> {
         inputs.into_iter().any(|i| self.pressed(i))
     }
 
+    /// What was pressed this frame.
+    pub fn get_just_pressed(&self) -> impl Iterator<Item = &T> {
+        self.just_pressed.iter()
+    }
+
     pub fn get_pressed(&self) -> impl Iterator<Item = &T> {
         self.pressed.iter()
     }
@@ -336,6 +341,9 @@ impl Plugin for InputPlugin {
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<Mouse>()
             .init_resource::<InjectedInput>()
+            .init_resource::<crate::actions::Actions>()
+            // Before anything of the game reads them.
+            .add_systems(Stage::First, crate::actions::update_actions)
             .add_systems(Stage::Last, clear_input);
     }
 }

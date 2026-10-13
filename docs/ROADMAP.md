@@ -390,7 +390,9 @@ dying in any order; the timer is right in every case because no code ever sets i
 - [x] Audio: sounds mixed, heard from where they are, and music read as it plays (see
       [AUDIO.md](AUDIO.md))
 - [ ] Audio: sounds loaded by name and sources saved in scenes; buses and effects
-- [ ] Input: named actions, rebinding, gamepads
+- [x] Input: named actions and axes, rebinding, and bindings kept in a file (see
+      [INPUT.md](INPUT.md))
+- [ ] Input: gamepads
 - [ ] Animation graph: state machines, blend trees, retargeting, root motion
 - [ ] Physics: convex hulls, continuous collision, ragdolls; decide here whether to keep the
       custom solver or adopt Rapier
