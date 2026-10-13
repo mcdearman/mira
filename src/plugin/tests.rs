@@ -428,10 +428,12 @@ impl Workspace {
         // see a half-written library.
         let staging = self.dir.join(format!("{name}.tmp"));
         let include = Path::new(env!("CARGO_MANIFEST_DIR")).join("include");
-        let output = Command::new("cc")
+        // Windows has no `cc`; clang is the compiler there, and its code needs no `-fPIC`.
+        let (compiler, placed): (&str, &[&str]) = if cfg!(windows) { ("clang", &[]) } else { ("cc", &["-fPIC"]) };
+        let output = Command::new(compiler)
+            .args(placed)
             .args([
                 "-shared",
-                "-fPIC",
                 "-std=c11",
                 "-Wall",
                 "-Werror",
@@ -444,7 +446,7 @@ impl Workspace {
             .arg(&staging)
             .arg(&source)
             .output()
-            .expect("these tests need a C compiler (`cc`) on the PATH");
+            .expect("these tests need a C compiler (`cc`, or `clang` on Windows) on the PATH");
         assert!(
             output.status.success(),
             "cc failed:\n{}",
@@ -1281,8 +1283,14 @@ pluginMain = plugin $ \app -> do
 "#;
 
 /// Whether the Haskell tests can run. Without GHC they are skipped, loudly; where the suite
-/// must be complete (CI sets `MIRA_REQUIRE_GHC=1`) a missing GHC fails them instead.
+/// must be complete (CI sets `MIRA_REQUIRE_GHC=1`) a missing GHC fails them instead. On
+/// Windows they are skipped whatever is installed.
 fn have_ghc() -> bool {
+    // A Haskell plugin is built by a shell script, which Windows cannot run as it is.
+    if cfg!(windows) {
+        eprintln!("skipped: Haskell plugins are not yet built on Windows");
+        return false;
+    }
     if Command::new("ghc").arg("--version").output().is_ok() {
         return true;
     }
