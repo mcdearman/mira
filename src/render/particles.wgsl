@@ -1,5 +1,6 @@
-// Powder smoke, dust and woodsmoke: soft, lit, camera-facing billboards. Prepended with
-// the engine's lighting (`Gpu::pbr_wgsl`).
+// Particles: smoke, dust, spray and flashes, as soft, lit, camera-facing billboards. See
+// particles.rs.
+#import mira::pbr
 
 @group(1) @binding(0) var puffs: texture_2d_array<f32>;
 @group(1) @binding(1) var puff_sampler: sampler;

@@ -17,7 +17,7 @@ A phase is not done until its exit test passes. Tick items off here as they land
 |---|---|---|
 | Core | Hand-written sparse-set ECS, function systems, change detection, commands, events, startup access checks, fixed timestep with interpolation; ordering, run conditions and states; systems and single queries run across threads; hooks, observers and relations; reflection and derive macros; signals | Table storage; hooks, observers and relations from plugins |
 | Data | glTF and image loading, typed handles; JSON scenes and prefabs; an asset server that loads off the main thread, reloads what changes, unloads what nothing refers to, and compresses pictures to BC7 | ASTC, meshes in a binary form, streamed textures |
-| Rendering | Forward HDR + MSAA + TAA with motion vectors, PBR, image-based lighting, cascaded sun shadows, bloom, light shafts, decals, GPU skinning, hand-authored LODs; the frame as a graph of passes | GPU-driven drawing, occlusion culling, local lights, material system, particles as an engine feature, upscaling |
+| Rendering | Forward HDR + MSAA + TAA with motion vectors, PBR, image-based lighting, cascaded sun shadows, bloom, light shafts, decals, GPU skinning, hand-authored LODs; the frame as a graph of passes; what is seen decided on the card; lights with a place, by the thousand, with shadows; surface shaders; particles; temporal upscaling | Occlusion culling, bindless textures, shading each pixel once, particles moved on the card |
 | Lighting | Ray-traced shadows/AO/reflections (Vulkan only), light probes baked once | Dynamic global illumination, anything ray-traced on Metal |
 | Voxels | Chunked storage, threaded generation and meshing with ambient occlusion, streaming, raycasts, saving edits | Greedy meshing, chunk LOD, transparent blocks, voxel lighting |
 | Simulation | Rigid bodies with sleeping, joints, character controller, fluids; shapes: sphere, box, capsule, plane, static triangle mesh | Convex hulls, continuous collision, ragdolls, vehicles, cloth, destruction |
@@ -365,7 +365,10 @@ dying in any order; the timer is right in every case because no code ever sets i
 - [x] Temporal upscaling: the scene drawn smaller than the picture and made up to its size
       as frames are blended over time (`PostProcess::render_scale`; see
       [PERFORMANCE.md](PERFORMANCE.md))
-- [ ] GPU particles, sorted or order-independent transparency
+- [x] Particles as an engine feature: lit, soft puffs let out by an emitter or by a system,
+      moved on the processor (see [PARTICLES.md](PARTICLES.md)); the demos' smoke is these
+- [ ] Particles moved on the card, for many more of them; emitters saved in scenes; sorted
+      or order-independent transparency
 - [x] Voxels: faces that lie side by side joined into large quads (greedy meshing)
 - [ ] Voxels: a pass for blocks that are seen through, and chunk draws through the same
       indirect path as meshes

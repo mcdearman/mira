@@ -1,6 +1,7 @@
 //! The soldiers: Rocketbox figures dressed and posed by `tools/soldiers.py`, drilling and
 //! marching.
 
+use crate::smoke::Kinds as _;
 use std::f32::consts::PI;
 
 use mira::{

@@ -99,6 +99,8 @@ Shaders made of modules that import each other: [docs/SHADERS.md](docs/SHADERS.m
 What a frame costs, and how to measure it: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 The sun, and lamps by the thousand: [docs/LIGHTS.md](docs/LIGHTS.md).
 
+Smoke, dust, spray and flashes: [docs/PARTICLES.md](docs/PARTICLES.md).
+
 AI agents driving a running game over MCP: [docs/MCP.md](docs/MCP.md).
 
 Interface inside the game, on Armature: [docs/UI.md](docs/UI.md).

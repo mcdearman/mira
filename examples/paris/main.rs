@@ -22,6 +22,7 @@ mod square;
 mod traffic;
 mod water;
 
+use crate::smoke::Kinds as _;
 use std::{collections::HashMap, f32::consts::PI};
 
 use mira::{
@@ -89,7 +90,7 @@ fn main() -> anyhow::Result<()> {
         .add_plugins(DefaultPlugins)
         .add_plugins(PhysicsPlugin)
         .add_plugins(smoke::plugin)
-        .add_systems(Stage::Startup, (setup, build, smoke::init))
+        .add_systems(Stage::Startup, (setup, build))
         .add_systems(Stage::Update, (grab_cursor, move_player, show_stats, take_screenshot, collide::separate, (water::stir, kick_ball), crowd::think, animals::think, traffic::drive, traffic::spin_wheels, chimney_smoke, fountain_spray))
         .run()
 }
