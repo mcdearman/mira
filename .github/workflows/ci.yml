@@ -48,6 +48,23 @@ jobs:
     - name: Full suite
       run: scripts/check.sh
 
+  windows:
+    # Windows is built, tested and linted on every change, as Linux and macOS are. The
+    # native plugin tests are left out here: they compile C with `cc` and load what it
+    # makes, which is yet to be made to work on Windows (see the roadmap, Phase 10).
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Rust
+      run: rustup update stable && rustup default stable && rustup component add clippy
+    - uses: Swatinem/rust-cache@v2
+    - name: Build
+      run: cargo build --workspace --all-targets
+    - name: Test
+      run: cargo test --workspace -- --skip plugin::tests
+    - name: Clippy
+      run: cargo clippy --workspace --all-targets -- -D warnings
+
   miri:
     # The ECS hands out references from behind `UnsafeCell` and stores some components as
     # raw bytes; Miri checks that code for undefined behaviour.

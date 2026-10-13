@@ -543,7 +543,9 @@ depends on resolution rather than scene size.
 ## Phase 10: Shipping (L, ongoing)
 
 - [ ] Packaged builds for Windows, Linux and macOS; a web build on WebGPU
-- [ ] Windows in CI beside Linux and macOS, so that all three are checked on every change
+- [x] Windows in CI beside Linux and macOS: built, tested and linted on every change
+- [ ] Native plugins on Windows: the plugin tests (which compile C with `cc`) and the
+      example plugins' build scripts run there too
 - [ ] Mobile, so that a game can be made for phones and tablets: builds and packaging for
       Android and iOS; the app's life on a phone (put away, brought back, the screen turned,
       the surface lost and made again); touch as input, through the same actions as keys;

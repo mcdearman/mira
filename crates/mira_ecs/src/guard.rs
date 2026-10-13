@@ -39,7 +39,8 @@ fn install_hook() {
             if !active() {
                 return previous(info);
             }
-            let location = info.location().map_or(String::new(), |l| l.to_string());
+            // The same on every system: a file's place is written with forward strokes.
+            let location = info.location().map_or(String::new(), |l| l.to_string().replace('\\', "/"));
             // Miri keeps programs away from the file system, which printing a backtrace asks
             // about; the stack is left out there.
             let stack = if cfg!(miri) {
