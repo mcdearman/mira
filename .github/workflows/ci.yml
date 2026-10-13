@@ -51,8 +51,8 @@ jobs:
 
   windows:
     # Windows is built, tested and linted on every change, as Linux and macOS are. The
-    # native plugin tests are left out here: they compile C with `cc` and load what it
-    # makes, which is yet to be made to work on Windows (see the roadmap, Phase 10).
+    # plugin tests compile C with clang here, which the runner has. Haskell plugins are
+    # not yet built on Windows (their build is a shell script), and their tests say so.
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v4
@@ -62,7 +62,7 @@ jobs:
     - name: Build
       run: cargo build --workspace --all-targets
     - name: Test
-      run: cargo test --workspace -- --skip plugin::tests
+      run: cargo test --workspace
     - name: Clippy
       run: cargo clippy --workspace --all-targets -- -D warnings
 

@@ -548,8 +548,9 @@ depends on resolution rather than scene size.
 
 - [ ] Packaged builds for Windows, Linux and macOS; a web build on WebGPU
 - [x] Windows in CI beside Linux and macOS: built, tested and linted on every change
-- [ ] Native plugins on Windows: the plugin tests (which compile C with `cc`) and the
-      example plugins' build scripts run there too
+- [x] Native plugins on Windows: C and Rust plugins are built, loaded, reloaded and tested
+      there (the tests compile C with clang)
+- [ ] Haskell plugins on Windows: their build is a shell script
 - [x] The engine is built for Android on every change (see [ANDROID.md](ANDROID.md)); a
       game there is told its activity, and keeps its saved games among the app's own files
 - [ ] Mobile, so that a game can be made for phones and tablets: a game run on a real
