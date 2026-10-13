@@ -18,6 +18,7 @@ pub mod plugin;
 pub mod prefab;
 pub mod reflect;
 pub mod relation;
+pub mod save;
 pub mod remote;
 pub mod render;
 pub mod signal;
@@ -47,6 +48,7 @@ pub mod prelude {
         },
         prefab::{PrefabInstance, PrefabPlugin, Prefabs},
         reflect::{NotSaved, Reflect, Scene, TypeRegistry},
+        save::{SaveGames, SaveInfo},
         render::{
             AmbientLight, Animator, Camera, Color, DebugLines, DirectionalLight, Environment, Fog, Gait,
             GltfScene, Image, Leg, Limb, LodLevel, Lods, Material, Mesh, Mesh3d, NotShadowCaster,

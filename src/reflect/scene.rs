@@ -145,6 +145,26 @@ impl Scene {
         self.fill(world, registry, entities)
     }
 
+    /// Makes the world this scene and nothing else: everything a scene would have captured
+    /// is despawned, with what is below it, and the scene's entities are made in its place.
+    /// For a scene from another run of the program, as a saved game is, where
+    /// [`restore`](Self::restore) cannot be used because the entities' ids mean nothing any
+    /// more. Entities marked [`NotSaved`], and those with no registered component, are left.
+    pub fn replace(&self, world: &mut World, registry: &TypeRegistry) -> Spawned {
+        let mut there = Vec::new();
+        for component in registry.iter() {
+            for entity in (component.entities)(world) {
+                if !world.has::<NotSaved>(entity) {
+                    there.push(entity);
+                }
+            }
+        }
+        for entity in there {
+            crate::transform::despawn_recursive(world, entity);
+        }
+        self.spawn(world, registry)
+    }
+
     /// Puts the world back the way it was when this scene was captured from it: a step back
     /// in time, not a new copy. Entities that are still alive keep their ids and get their
     /// saved components back (and lose registered components they didn't have); entities
