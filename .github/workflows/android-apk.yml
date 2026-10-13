@@ -32,14 +32,19 @@ jobs:
         CARGO_PROFILE_DEV_DEBUG: 0
       run: |
         export ANDROID_NDK_ROOT="$ANDROID_NDK_LATEST_HOME"
-        cargo apk build -p tail_lights_android
-        ls -l target/debug/apk/
-        unzip -l target/debug/apk/tail-lights.apk
+        # For a phone, and then for the pretended phone below, whose processor is another:
+        # each in a package of its own, so that the one for a phone carries only its own.
+        cargo apk build -p tail_lights_android --target aarch64-linux-android
+        mkdir -p packages
+        cp target/debug/apk/tail-lights.apk packages/tail-lights.apk
+        cargo apk build -p tail_lights_android --target x86_64-linux-android
+        cp target/debug/apk/tail-lights.apk packages/tail-lights-emulator.apk
+        ls -l packages
+        unzip -l packages/tail-lights.apk
     - uses: actions/upload-artifact@v4
       with:
         name: tail-lights-apk
-        # The one to put on a phone; the other beside it is the same before it was aligned.
-        path: target/debug/apk/tail-lights.apk
+        path: packages/tail-lights.apk
         if-no-files-found: error
     # Tried on a pretended phone: the game is started, left a while, and what it logged and
     # what was on the screen are kept, whether it lived or not. This tells whether the
@@ -59,7 +64,7 @@ jobs:
         target: google_apis
         emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
         disable-animations: true
-        script: sh android/try-on-emulator.sh target/debug/apk/tail-lights.apk dev.mira.taillights
+        script: sh android/try-on-emulator.sh packages/tail-lights-emulator.apk dev.mira.taillights
     - uses: actions/upload-artifact@v4
       if: always()
       with:
