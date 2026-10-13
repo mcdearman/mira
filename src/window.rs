@@ -135,8 +135,48 @@ struct Runner {
     last_frame: Option<std::time::Instant>,
 }
 
+/// The activity a game on Android was started in, which its window and its files come from.
+#[cfg(target_os = "android")]
+pub use winit::platform::android::activity::AndroidApp;
+
+#[cfg(target_os = "android")]
+static ANDROID: std::sync::OnceLock<AndroidApp> = std::sync::OnceLock::new();
+
+/// Tells the engine which activity the game was started in. An Android game's `android_main`
+/// is handed it, and passes it on here before the app is run:
+///
+/// ```ignore
+/// #[no_mangle]
+/// fn android_main(activity: mira::window::AndroidApp) {
+///     mira::window::started_in(activity);
+///     game().run().unwrap();
+/// }
+/// ```
+#[cfg(target_os = "android")]
+pub fn started_in(activity: AndroidApp) {
+    let _ = ANDROID.set(activity);
+}
+
+/// Where Android keeps this app's own files, once the engine knows its activity.
+#[cfg(target_os = "android")]
+pub(crate) fn android_files() -> Option<std::path::PathBuf> {
+    ANDROID.get()?.internal_data_path()
+}
+
+#[cfg(target_os = "android")]
+fn event_loop() -> anyhow::Result<EventLoop<()>> {
+    use winit::platform::android::EventLoopBuilderExtAndroid;
+    let activity = ANDROID.get().ok_or_else(|| anyhow::anyhow!("on Android, `mira::window::started_in` must be told the activity before the app is run"))?;
+    Ok(EventLoop::builder().with_android_app(activity.clone()).build()?)
+}
+
+#[cfg(not(target_os = "android"))]
+fn event_loop() -> anyhow::Result<EventLoop<()>> {
+    Ok(EventLoop::new()?)
+}
+
 pub(crate) fn run(app: App) -> anyhow::Result<()> {
-    let event_loop = EventLoop::new()?;
+    let event_loop = event_loop()?;
     let mut runner = Runner {
         app,
         window: None,

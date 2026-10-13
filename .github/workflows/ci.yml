@@ -65,6 +65,25 @@ jobs:
     - name: Clippy
       run: cargo clippy --workspace --all-targets -- -D warnings
 
+  android:
+    # The engine is built for Android on every change, so that nothing is written that a
+    # phone cannot have. It is not run there: that needs a device, or one pretended.
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Rust
+      run: rustup update stable && rustup default stable && rustup target add aarch64-linux-android && rustup component add clippy
+    - uses: Swatinem/rust-cache@v2
+    # What is written in C among what the engine depends on is compiled with the kit the
+    # runner has for Android.
+    - name: Clippy for Android
+      run: |
+        tools="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+        export CC_aarch64_linux_android="$tools/aarch64-linux-android24-clang"
+        export CXX_aarch64_linux_android="$tools/aarch64-linux-android24-clang++"
+        export AR_aarch64_linux_android="$tools/llvm-ar"
+        cargo clippy -p mira --lib --target aarch64-linux-android -- -D warnings
+
   miri:
     # The ECS hands out references from behind `UnsafeCell` and stores some components as
     # raw bytes; Miri checks that code for undefined behaviour.

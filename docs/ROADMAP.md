@@ -548,8 +548,11 @@ depends on resolution rather than scene size.
 - [x] Windows in CI beside Linux and macOS: built, tested and linted on every change
 - [ ] Native plugins on Windows: the plugin tests (which compile C with `cc`) and the
       example plugins' build scripts run there too
-- [ ] Mobile, so that a game can be made for phones and tablets: builds and packaging for
-      Android and iOS; the app's life on a phone (put away, brought back, the screen turned,
+- [x] The engine is built for Android on every change (see [ANDROID.md](ANDROID.md)); a
+      game there is told its activity, and keeps its saved games among the app's own files
+- [ ] Mobile, so that a game can be made for phones and tablets: a game run on a real
+      Android phone, and packaged for one; builds and packaging for iOS; the app's life on
+      a phone (put away, brought back, the screen turned,
       the surface lost and made again); touch as input, through the same actions as keys;
       an interface that fits a small screen and its cut-outs; sound and saved games in the
       places a phone allows; a renderer that holds its frame rate on a phone's graphics
