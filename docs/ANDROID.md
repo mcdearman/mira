@@ -33,11 +33,24 @@ and `cargo apk` do the same and make the package).
 | Sound | Goes out through the system's own (AAudio, by way of Oboe), as it does through ALSA or WASAPI elsewhere. |
 | Ray tracing, culling on the card | Used where the phone's graphics have them and gone without where they have not, as on any machine. |
 
+## Put away and brought back
+
+When an app is put away Android takes its window, and gives it another when it is brought
+back. The engine lets go of the surface it draws on as the window goes, does not run the
+game while it is away, and takes up a new surface when it is back; the device and all that
+is on it stay as they were. This can be tried at a desk, on a running game:
+
+```text
+mira-debug window to=away
+mira-debug window to=back
+```
+
+Away, frames are drawn off screen (a screenshot still works); back, they are shown again.
+Tried so on Windows, with Vulkan. Sound is not yet stopped while the app is away.
+
 ## What there is not yet
 
 - A game run on a phone, and a package (`.apk`) made of one.
-- The app's life: when it is put away Android takes its window, and gives it another when
-  it is brought back. The engine does not yet let go of the old surface and take up the new.
 - Assets: a desktop game reads `res/` beside the program; in a package they are inside it.
 - The editor and the interface crate, which need a clipboard a phone does not give.
 - iOS.

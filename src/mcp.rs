@@ -186,7 +186,14 @@ const TOOLS: &[Tool] = &[
             "mouse_position?: array: [x, y] of the cursor in pixels",
             "mouse_scroll?: array: [x, y] lines the wheel turns, where the cursor is; positive y scrolls up",
             "text?: string: text to type into whichever field of the game's interface has the keyboard (click the field first); a line break in it is Enter. It arrives even while the game is paused, and the game's own keys do not see it",
+            "touch?: array: [x, y] in pixels where a finger goes down on the screen; lifted there rames later, it is a tap",
+            "touch_to?: array: [x, y] where the finger is drawn to before it is lifted: a swipe, where that is far enough",
         ],
+    },
+    Tool {
+        command: "window",
+        about: "Takes the game's window from it or gives it back, as a phone does when an app is put away and brought back. Away, the game lets go of what it draws on and draws off screen (screenshots still work); back, it takes up a new surface and shows its frames again. For trying, at a desk, that a game lives through it.",
+        arguments: &["to: string: away or back"],
     },
     Tool {
         command: "time_scale",
@@ -905,7 +912,7 @@ mod tests {
 
         // Nothing to play is still a refusal that says what can be played.
         let (why, failed) = tool(&mut game, "mira_input", "{}");
-        assert!(failed && why[0].contains("or `text`"), "{why:?}");
+        assert!(failed && why[0].contains("or `touch`"), "{why:?}");
     }
 
     #[test]
