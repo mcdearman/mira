@@ -16,6 +16,7 @@ concurrency:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
     - uses: actions/checkout@v4
     - name: Rust
@@ -32,15 +33,25 @@ jobs:
       run: |
         export ANDROID_NDK_ROOT="$ANDROID_NDK_LATEST_HOME"
         cargo apk build -p tail_lights_android
-        find target -name '*.apk' -exec ls -l {} \;
+        ls -l target/debug/apk/
+        unzip -l target/debug/apk/tail-lights.apk
+    - uses: actions/upload-artifact@v4
+      with:
+        name: tail-lights-apk
+        # The one to put on a phone; the other beside it is the same before it was aligned.
+        path: target/debug/apk/tail-lights.apk
+        if-no-files-found: error
     # Tried on a pretended phone: the game is started, left a while, and what it logged and
-    # what was on the screen are kept, whether it lived or not.
+    # what was on the screen are kept, whether it lived or not. This tells whether the
+    # package can be loaded and begun; it draws on the processor, far slower than a phone.
     - name: Let the emulator use the processor directly
       run: |
         echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
         sudo udevadm control --reload-rules
         sudo udevadm trigger --name-match=kvm
     - name: Try it on an emulator
+      timeout-minutes: 12
+      continue-on-error: true
       uses: reactivecircus/android-emulator-runner@v2
       with:
         api-level: 34
@@ -48,16 +59,7 @@ jobs:
         target: google_apis
         emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
         disable-animations: true
-        script: |
-          adb install target/debug/apk/tail-lights.apk
-          adb logcat -c
-          adb shell am start -n dev.mira.taillights/android.app.NativeActivity
-          sleep 30
-          adb exec-out screencap -p > tried-screen.png || true
-          adb logcat -d > tried-log.txt || true
-          adb shell pidof dev.mira.taillights > tried-alive.txt || echo "not running" > tried-alive.txt
-          echo "--- still running?"; cat tried-alive.txt
-          echo "--- what it said"; grep -E " mira *:|FATAL|AndroidRuntime| DEBUG *:|libtail_lights|tombstone" tried-log.txt | tail -n 150 || true
+        script: sh android/try-on-emulator.sh target/debug/apk/tail-lights.apk dev.mira.taillights
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -67,9 +69,3 @@ jobs:
           tried-log.txt
           tried-alive.txt
         if-no-files-found: warn
-    - uses: actions/upload-artifact@v4
-      with:
-        name: tail-lights-apk
-        # The one to put on a phone; the other beside it is the same before it was aligned.
-        path: target/debug/apk/tail-lights.apk
-        if-no-files-found: error
