@@ -24,6 +24,22 @@ written in C among the engine's dependencies (CI sets `CC_aarch64_linux_android`
 `CXX_aarch64_linux_android` and `AR_aarch64_linux_android` to the NDK's own; `cargo ndk`
 and `cargo apk` do the same and make the package).
 
+## A package to put on a phone
+
+`android/tail_lights` is Tail Lights as an app: a small crate that takes the example's code
+in and begins it from `android_main`. With the Android SDK and NDK and `cargo install
+cargo-apk`:
+
+```sh
+CARGO_PROFILE_DEV_OPT_LEVEL=3 cargo apk build -p tail_lights_android
+# target/debug/apk/tail-lights.apk; `cargo apk run` puts it on a phone that is plugged in
+```
+
+It is signed with the key for trying things, and built fast all the same, since a phone
+crawls through the engine unoptimized. Without the tools, the "Android package" workflow
+builds it on a runner and keeps the package (Actions, the run, `tail-lights-apk`). What the
+game logs, and what a panic says, is in the phone's log: `adb logcat -s mira`.
+
 ## What is not as on a desktop
 
 | | |
@@ -50,7 +66,7 @@ Tried so on Windows, with Vulkan. Sound is held where it is while the app is awa
 
 ## What there is not yet
 
-- A game run on a phone, and a package (`.apk`) made of one.
+- A game seen to run on a phone: the package is made, and has yet to be tried on one.
 - Assets: a desktop game reads `res/` beside the program; in a package they are inside it.
 - The editor and the interface crate, which need a clipboard a phone does not give.
 - iOS.
