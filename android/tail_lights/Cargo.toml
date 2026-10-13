@@ -19,7 +19,8 @@ android_logger = "0.14"
 
 [package.metadata.android]
 package = "dev.mira.taillights"
-build_targets = ["aarch64-linux-android"]
+# A phone, and the pretended phone the workflow tries the package on.
+build_targets = ["aarch64-linux-android", "x86_64-linux-android"]
 apk_name = "tail-lights"
 
 [package.metadata.android.sdk]
