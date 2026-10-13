@@ -69,7 +69,8 @@ Ogg Vorbis only. It is changed and stopped as any sound is.
 
 ## How loud everything is
 
-`audio.set_master_volume(0.5)`.
+`audio.set_master_volume(0.5)`. `audio.set_held(true)` holds every sound where it is, silent,
+until it is let go again: the engine does so itself while an app is put away on a phone.
 
 ## Where there is no one to hear
 

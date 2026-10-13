@@ -46,7 +46,7 @@ mira-debug window to=back
 ```
 
 Away, frames are drawn off screen (a screenshot still works); back, they are shown again.
-Tried so on Windows, with Vulkan. Sound is not yet stopped while the app is away.
+Tried so on Windows, with Vulkan. Sound is held where it is while the app is away, and goes on when it is back.
 
 ## What there is not yet
 

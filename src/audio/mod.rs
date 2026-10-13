@@ -164,6 +164,16 @@ impl Audio {
         self.mixer().volume
     }
 
+    /// Holds every sound where it is, silent, or lets them go on: what is done while an app
+    /// is put away on a phone, and brought back. The engine does this itself then.
+    pub fn set_held(&self, held: bool) {
+        self.mixer().held = held;
+    }
+
+    pub fn is_held(&self) -> bool {
+        self.mixer().held
+    }
+
     /// Reads more of each piece of music, so that a second of it is always ready to play.
     fn feed(&mut self) {
         let mixer = self.mixer.clone();

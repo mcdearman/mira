@@ -47,11 +47,13 @@ pub struct Mixer {
     pub(crate) rate: u32,
     /// Everything is this loud, 1 being as it is.
     pub(crate) volume: f32,
+    /// Everything is held where it is and nothing is heard, as while an app is put away.
+    pub(crate) held: bool,
 }
 
 impl Mixer {
     pub(crate) fn new(rate: u32) -> Self {
-        Self { voices: Vec::new(), next: 1, rate: rate.max(1), volume: 1.0 }
+        Self { voices: Vec::new(), next: 1, rate: rate.max(1), volume: 1.0, held: false }
     }
 
     pub(crate) fn play(&mut self, source: Source, gain: [f32; 2], pitch: f32, looping: bool) -> VoiceId {
@@ -116,6 +118,9 @@ impl Mixer {
     /// the left ear and the right, any others silent. Sounds that end in it are let go.
     pub fn mix(&mut self, out: &mut [f32], channels: usize) {
         out.fill(0.0);
+        if self.held {
+            return;
+        }
         let channels = channels.max(1);
         let (rate, volume) = (self.rate as f64, self.volume);
         self.voices.retain_mut(|voice| {
@@ -280,6 +285,21 @@ mod tests {
         mixer.mix(&mut out, 1);
         assert_eq!(out, [0.75, 1.0, 0.0, 0.0]);
         assert!(!mixer.is_playing(voice), "its end reached, it is gone");
+    }
+
+    #[test]
+    fn everything_held_is_silent_and_goes_on_from_where_it_was() {
+        let mut mixer = Mixer::new(10);
+        mixer.play(memory(&[0.25, 0.5], 1, 10), [1.0, 1.0], 1.0, false);
+        let mut out = [0.0; 1];
+        mixer.mix(&mut out, 1);
+        mixer.held = true;
+        out = [9.0];
+        mixer.mix(&mut out, 1);
+        assert_eq!((out, mixer.playing()), ([0.0], 1));
+        mixer.held = false;
+        mixer.mix(&mut out, 1);
+        assert_eq!(out, [0.5]);
     }
 
     #[test]
