@@ -30,6 +30,8 @@ jobs:
       env:
         CARGO_PROFILE_DEV_OPT_LEVEL: 3
         CARGO_PROFILE_DEV_DEBUG: 0
+        # Without the names of things, which a phone has no use for: half the size.
+        CARGO_PROFILE_DEV_STRIP: symbols
       run: |
         export ANDROID_NDK_ROOT="$ANDROID_NDK_LATEST_HOME"
         # For a phone, and then for the pretended phone below, whose processor is another:
