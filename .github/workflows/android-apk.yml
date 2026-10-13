@@ -36,5 +36,6 @@ jobs:
     - uses: actions/upload-artifact@v4
       with:
         name: tail-lights-apk
-        path: target/debug/apk/*.apk
+        # The one to put on a phone; the other beside it is the same before it was aligned.
+        path: target/debug/apk/tail-lights.apk
         if-no-files-found: error
