@@ -1,5 +1,6 @@
 //! The foot battery: six Gribeauval 12-pounders firing at the butts.
 
+use crate::smoke::Kinds as _;
 use std::f32::consts::{FRAC_PI_2, TAU};
 
 use mira::{

@@ -15,6 +15,7 @@ mod instances;
 mod lights;
 mod mesh;
 mod motion;
+mod particles;
 mod post;
 mod probes;
 mod raytrace;
@@ -44,6 +45,7 @@ pub use graph::{slots, Pass, PassContext, PassInfo, RenderGraph, TargetDesc};
 pub use image::{Image, Processed};
 pub use lights::{PointLight, SpotLight};
 pub use mesh::{Mesh, Mesh3d, Vertex};
+pub use particles::{Particle, ParticleEmitter, Particles, MAX_PARTICLES};
 pub use post::PostProcess;
 pub use shaders::{Install, Rebuild, Shader, ShaderReload};
 pub use raytrace::{GeometryId, HitMaterial, RayTracing, RayTracingSettings};
@@ -1367,9 +1369,11 @@ impl Plugin for RenderPlugin {
             .add_systems(Stage::PreStartup, init_gpu)
             .add_systems(Stage::PreUpdate, resize)
             .add_systems(Stage::PostUpdate, (animation::follow_playing, animate, gait::walk, reach::reach))
+            .init_resource::<Particles>()
+            .add_systems(Stage::Last, particles::simulate)
             .add_systems(Stage::Last, follow_sun)
             .add_systems(Stage::Extract, (sync_instances, extract, extract_skins))
-            .add_systems(Stage::Prepare, prepare)
+            .add_systems(Stage::Prepare, (prepare, particles::prepare))
             .add_systems(Stage::Render, render);
         app.world.insert_resource(frame_graph());
         // What an entity draws is kept on the card, so the card is told when it stops.
@@ -1385,6 +1389,7 @@ impl Plugin for RenderPlugin {
         app.world.init_resource::<DebugLines>();
         app.world.init_resource::<DrawFunctions>();
         app.world.init_resource::<TransparentDrawFunctions>();
+        app.world.resource_mut::<TransparentDrawFunctions>().0.push(particles::draw);
         app.world.init_resource::<ShadowDrawFunctions>();
         app.world
             .resource_mut::<DrawFunctions>()

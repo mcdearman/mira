@@ -1,6 +1,7 @@
 //! Lays out the countryside: land, river, village, bridge, windmill, woods and hedgerows,
 //! and where the army stands.
 
+use crate::smoke::Kinds as _;
 use std::f32::consts::TAU;
 
 use mira::{

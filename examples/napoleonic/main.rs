@@ -81,7 +81,6 @@ fn main() -> anyhow::Result<()> {
                 world::init,
                 army::setup,
                 artillery::setup,
-                smoke::init,
                 scene::light_fires,
             ),
         )
