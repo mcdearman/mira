@@ -701,6 +701,21 @@ fn handle(app: &mut App, request: &Value) -> Answer {
                 injected.type_text(text.clone());
                 played += 1;
             }
+            // A controller's button, pressed as a key is, and a stick or trigger put somewhere.
+            if let Some(Value::Text(name)) = request.field("pad_button") {
+                let button = crate::gamepad::PadButton::named(&format!("Pad{name}"))
+                    .or_else(|| crate::gamepad::PadButton::named(name))
+                    .ok_or_else(|| format!("there is no controller button `{name}`; they are named like South, LeftBumper, Start, Up"))?;
+                play_button(injected, action, frames, |down| Played::PadButton(button, down))?;
+                played += 1;
+            }
+            if let Some(Value::Text(name)) = request.field("pad_axis") {
+                let axis = crate::gamepad::PadAxis::named(&format!("Pad{name}"))
+                    .or_else(|| crate::gamepad::PadAxis::named(name))
+                    .ok_or_else(|| format!("there is no controller axis `{name}`; they are LeftX, LeftY, RightX, RightY, LeftPull and RightPull"))?;
+                injected.play(Played::PadAxis(axis, number(request, "value")? as f32));
+                played += 1;
+            }
             // A finger: down at one place, drawn to another over the frames, and lifted.
             if let Some(from) = pair("touch")? {
                 let to = pair("touch_to")?.unwrap_or(from);
@@ -709,7 +724,7 @@ fn handle(app: &mut App, request: &Value) -> Answer {
             }
             if played == 0 {
                 return Err(
-                    "give a `key`, a `mouse_button`, `mouse_motion`, `mouse_position`, `mouse_scroll`, `text` or `touch`"
+                    "give a `key`, a `mouse_button`, `mouse_motion`, `mouse_position`, `mouse_scroll`, `text`, `touch`, a `pad_button` or a `pad_axis`"
                         .to_owned(),
                 );
             }
@@ -1699,6 +1714,30 @@ mod tests {
         app.update();
         assert!(app.world.resource::<Actions>().just_pressed("fire"));
         assert!(refused(&mut app, "{'cmd': 'input', 'touch': 4}").contains("two numbers"));
+    }
+
+    #[test]
+    fn a_controller_is_played_in_from_outside() {
+        use crate::{
+            actions::Actions,
+            gamepad::{PadAxis, PadButton},
+        };
+        let mut app = app();
+        app.add_plugins(crate::input::InputPlugin);
+        app.world.resource_mut::<Actions>().bind("jump", PadButton::South).bind_stick("across", PadAxis::LeftX);
+        ask(&mut app, "{'cmd': 'input', 'pad_button': 'South', 'frames': 2}");
+        ask(&mut app, "{'cmd': 'input', 'pad_axis': 'LeftX', 'value': -1}");
+        app.update();
+        let actions = app.world.resource::<Actions>();
+        assert!(actions.just_pressed("jump") && actions.value("across") == -1.0);
+        app.update();
+        assert!(app.world.resource::<Actions>().pressed("jump"));
+        app.update();
+        let actions = app.world.resource::<Actions>();
+        // The button is let go; the stick stays where it was put.
+        assert!(actions.just_released("jump") && actions.value("across") == -1.0);
+        assert!(refused(&mut app, "{'cmd': 'input', 'pad_button': 'Turbo'}").contains("South"));
+        assert!(refused(&mut app, "{'cmd': 'input', 'pad_axis': 'LeftX'}").contains("value"));
     }
 
     #[test]

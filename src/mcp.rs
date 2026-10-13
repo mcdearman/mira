@@ -176,7 +176,7 @@ const TOOLS: &[Tool] = &[
     },
     Tool {
         command: "input",
-        about: "Plays input into the game as if at the keyboard and mouse, so the game can be played, not only inspected. It arrives at the start of the next simulated frame, so with a paused game follow it with `step`. Keys are named as winit names them: KeyW, Space, ArrowLeft, Digit1, ShiftLeft, Enter, Escape, F5.",
+        about: "Plays input into the game as if at the keyboard and mouse, a touch screen or a game controller, so the game can be played, not only inspected. It arrives at the start of the next simulated frame, so with a paused game follow it with `step`. Keys are named as winit names them: KeyW, Space, ArrowLeft, Digit1, ShiftLeft, Enter, Escape, F5.",
         arguments: &[
             "key?: string: a key name",
             "mouse_button?: string: left, right or middle",
@@ -188,6 +188,9 @@ const TOOLS: &[Tool] = &[
             "text?: string: text to type into whichever field of the game's interface has the keyboard (click the field first); a line break in it is Enter. It arrives even while the game is paused, and the game's own keys do not see it",
             "touch?: array: [x, y] in pixels where a finger goes down on the screen; lifted there rames later, it is a tap",
             "touch_to?: array: [x, y] where the finger is drawn to before it is lifted: a swipe, where that is far enough",
+            "pad_button?: string: a button of a game controller, by where it is on it: South, East, West, North, LeftBumper, RightBumper, LeftTrigger, RightTrigger, Select, Start, LeftStick, RightStick, Up, Down, Left, Right. Pressed as a key is, with `action` and `frames`",
+            "pad_axis?: string: a stick or trigger of a game controller to put at `value`: LeftX, LeftY, RightX, RightY (-1 to 1; right and up are more), LeftPull, RightPull (0 to 1). It stays there until put elsewhere",
+            "value?: number: where `pad_axis` is put",
         ],
     },
     Tool {
@@ -912,7 +915,7 @@ mod tests {
 
         // Nothing to play is still a refusal that says what can be played.
         let (why, failed) = tool(&mut game, "mira_input", "{}");
-        assert!(failed && why[0].contains("or `touch`"), "{why:?}");
+        assert!(failed && why[0].contains("or a `pad_axis`"), "{why:?}");
     }
 
     #[test]

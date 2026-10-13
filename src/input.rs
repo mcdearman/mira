@@ -95,10 +95,12 @@ fn clear_input(
     mut buttons: ResMut<ButtonInput<MouseButton>>,
     mut mouse: ResMut<Mouse>,
     mut touches: ResMut<crate::touch::Touches>,
+    mut pads: ResMut<crate::gamepad::Gamepads>,
 ) {
     keys.clear();
     buttons.clear();
     touches.clear();
+    pads.clear();
     mouse.delta = Vec2::ZERO;
     mouse.scroll = Vec2::ZERO;
 }
@@ -119,7 +121,14 @@ pub enum Played {
     TouchDown(u64, Vec2),
     TouchMove(u64, Vec2),
     TouchUp(u64, Vec2),
+    /// A button of a controller went down or came up, or one of its sticks or triggers
+    /// moved. The controller is one of the engine's own, there for as long as it is played.
+    PadButton(crate::gamepad::PadButton, bool),
+    PadAxis(crate::gamepad::PadAxis, f32),
 }
+
+/// The number of the controller that input played in comes from.
+pub const PLAYED_PAD: u64 = u64::MAX;
 
 /// Input waiting to be played into the game. It arrives at the start of the next frame the
 /// simulation runs, so what is played into a paused game is there, pressed that very frame,
@@ -187,8 +196,8 @@ impl InjectedInput {
 /// Plays injected input into the input resources at the start of a frame. In a frame the
 /// simulation runs (`running`), everything that is due; in a frame it is held still, only
 /// the pointer, as a real mouse would still move and click over a paused game's interface.
-/// Keys wait for the game to run, so that a key pressed into a paused game is pressed on the
-/// first frame stepped.
+/// Keys and controllers wait for the game to run, so that a key pressed into a paused game is
+/// pressed on the first frame stepped.
 pub(crate) fn play_injected(world: &mut World, running: bool) {
     let Some(injected) = world.get_resource_mut::<InjectedInput>() else {
         return;
@@ -199,7 +208,7 @@ pub(crate) fn play_injected(world: &mut World, running: bool) {
     } else {
         let (pointer, keys) = std::mem::take(&mut injected.now)
             .into_iter()
-            .partition(|played| !matches!(played, Played::Key(..)));
+            .partition(|played| !matches!(played, Played::Key(..) | Played::PadButton(..) | Played::PadAxis(..)));
         injected.now = keys;
         pointer
     };
@@ -231,6 +240,9 @@ pub(crate) fn play_injected(world: &mut World, running: bool) {
             Played::TouchDown(id, at) => world.resource_mut::<crate::touch::Touches>().began(id, at),
             Played::TouchMove(id, to) => world.resource_mut::<crate::touch::Touches>().moved(id, to),
             Played::TouchUp(id, at) => world.resource_mut::<crate::touch::Touches>().ended(id, at),
+            Played::PadButton(button, true) => world.resource_mut::<crate::gamepad::Gamepads>().press(PLAYED_PAD, button),
+            Played::PadButton(button, false) => world.resource_mut::<crate::gamepad::Gamepads>().release(PLAYED_PAD, button),
+            Played::PadAxis(axis, value) => world.resource_mut::<crate::gamepad::Gamepads>().set_axis(PLAYED_PAD, axis, value),
             Played::Scroll(lines) => {
                 world.resource_mut::<Mouse>().scroll += lines;
                 heard.push(winit::event::WindowEvent::MouseWheel {
@@ -365,6 +377,7 @@ impl Plugin for InputPlugin {
             .init_resource::<InjectedInput>()
             .init_resource::<crate::actions::Actions>()
             .init_resource::<crate::touch::Touches>()
+            .init_resource::<crate::gamepad::Gamepads>()
             // Before anything of the game reads them: the mouse as a finger where that is
             // asked for, and then the actions, which fingers press as keys do.
             .add_systems(Stage::First, (crate::touch::mouse_as_a_finger, crate::actions::update_actions).chain())
