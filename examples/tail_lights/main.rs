@@ -551,7 +551,8 @@ fn watch_itself(game: Res<Game>, cars: Query<(&Car, &Transform)>, mut keys: ResM
     }
 }
 
-fn main() -> anyhow::Result<()> {
+// Public so that what begins the game on a phone (`android/tail_lights`) can call it.
+pub fn main() -> anyhow::Result<()> {
     let asked = |word: &str| std::env::args().skip(1).any(|arg| arg == word);
     let kept = std::fs::read_to_string(best_file()).unwrap_or_default();
     let mut kept = kept.split_whitespace().map(|number| number.parse().unwrap_or(0));
