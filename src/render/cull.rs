@@ -37,8 +37,14 @@ struct ViewsRaw {
 
 /// Whether the card can decide what is seen: it must be able to begin an indirect draw's
 /// instances at a number of our choosing. `MIRA_CULL=cpu` keeps the processor's way.
+///
+/// On a phone the processor's way is kept unless `MIRA_CULL=gpu` asks otherwise: phones'
+/// graphics say they can do this and some then draw nothing (a Galaxy S26 showed only the
+/// sky), and until each kind has been tried the way that is sure is the one to use.
 pub(crate) fn supported(gpu: &Gpu) -> bool {
-    gpu.device.features().contains(wgpu::Features::INDIRECT_FIRST_INSTANCE) && std::env::var("MIRA_CULL").as_deref() != Ok("cpu")
+    let asked = std::env::var("MIRA_CULL");
+    let phone = cfg!(any(target_os = "android", target_os = "ios"));
+    gpu.device.features().contains(wgpu::Features::INDIRECT_FIRST_INSTANCE) && if phone { asked.as_deref() == Ok("gpu") } else { asked.as_deref() != Ok("cpu") }
 }
 
 pub(crate) struct Culler {
