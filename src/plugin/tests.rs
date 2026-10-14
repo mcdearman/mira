@@ -485,6 +485,99 @@ fn position(app: &App, entity: Entity) -> Vec3 {
     app.world.get::<Transform>(entity).unwrap().translation
 }
 
+/// Asks for voxels, finds the ground under it with a ray, puts a block of stone on it, and
+/// says what it found as signals.
+const BUILDER: &str = r#"
+static MiraComponent transform_c;
+static int32_t *placed, ground;
+
+static void say(MiraSystem *s, const char *name, size_t len, double value) {
+    api->signal_set(s, name, len, value, 1);
+}
+
+static void setup(MiraSystem *s, void *user) {
+    MiraTransform high = {{0.5f, 90, 0.5f}, 0, {0, 0, 0, 1}, {1, 1, 1}, 0};
+    MiraEntity eye = api->spawn(s);
+    api->insert(s, eye, transform_c, &high);
+    api->set_chunk_viewer(s, eye);
+    say(s, MIRA_STR("built.unknown"), api->voxel_block(s, MIRA_STR("unobtainium")) == MIRA_BLOCK_UNKNOWN);
+    say(s, MIRA_STR("built.air"), api->voxel_block(s, MIRA_STR("air")));
+    api->set_cursor_grabbed(s, 1); /* no window: nothing happens */
+    say(s, MIRA_STR("built.grabbed"), api->cursor_grabbed(s));
+}
+
+static void build(MiraSystem *s, void *user) {
+    float from[3] = {0.5f, 120, 0.5f}, down[3] = {0, -3, 0};
+    MiraVoxelHit hit;
+    if (!api->voxel_raycast(s, from, down, 200, &hit)) return;
+    int32_t x = hit.block[0], y = hit.block[1] + hit.normal[1], z = hit.block[2];
+    say(s, MIRA_STR("built.ground"), hit.block[1]);
+    say(s, MIRA_STR("built.facing_up"), hit.normal[1] == 1 && hit.normal[0] == 0 && hit.normal[2] == 0);
+    say(s, MIRA_STR("built.hit_solid"), api->voxel_solid(s, hit.block[0], hit.block[1], hit.block[2]));
+    say(s, MIRA_STR("built.kind_known"), hit.kind != MIRA_BLOCK_UNKNOWN && hit.kind != 0);
+    MiraBlock stone = api->voxel_block(s, MIRA_STR("stone"));
+    if (!*placed) {
+        say(s, MIRA_STR("built.above_was_air"), api->voxel_get(s, x, y, z) == 0 && !api->voxel_solid(s, x, y, z));
+        api->voxel_set(s, x, y, z, stone);
+        ground = hit.block[1];
+        *placed = 1;
+    } else {
+        /* The ray now stops on the stone, one higher. */
+        say(s, MIRA_STR("built.stone_there"), hit.kind == stone && hit.block[1] == ground + 1);
+        api->quit(s);
+    }
+}
+
+MIRA_EXPORT int32_t mira_plugin_load(const MiraApi *a, MiraApp *app) {
+    api = a;
+    if (api->require(app, MIRA_STR("dragons")) != -1) return -2;
+    if (api->require(app, MIRA_STR("voxels")) != 0) return -3;
+    transform_c = api->component_lookup(app, MIRA_STR("mira.Transform"), NULL, NULL);
+    placed = api->state(app, MIRA_STR("built.placed"), sizeof(int32_t), _Alignof(int32_t));
+    MiraSystemDesc systems[] = {
+        {MIRA_STR("setup"), MIRA_STAGE_STARTUP, 0, setup, NULL, NULL, 0},
+        {MIRA_STR("build"), MIRA_STAGE_UPDATE, 0, build, NULL, NULL, 0},
+    };
+    for (int i = 0; i < 2; i++)
+        if (api->system_add(app, &systems[i]) != 0) return -1;
+    return 0;
+}
+"#;
+
+#[test]
+fn a_plugin_asks_for_voxels_finds_the_ground_and_builds_on_it() {
+    use crate::{signal::Signals, voxel::VoxelWorld};
+    let workspace = Workspace::new("builder");
+    let library = workspace.compile("builder", BUILDER, &["ABI=MIRA_ABI_VERSION"]);
+    let mut app = app();
+    assert!(!app.world.contains_resource::<VoxelWorld>());
+    app.load_native_plugin(&library).expect("it asked for voxels, and for something there is none of");
+    assert!(app.world.contains_resource::<VoxelWorld>(), "asked for, voxels were added");
+    // The world is made on other threads around the viewer: frames until it has been built on.
+    let began = std::time::Instant::now();
+    while !app.should_exit() {
+        assert!(began.elapsed() < std::time::Duration::from_secs(60), "the stone was never placed");
+        app.update();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    // What a plugin says in a frame the signals have in the next.
+    app.update();
+    let signals = app.world.resource::<Signals>();
+    for (name, expected) in [
+        ("built.unknown", 1.0),
+        ("built.air", 0.0),
+        ("built.grabbed", 0.0),
+        ("built.facing_up", 1.0),
+        ("built.hit_solid", 1.0),
+        ("built.kind_known", 1.0),
+        ("built.above_was_air", 1.0),
+        ("built.stone_there", 1.0),
+    ] {
+        assert_eq!(signals.number(name), expected, "{name}");
+    }
+    assert!(signals.number("built.ground") > 0.0);
+}
+
 /// The cut-down header that a language binding starts from describes the counter's calls at
 /// the places the engine fills: built against it alone, the counter runs as it does against
 /// the full one, and its table is the size the engine says.
@@ -1596,6 +1689,68 @@ fn the_sacred_sites_play_from_their_script() {
     }
     assert!(ran > 100 && stood > 20, "it ran for {ran} frames and stood for {stood}");
     assert!(app.world.resource::<Signals>().is_true("red.wins"), "half a minute on the clock in two: {last}");
+}
+
+/// The voxel world is a script: it asks for voxels, the world is made around its camera, its
+/// cubes turn, and a ball it throws falls, bounces and comes to rest on the ground.
+#[test]
+fn the_voxel_world_plays_from_its_script() {
+    use crate::{assets::Assets, input::{InjectedInput, InputPlugin, KeyCode}, render::Mesh, time::Time, voxel::{ChunkViewer, VoxelWorld}};
+    if !have_ghc() {
+        return;
+    }
+    let workspace = Workspace::new("voxel-example");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/voxel_world/World.hs");
+    std::fs::copy(script, workspace.dir.join("World.hs")).unwrap();
+
+    let mut app = app();
+    app.add_plugins(InputPlugin).init_resource::<Assets<Mesh>>();
+    app.load_scripts(&workspace.dir).unwrap();
+    assert!(app.script_problems().next().is_none(), "{:?}", app.script_problems().next());
+    assert!(app.world.contains_resource::<VoxelWorld>(), "it asked for voxels");
+    app.world.resource_mut::<Time>().set_fixed_step(Some(std::time::Duration::from_secs_f64(1.0 / 60.0)));
+    // The world is made on other threads around the camera: frames until there is ground below.
+    let began = std::time::Instant::now();
+    while app.world.resource::<VoxelWorld>().chunk_count() < 20 {
+        assert!(began.elapsed() < std::time::Duration::from_secs(60), "no world was made");
+        app.update();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let (eye, _) = app.world.query::<(Entity, &ChunkViewer)>().single();
+    let turning = |app: &mut App| app.world.query::<&Transform>().iter().map(|at| at.rotation).collect::<Vec<_>>();
+    let before = turning(&mut app);
+    app.update();
+    assert_ne!(turning(&mut app), before, "the cubes turn");
+
+    // A ball, thrown: it falls and comes to rest on something solid.
+    app.world.resource_mut::<InjectedInput>().tap(KeyCode::KeyF, 1);
+    for _ in 0..3 {
+        app.update();
+    }
+    let ball = app.world.named_component_id("world.Ball").expect("the script's ball component");
+    let key = app.world.named_component(ball).unwrap().key;
+    let placed: Vec<Entity> = app.world.query::<(Entity, &Transform)>().iter().map(|(entity, _)| entity).collect();
+    let balls: Vec<Entity> = placed.into_iter().filter(|entity| {
+        // SAFETY: nothing else is using the world.
+        unsafe { app.world.erased_storage(key).unwrap().value_ptr(*entity).is_some() }
+    }).collect();
+    assert_eq!(balls.len(), 1, "F throws one ball");
+    let thrown = balls[0];
+    assert_ne!(thrown, eye);
+    // Ten seconds of it: it has come down from where it was thrown, and is never inside a block.
+    let thrown_from = position(&app, thrown).y;
+    for _ in 0..600 {
+        app.update();
+        let at = position(&app, thrown);
+        let registry = app.world.resource::<crate::voxel::BlockRegistry>();
+        assert!(!app.world.resource::<VoxelWorld>().is_solid(registry, at.floor().as_ivec3()), "the ball is inside a block at {at}");
+    }
+    assert!(position(&app, thrown).y < thrown_from - 10.0, "it fell: {}", position(&app, thrown));
+    // And after fifteen seconds it is gone.
+    for _ in 0..330 {
+        app.update();
+    }
+    assert!(app.world.get::<Transform>(thrown).is_none(), "the ball is cleared away");
 }
 
 #[test]

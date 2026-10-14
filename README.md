@@ -19,15 +19,16 @@ cargo run -- chase scoreboard     # the app, on a game made of plugins
 
 The game is in one panel; around it are its entities as a tree, an inspector that edits the
 chosen one, its signals, and a conversation with an agent. See [docs/EDITOR.md](docs/EDITOR.md).
-Everything else here is an example, run by name:
+Everything else here is an example. Most are games written as scripts, played with the
+player, which builds them (it needs GHC):
 
 ```
-cargo run --release --example voxel_world
+cargo run --release --bin mira-play -- examples/voxel_world
 ```
 
 In the voxel world, click to capture the mouse, then: WASD / Space / Shift to fly (Ctrl to go fast), left click to
-break a block, right click to place one (1-4 picks which), F to throw a ball, F2 for a
-screenshot, Esc to release the mouse and again to quit.
+break a block, right click to place one (1-4 picks which), F to throw a ball, Esc to release
+the mouse and again to quit. The whole game is [`examples/voxel_world/World.hs`](examples/voxel_world/World.hs).
 
 ## Demos
 
@@ -152,7 +153,6 @@ Where the engine is headed: [docs/ROADMAP.md](docs/ROADMAP.md).
 cargo test
 cargo +nightly miri test -p mira_ecs        # the ECS's unsafe code
 scripts/check.sh --tsan-only                # the ECS's threads, under ThreadSanitizer
-MIRA_SCREENSHOT=frame.png cargo run --release --example voxel_world   # render a frame to a file and quit
 MIRA_FRAME_TESTS=1 cargo test --test frames     # draw fixed scenes and compare with stored frames
 ```
 

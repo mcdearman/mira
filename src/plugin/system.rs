@@ -133,6 +133,8 @@ impl System for DynamicSystem {
         access.read_resource::<Audio>();
         access.write_resource::<Assets<Sound>>();
         access.write_resource::<SoundNames>();
+        access.read_resource::<crate::voxel::VoxelWorld>();
+        access.read_resource::<crate::voxel::BlockRegistry>();
         self.access = Some(access);
     }
 

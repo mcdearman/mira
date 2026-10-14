@@ -405,6 +405,14 @@ struct Callback {
 }
 
 impl App {
+    /// Says the game needs a part of the engine not every game has: `voxels`. Ask the first
+    /// time the plugin loads.
+    pub fn require(&mut self, part: &str) -> Result<(), Error> {
+        // SAFETY: called during load with the engine's pointer; the engine copies the name.
+        let status = unsafe { (api().require)(self.raw, part.as_ptr(), part.len()) };
+        if status == 0 { Ok(()) } else { Err(Error(format!("there is no part of the engine called `{part}`"))) }
+    }
+
     /// Defines a component stored as the bytes of `T`, or finds it if this plugin defined it
     /// before a reload (its values are kept as long as `T`'s size and alignment are unchanged).
     pub fn register<T: Copy + 'static>(&mut self, name: &str) -> Result<Component<T>, Error> {
@@ -720,6 +728,64 @@ pub struct System {
 }
 
 impl System {
+    /// The kind of block with a name (`"stone"`), or `None`. Air is 0.
+    pub fn voxel_block(&self, name: &str) -> Option<u32> {
+        // SAFETY: called inside the system; the engine copies the name.
+        let block = unsafe { (api().voxel_block)(self.raw, name.as_ptr(), name.len()) };
+        (block != sys::MIRA_BLOCK_UNKNOWN).then_some(block)
+    }
+
+    /// The kind of block at a place, or `None` where the world is not made yet.
+    pub fn voxel(&self, at: [i32; 3]) -> Option<u32> {
+        // SAFETY: called inside the system.
+        let block = unsafe { (api().voxel_get)(self.raw, at[0], at[1], at[2]) };
+        (block != sys::MIRA_BLOCK_UNKNOWN).then_some(block)
+    }
+
+    /// Puts a kind of block at a place (0, air, takes one away), when this system returns.
+    pub fn set_voxel(&mut self, at: [i32; 3], block: u32) {
+        // SAFETY: called inside the system.
+        unsafe { (api().voxel_set)(self.raw, at[0], at[1], at[2], block) }
+    }
+
+    /// Whether the block at a place is solid, or the world is not made there yet.
+    pub fn voxel_solid(&self, at: [i32; 3]) -> bool {
+        // SAFETY: called inside the system.
+        unsafe { (api().voxel_solid)(self.raw, at[0], at[1], at[2]) != 0 }
+    }
+
+    /// The first solid block along a ray within `reach`.
+    pub fn voxel_raycast(&self, origin: [f32; 3], direction: [f32; 3], reach: f32) -> Option<sys::MiraVoxelHit> {
+        let mut hit = sys::MiraVoxelHit::default();
+        // SAFETY: called inside the system; the arrays and `hit` are valid for the call.
+        let found = unsafe { (api().voxel_raycast)(self.raw, origin.as_ptr(), direction.as_ptr(), reach, &mut hit) };
+        (found != 0).then_some(hit)
+    }
+
+    /// Makes the entity the one the world is made around, when this system returns.
+    pub fn set_chunk_viewer(&mut self, entity: Entity) {
+        // SAFETY: called inside the system.
+        unsafe { (api().set_chunk_viewer)(self.raw, entity.0) }
+    }
+
+    /// Holds the pointer to the window and hides it, or lets it go.
+    pub fn set_cursor_grabbed(&mut self, grabbed: bool) {
+        // SAFETY: called inside the system.
+        unsafe { (api().set_cursor_grabbed)(self.raw, grabbed as u32) }
+    }
+
+    /// Whether the pointer is held.
+    pub fn cursor_grabbed(&self) -> bool {
+        // SAFETY: called inside the system.
+        unsafe { (api().cursor_grabbed)(self.raw) != 0 }
+    }
+
+    /// Ends the game after this frame.
+    pub fn quit(&mut self) {
+        // SAFETY: called inside the system.
+        unsafe { (api().quit)(self.raw) }
+    }
+
     /// Seconds since the last frame (or the fixed timestep, in `FixedUpdate`).
     pub fn delta(&self) -> f32 {
         // SAFETY: called inside the system with the engine's pointer.

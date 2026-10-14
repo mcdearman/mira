@@ -384,6 +384,7 @@ fn install(app: &mut App, plugin: &mut Loaded) -> anyhow::Result<()> {
         systems: Vec::new(),
         components: Vec::new(),
         orders: Vec::new(),
+        required: Vec::new(),
     };
     // SAFETY: as above. The registrar outlives the call, and the plugin may not keep it.
     let status = unsafe { load(&api::API, (&raw mut registrar).cast()) };
@@ -391,6 +392,7 @@ fn install(app: &mut App, plugin: &mut Loaded) -> anyhow::Result<()> {
         systems,
         components,
         orders,
+        required,
         ..
     } = registrar;
 
@@ -444,6 +446,15 @@ fn install(app: &mut App, plugin: &mut Loaded) -> anyhow::Result<()> {
         app.schedule_mut(stage).set_order(&name, before, after);
     }
 
+    // The parts of the engine the game said it needs, added if they are not there.
+    for part in required {
+        if part == "voxels" && !app.world.contains_resource::<crate::voxel::VoxelWorld>() {
+            if app.is_started() {
+                log::warn!("plugin `{}` asked for voxels after the game began: they are made, and are not drawn", plugin.name);
+            }
+            app.add_plugins(crate::voxel::VoxelPlugin::default());
+        }
+    }
     plugin.components = components;
     plugin.library = Some(library);
     plugin.copy = Some(copy.keep());

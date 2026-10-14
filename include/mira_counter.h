@@ -150,6 +150,16 @@ typedef struct MiraApi {
     void *set_sound_source; /* not described here: see mira.h */
     void *set_listener; /* not described here: see mira.h */
     void *set_master_volume; /* not described here: see mira.h */
+    void *require; /* not described here: see mira.h */
+    void *voxel_block; /* not described here: see mira.h */
+    void *voxel_get; /* not described here: see mira.h */
+    void *voxel_set; /* not described here: see mira.h */
+    void *voxel_solid; /* not described here: see mira.h */
+    void *voxel_raycast; /* not described here: see mira.h */
+    void *set_chunk_viewer; /* not described here: see mira.h */
+    void *set_cursor_grabbed; /* not described here: see mira.h */
+    void *cursor_grabbed; /* not described here: see mira.h */
+    void *quit; /* not described here: see mira.h */
 } MiraApi;
 
 /* Expands a string literal to the (pointer, length) pair the API takes. */
