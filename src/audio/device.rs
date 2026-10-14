@@ -38,7 +38,7 @@ fn start(mixer: Arc<Mutex<Mixer>>) -> Result<(cpal::Stream, u32), String> {
     let supported = device.default_output_config().map_err(|err| err.to_string())?;
     let format = supported.sample_format();
     let config: cpal::StreamConfig = supported.into();
-    let (channels, rate) = (config.channels as usize, config.sample_rate);
+    let (channels, rate) = (config.channels as usize, config.sample_rate.0);
     mixer.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).rate = rate;
     let failed = |err| log::error!("the sound output failed: {err}");
     // What the device wants its samples as: the mixer makes floats, which are turned into
@@ -46,9 +46,9 @@ fn start(mixer: Arc<Mutex<Mixer>>) -> Result<(cpal::Stream, u32), String> {
     let mix = move |into: &mut [f32]| mixer.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).mix(into, channels);
     let mut floats: Vec<f32> = Vec::new();
     let stream = match format {
-        cpal::SampleFormat::F32 => device.build_output_stream(config, move |out: &mut [f32], _: &cpal::OutputCallbackInfo| mix(out), failed, None),
+        cpal::SampleFormat::F32 => device.build_output_stream(&config, move |out: &mut [f32], _: &cpal::OutputCallbackInfo| mix(out), failed, None),
         cpal::SampleFormat::I16 => device.build_output_stream(
-            config,
+            &config,
             move |out: &mut [i16], _: &cpal::OutputCallbackInfo| {
                 floats.resize(out.len(), 0.0);
                 mix(&mut floats);
@@ -60,7 +60,7 @@ fn start(mixer: Arc<Mutex<Mixer>>) -> Result<(cpal::Stream, u32), String> {
             None,
         ),
         cpal::SampleFormat::U16 => device.build_output_stream(
-            config,
+            &config,
             move |out: &mut [u16], _: &cpal::OutputCallbackInfo| {
                 floats.resize(out.len(), 0.0);
                 mix(&mut floats);

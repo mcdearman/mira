@@ -16,7 +16,7 @@ libloading = "0.8"
 anyhow = "1"
 bytemuck = { version = "1.13", features = ["derive"] }
 # Sound: the machine's output, and reading Ogg Vorbis. WAV files are read by hand.
-cpal = "0.18"
+cpal = "0.15"
 lewton = "0.10"
 env_logger = "0.11"
 glam = { version = "0.30", features = ["bytemuck"] }
@@ -37,6 +37,9 @@ intel_tex_2 = "0.5"
 # On Android the window is the activity's that the game is started in.
 [target.'cfg(target_os = "android")'.dependencies]
 winit = { version = "0.30.12", features = ["android-native-activity"] }
+# Sound there goes out through a library written in C++, which needs that language's own
+# library beside it: the shared one, which a package carries with it.
+cpal = { version = "0.15", features = ["oboe-shared-stdcxx"] }
 
 # Debug builds keep what a failure's stack needs (functions by their full names, files and
 # lines) and no more: with full debug information the build folder passed 45 GB. The

@@ -7,8 +7,6 @@ on:
   pull_request:
     paths:
       - 'android/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
       - '.github/workflows/android-apk.yml'
 
 concurrency:
