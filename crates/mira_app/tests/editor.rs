@@ -24,8 +24,8 @@ use neo::testing::Harness;
 use neo::App as _;
 use neo::{Event, Key, Point, PointerButton, Size};
 
-#[path = "../../../examples/sacred_sites/game.rs"]
-mod game;
+/// The game the app is opened on: the sacred sites, a folder of scripts.
+const GAME: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/sacred_sites");
 
 const TICK: Duration = Duration::from_millis(16);
 
@@ -72,7 +72,9 @@ fn the_app_is_worked_by_clicking_on_it() {
         eprintln!("skipped: set MIRA_FRAME_TESTS=1 on a machine with a graphics card");
         return;
     }
-    let game = game::build(false).expect("the game");
+    let mut game = mira::prelude::App::new();
+    game.add_plugins(mira::prelude::DefaultPlugins);
+    game.load_scripts(GAME).expect("the game's scripts");
     let mut window = Harness::new(
         Editor::new(game).with_first_layout().with_agent(Scripted),
         Size::new(1100.0, 700.0),

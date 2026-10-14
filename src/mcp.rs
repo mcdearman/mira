@@ -25,7 +25,7 @@ struct Tool {
 const TOOLS: &[Tool] = &[
     Tool {
         command: "launch",
-        about: "Starts a game for these tools to drive, and waits until it answers. Give the command that runs it, as you would type it in the project's folder (for example `cargo run --example sacred_sites -- --headless`). The game is told where to listen; anything it prints goes to a log that `mira_log` reads. One game at a time: launching again stops the one before.",
+        about: "Starts a game for these tools to drive, and waits until it answers. Give the command that runs it, as you would type it in the project's folder (for example `cargo run --bin mira-play -- examples/sacred_sites --headless`). The game is told where to listen; anything it prints goes to a log that `mira_log` reads. One game at a time: launching again stops the one before.",
         arguments: &[
             "command: string: the command line that runs the game",
             "folder?: string: the folder to run it in (default: where this server was started)",

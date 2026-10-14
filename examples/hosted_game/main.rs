@@ -10,10 +10,10 @@
 //! cargo run --example hosted_game -- frame.png
 //! ```
 
-use mira::render::Screenshot;
+use mira::{prelude::*, render::Screenshot};
 
-#[path = "../sacred_sites/game.rs"]
-mod game;
+/// The game that is hosted: the sacred sites, which are a folder of scripts.
+const GAME: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/sacred_sites");
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -24,7 +24,9 @@ fn main() -> anyhow::Result<()> {
     let adapter = pollster::block_on(instance.request_adapter(&Default::default()))?;
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default()))?;
 
-    let mut app = game::build(false)?;
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins);
+    app.load_scripts(GAME)?;
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
     app.host(device.clone(), queue, format, 640, 360);
     for frame in 0..60 {

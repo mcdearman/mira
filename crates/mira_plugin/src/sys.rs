@@ -84,6 +84,8 @@ pub const MIRA_SIGNAL_LESS_OR_EQUAL: u32 = 9;
 pub const MIRA_SIGNAL_EQUAL: u32 = 10;
 pub const MIRA_SIGNAL_GREATER_OR_EQUAL: u32 = 11;
 pub const MIRA_SIGNAL_GREATER: u32 = 12;
+pub const MIRA_SIGNAL_NUMBER: u32 = 13;
+pub const MIRA_SIGNAL_TRUTH: u32 = 14;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]

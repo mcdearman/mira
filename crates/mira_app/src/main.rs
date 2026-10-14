@@ -12,7 +12,7 @@
 //! keeps built: save a script while the app is open and the game goes on with it. Or it is a
 //! plugin built into Cargo's output directory (`chase`), or a path to a shared library;
 //! rebuild one while the app is open and it is reloaded. The samples are
-//! examples: `cargo run --example voxel_world`, `--example sacred_sites`, and so on.
+//! examples: `cargo run --example voxel_world`, `cargo run -- examples/sacred_sites`, and so on.
 
 use std::path::PathBuf;
 

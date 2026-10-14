@@ -1502,6 +1502,58 @@ fn the_sound_example_plays_from_its_script() {
     assert_ne!(position(&app, hummer), began, "the ball goes round");
 }
 
+/// The sacred sites are a script: its rules are signals, its facts are sources it states
+/// itself, and red's clock runs only while no scout is on a site.
+#[test]
+fn the_sacred_sites_play_from_their_script() {
+    use crate::{assets::Assets, render::Mesh, signal::Signals, signal_rules::Rules, time::Time};
+    if !have_ghc() {
+        return;
+    }
+    let workspace = Workspace::new("sites-example");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sacred_sites/Sites.hs");
+    std::fs::copy(script, workspace.dir.join("Sites.hs")).unwrap();
+
+    let mut app = app();
+    app.init_resource::<Assets<Mesh>>();
+    app.load_scripts(&workspace.dir).unwrap();
+    assert!(app.script_problems().next().is_none(), "{:?}", app.script_problems().next());
+    // A quarter of a second a frame, for two minutes of the game.
+    app.world.resource_mut::<Time>().set_fixed_step(Some(std::time::Duration::from_millis(250)));
+    for _ in 0..3 {
+        app.update();
+    }
+    {
+        let signals = app.world.resource::<Signals>();
+        // What the script works out for itself is a source; what it defined is a rule.
+        let kind = |name: &str| signals.graph().into_iter().find(|node| node.name == name).map(|node| node.kind);
+        assert_eq!(kind("blue.contesting").as_deref(), Some("source"));
+        assert_eq!(kind("red.clock").as_deref(), Some("timer"));
+        // So the rules as text are the script's eight, and its two facts are only named.
+        let text = Rules::of(signals).to_text();
+        assert_eq!(text.lines().count(), 8, "{text}");
+        assert!(text.contains("red.clock = timer(red.clock.running, red.clock.reset)") && text.contains("win_after = 60") && !text.contains("blue.contesting ="), "{text}");
+    }
+    // A setting is the script's to begin with and anyone's to change: half a minute will do.
+    app.world.resource_mut::<Signals>().set("win_after", 30.0);
+    let (mut ran, mut stood, mut last) = (0, 0, 0.0);
+    for _ in 0..480 {
+        app.update();
+        let signals = app.world.resource::<Signals>();
+        let clock = signals.number("red.clock");
+        assert!(clock >= last, "the clock never goes back while red holds every site");
+        // Running or standing still, as the rule of the frame before said it should.
+        if clock > last {
+            ran += 1;
+        } else {
+            stood += 1;
+        }
+        last = clock;
+    }
+    assert!(ran > 100 && stood > 20, "it ran for {ran} frames and stood for {stood}");
+    assert!(app.world.resource::<Signals>().is_true("red.wins"), "half a minute on the clock in two: {last}");
+}
+
 #[test]
 fn a_haskell_plugin_runs_and_reloads_repeatedly() {
     if !have_ghc() {

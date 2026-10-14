@@ -21,8 +21,9 @@ use mira_ui::{
     UiHost, UiPlugin,
 };
 
-#[path = "../../../examples/sacred_sites/game.rs"]
-mod game;
+/// The game itself is a script, built and loaded as the game begins: see
+/// `examples/sacred_sites/Sites.hs`.
+const GAME: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/sacred_sites");
 
 /// The round's controls. What it shows is copied in from the game every frame; what the
 /// player does with it is kept as requests for the game to carry out.
@@ -202,7 +203,9 @@ fn carry_out(world: &mut World) {
 }
 
 fn main() -> anyhow::Result<()> {
-    let mut app = game::build(false)?;
+    let mut app = App::new();
+    app.insert_resource(WindowSettings { title: "sacred sites".to_owned(), ..Default::default() }).add_plugins(DefaultPlugins);
+    app.load_scripts(GAME)?;
     app.add_plugins(mira_ui::signal_graph::plugin())
         .add_plugins(UiPlugin::new(Round::default).sync(show))
         .add_systems(Stage::First, carry_out);

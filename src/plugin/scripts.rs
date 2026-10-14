@@ -37,6 +37,37 @@ fn written(path: &Path, text: &str) -> Result<(), String> {
     std::fs::write(path, text).map_err(|err| format!("can't write {}: {err}", path.display()))
 }
 
+/// A turn at building a script, held by a file that is there while the build is: whoever
+/// makes the file has the turn, and takes the file away when done.
+struct Turn(PathBuf);
+
+impl Turn {
+    fn take(file: &Path) -> Result<Turn, String> {
+        let began = std::time::Instant::now();
+        loop {
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(file) {
+                Ok(_) => return Ok(Turn(file.to_owned())),
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // Left by a program that was stopped in the middle of a build: no build
+                    // takes as long as this.
+                    let left = std::fs::metadata(file).and_then(|file| file.modified()).is_ok_and(|made| made.elapsed().is_ok_and(|age| age.as_secs() > 300));
+                    if left || began.elapsed().as_secs() > 600 {
+                        let _ = std::fs::remove_file(file);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(err) => return Err(format!("can't make {}: {err}", file.display())),
+            }
+        }
+    }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// Builds a Haskell script into the plugin `name`, in the folder `out`, and says where the
 /// library is, or why there is none: what the compiler said, as it said it.
 ///
@@ -48,6 +79,9 @@ pub fn build_haskell(name: &str, source: &Path, out: &Path) -> Result<PathBuf, S
     for folder in [&work, &bindings] {
         std::fs::create_dir_all(folder).map_err(|err| format!("can't make {}: {err}", folder.display()))?;
     }
+    // One build of a script at a time, though two programs have the same game open (the
+    // engine app and the player, say): the second waits for the first.
+    let _turn = Turn::take(&work.join("building"))?;
     for (file, text) in BINDINGS {
         written(&bindings.join(file), text)?;
     }
