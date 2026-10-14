@@ -61,19 +61,23 @@ struct Lane {
 }
 
 /// How hard a road is: the further on, the more lanes, the faster, and the closer together.
+/// The first road is three slow lanes, and each road after is only a little harder than the
+/// last: a lane more every second road, and cars a fifth of a metre a second faster.
 fn lanes_of(level: u32) -> Vec<Lane> {
-    let count = (2 + level).min(9);
+    // How many roads have been crossed to get here.
+    let on = level.saturating_sub(1) as f32;
+    let count = (3 + level.saturating_sub(1) / 2).min(9);
     (0..count)
         .map(|lane| {
             // The same road every time it is played, and no two lanes alike.
             let seed = (level * 31 + lane * 17) as f32;
             let vary = |by: f32| (seed * by).sin() * 0.5 + 0.5;
-            let fast = 2.2 + level as f32 * 0.45 + vary(1.7) * (1.5 + level as f32 * 0.25);
+            let fast = 2.65 + on * 0.2 + vary(1.7) * (1.75 + on * 0.1);
             let lorries = vary(2.9) > 0.75;
             let length = if lorries { 4.4 } else { 2.4 };
             Lane {
                 speed: fast.min(13.0) * if lane % 2 == 0 { 1.0 } else { -1.0 },
-                spacing: (length + 3.4 + vary(4.3) * 5.0 - (level as f32 * 0.18).min(1.6)).max(length + 2.8),
+                spacing: (length + 3.4 + vary(4.3) * 5.0 - (0.18 + on * 0.08).min(1.6)).max(length + 2.8),
                 lorries,
             }
         })
