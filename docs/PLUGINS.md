@@ -253,9 +253,31 @@ with `colliderOf (Box half)`, `setBody` with `bodyOf Dynamic`, `raycast`, and
 `setTextures`, `spawnModel` and `spawnPrefab` load files. [Signals](SIGNALS.md#from-a-plugin)
 are set with `setSignal` and rules written as expressions with `defineRule`.
 
-Build with the script, which links the module with the bindings
-([`bindings/haskell/Mira.hs`](../bindings/haskell/Mira.hs)) and a small piece of C that starts
-the GHC runtime:
+### A game that is a folder of scripts
+
+A game need be nothing but scripts. Put its Haskell files in a folder and play it:
+
+```
+cargo run --bin mira-play -- plugins/chase     # the game, in a window
+cargo run -- plugins/chase                     # the game, in the engine app with its tools
+```
+
+The engine builds each script itself (it needs GHC on the path, and nothing else: the
+bindings are carried inside the engine, and no shell is run), keeps what it builds in
+`.mira/build` inside the folder, and loads each as a plugin named after its file. Save a
+script while the game runs and it is built again behind the game, which goes on with the
+new one as soon as it is ready, keeping its data. A script saved with a mistake in it
+changes nothing: what the compiler said is logged, and the game carries on with the last
+that built.
+
+From Rust it is `app.load_scripts("folder")`, or `app.load_script("One.hs")`;
+`app.script_problems()` gives the scripts that do not build as they stand.
+
+### Built by hand
+
+A script can also be built with the shell script, which does the same: it links the module
+with the bindings ([`bindings/haskell/Mira.hs`](../bindings/haskell/Mira.hs)) and a small
+piece of C that starts the GHC runtime:
 
 ```
 bindings/haskell/build-plugin.sh <name> <Module.hs> <output directory>

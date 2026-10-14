@@ -1323,6 +1323,68 @@ fn build_haskell(workspace: &Workspace, step: &str) -> PathBuf {
     workspace.library("stepper")
 }
 
+/// Runs frames until something is so, a script being built behind them: for as long as a
+/// build may take, and no longer.
+fn frames_until(app: &mut App, what: &str, mut so: impl FnMut(&mut App) -> bool) {
+    let began = std::time::Instant::now();
+    while !so(app) {
+        assert!(began.elapsed() < std::time::Duration::from_secs(240), "waited four minutes for {what}");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        app.update();
+    }
+}
+
+#[test]
+fn a_folder_of_scripts_is_built_loaded_and_kept_built() {
+    if !have_ghc() {
+        return;
+    }
+    let workspace = Workspace::new("scripts");
+    let source = workspace.dir.join("Stepper.hs");
+    // Saved at a time surely later than the last: two saves can fall in one tick of a file
+    // system's clock.
+    let mut later = 0;
+    let mut save = |step: &str| {
+        later += 2;
+        std::fs::write(&source, HASKELL.replace("STEP", step)).unwrap();
+        let file = std::fs::File::options().write(true).open(&source).unwrap();
+        file.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(later)).unwrap();
+    };
+    save("1");
+    std::fs::write(workspace.dir.join("notes.txt"), "not a script").unwrap();
+
+    // The folder is all there is: no build script is run, and nothing but the source is in it.
+    let mut app = app();
+    let entity = app.world.spawn(Transform::IDENTITY);
+    app.load_scripts(&workspace.dir).unwrap();
+    assert_eq!(app.native_plugins().loaded().map(|(name, _)| name.to_owned()).collect::<Vec<_>>(), ["stepper"]);
+    assert!(workspace.dir.join(".mira/build").join(library_file_name("stepper")).exists());
+    for _ in 0..5 {
+        app.update();
+    }
+    assert_eq!(position(&app, entity).x, 5.0);
+
+    // Saved with a mistake in it: the game is told what the compiler said, and goes on
+    // with the script as it last built.
+    save("a_number_that_is_not_there");
+    frames_until(&mut app, "the mistake to be told of", |app| app.script_problems().next().is_some());
+    let (told_of, said) = app.script_problems().next().map(|(path, said)| (path.to_owned(), said.to_owned())).unwrap();
+    assert!(told_of == source && said.contains("Stepper.hs"), "{said}");
+    let before = position(&app, entity).x;
+    app.update();
+    assert_eq!(position(&app, entity).x, before + 1.0);
+
+    // Saved right, and different: built behind the game and taken up while it runs.
+    save("10");
+    let mut last = position(&app, entity).x;
+    frames_until(&mut app, "the new script to be taken up", |app| {
+        let (now, was) = (position(app, entity).x, last);
+        last = now;
+        now - was == 10.0
+    });
+    assert!(app.script_problems().next().is_none());
+}
+
 #[test]
 fn a_haskell_plugin_runs_and_reloads_repeatedly() {
     if !have_ghc() {
