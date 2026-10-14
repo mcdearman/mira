@@ -161,6 +161,9 @@ type Measure = Box<dyn FnMut(&mut World) -> f64 + Send>;
 enum Kind {
     Truth(Exclusive<BoxedCondition>),
     Measure(Exclusive<Measure>),
+    /// A source that is told what it is, by code that works it out some other way: a
+    /// plugin's own fact about the world.
+    Fact(Signal),
     Op(Op),
 }
 
@@ -300,6 +303,27 @@ impl Signals {
     /// Defines a constant, or sets one that exists.
     pub fn set(&mut self, name: &str, value: impl Into<Signal>) {
         self.define::<String>(name, Op::Constant(value.into()), []);
+    }
+
+    /// States a fact: a source whose value is told here, by code that worked it out, and
+    /// stands until it is told again. It is the game's, as other sources are: it is not
+    /// among the rules that are kept or written as text, and no rule may be given to it.
+    /// Telling it what it is already changes nothing.
+    pub fn set_fact(&mut self, name: &str, value: impl Into<Signal>) {
+        let value = value.into();
+        match self.names.get(name) {
+            // Only what it is has changed: who reads whom, and the rules, are as they were.
+            Some(&index) if matches!(self.nodes[index].kind, Kind::Fact(_)) => self.nodes[index].kind = Kind::Fact(value),
+            _ => self.put(name, Kind::Fact(value), Vec::new()),
+        }
+    }
+
+    /// What a fact was last told to be, if the named signal is one.
+    pub fn fact(&self, name: &str) -> Option<Signal> {
+        match &self.nodes[*self.names.get(name)?].kind {
+            Kind::Fact(value) => Some(*value),
+            _ => None,
+        }
     }
 
     /// The value of a constant, if the named signal is one.
@@ -496,7 +520,7 @@ impl Signals {
             .map(|node| NodeInfo {
                 name: node.name.clone(),
                 kind: match &node.kind {
-                    Kind::Truth(_) | Kind::Measure(_) => "source".to_owned(),
+                    Kind::Truth(_) | Kind::Measure(_) | Kind::Fact(_) => "source".to_owned(),
                     Kind::Op(op) => op.label(),
                 },
                 inputs: node.inputs.clone(),
@@ -624,7 +648,7 @@ impl Signals {
             };
             if matches!(
                 self.names.get(name).map(|&index| &self.nodes[index].kind),
-                Some(Kind::Truth(_) | Kind::Measure(_))
+                Some(Kind::Truth(_) | Kind::Measure(_) | Kind::Fact(_))
             ) {
                 return Err(wrong("it is a source, defined in code".to_owned()));
             }
@@ -740,6 +764,7 @@ impl Signals {
             let worked_out = match &mut node.kind {
                 Kind::Truth(read) => Signal::Bool(read.get_mut().check(world)),
                 Kind::Measure(read) => Signal::Number(read.get_mut()(world)),
+                Kind::Fact(value) => *value,
                 Kind::Op(op) => match *op {
                     Op::Constant(value) => value,
                     Op::And => Signal::Bool(inputs.iter().all(|i| i.is_true())),

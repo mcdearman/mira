@@ -685,6 +685,10 @@ pub enum SignalOp {
     Equal,
     GreaterOrEqual,
     Greater,
+    /// A setting: a number that stands until it is changed, in the graph or the rules' text.
+    Number(f64),
+    /// A setting that is true or false.
+    Truth(bool),
 }
 
 impl SignalOp {
@@ -703,6 +707,8 @@ impl SignalOp {
             SignalOp::Equal => (sys::MIRA_SIGNAL_EQUAL, 0.0),
             SignalOp::GreaterOrEqual => (sys::MIRA_SIGNAL_GREATER_OR_EQUAL, 0.0),
             SignalOp::Greater => (sys::MIRA_SIGNAL_GREATER, 0.0),
+            SignalOp::Number(value) => (sys::MIRA_SIGNAL_NUMBER, value),
+            SignalOp::Truth(value) => (sys::MIRA_SIGNAL_TRUTH, value as u8 as f64),
         }
     }
 }

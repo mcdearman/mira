@@ -113,7 +113,7 @@ wandering on and off them, and a bar that fills as red's clock runs, all drawn f
 signals (`--headless` runs the same game with no window):
 
 ```sh
-cargo run --example sacred_sites        # the game
+cargo run --bin mira-play -- examples/sacred_sites   # the game
 cargo run --bin mira-debug -- watch     # in another terminal
 ```
 
@@ -165,6 +165,13 @@ comparisons (`.<.`, `.>=.`, …) combine them, `+` adds, and `timer`, `timerRese
 parts after the rule (`red.clock#1`, …), so the whole of it shows in the graph and can be
 rewired there. `defineSignal` defines one node at a time, as the other languages do.
 
+What a plugin sets with `setSignal` is a fact: a source, as a function the game gives the
+graph is, told what it is each time the plugin works it out. It is not among the rules that
+are kept or written as text. A setting, which is the game's to begin with and anyone's to
+change after, is defined as a rule with no inputs: `defineSignal sys "win_after" (SignalNumber 60) []`
+(`SignalTruth` for a truth; `MIRA_SIGNAL_NUMBER` and `MIRA_SIGNAL_TRUTH` in C). The sacred
+sites are written this way: [`examples/sacred_sites/Sites.hs`](../examples/sacred_sites/Sites.hs).
+
 In C these are `signal_set`, `signal_get` and `signal_define` in `include/mira.h`; in Rust,
 `System::set_signal`, `signal`, `define_signal`. What a plugin sets in one frame the graph has
 in the next. Defining the same rule again changes nothing, so a plugin can define its rules
@@ -210,7 +217,7 @@ follows at once, keeping what its clocks have timed. Rewire a node in the panel,
 something over the debug connection, and the file follows: only the lines whose rules
 changed are written again, and comments, blank lines and every other line stay exactly as
 they were typed. If the file is not there it is written from the rules the game's code
-defines. Try it with `cargo run --example sacred_sites -- --rules sites.rules` and the file
+defines. Try it with `cargo run --bin mira-play -- examples/sacred_sites --rules sites.rules` and the file
 open in an editor beside it.
 
 A file saved half typed changes nothing: the graph stays as it was, the mistake is logged

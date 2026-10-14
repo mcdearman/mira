@@ -1005,6 +1005,10 @@ data SignalOp
   | SignalEqual
   | SignalGreaterOrEqual
   | SignalGreater
+  | -- | A setting: a number that stands until it is changed, in the graph or the rules' text.
+    SignalNumber !Double
+  | -- | A setting that is true or false.
+    SignalTruth !Bool
   deriving (Eq, Show)
 
 -- | Sets a true-or-false signal, defining it if need be, when this system returns: how a
@@ -1051,6 +1055,8 @@ defineSignal (System system) name op inputs =
       SignalEqual -> (10, 0)
       SignalGreaterOrEqual -> (11, 0)
       SignalGreater -> (12, 0)
+      SignalNumber value -> (13, value)
+      SignalTruth value -> (14, if value then 1 else 0)
 
 -- | A signal as an expression over other signals: what a rule is.
 --
@@ -1140,8 +1146,8 @@ defineRule sys name rule = do
       -- Gives an expression a name in the graph, defining what it needs on the way.
       place target expression = case expression of
         SigNamed other -> defineSignal sys target SignalOr [other]
-        SigTruth value -> setSignal sys target value
-        SigNumber value -> setSignalNumber sys target value
+        SigTruth value -> defineSignal sys target (SignalTruth value) []
+        SigNumber value -> defineSignal sys target (SignalNumber value) []
         SigOp op inputs -> mapM input inputs >>= defineSignal sys target op
       input (SigNamed other) = pure other
       input expression = do

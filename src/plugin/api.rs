@@ -1327,10 +1327,8 @@ unsafe extern "C" fn signal_set(
         let name = name.to_owned();
         context.queue.push(move |world| {
             if let Some(signals) = world.get_resource_mut::<Signals>() {
-                // Left alone when nothing changed, so the graph isn't sorted again every frame.
-                if signals.constant(&name) != Some(value) {
-                    signals.set(&name, value);
-                }
+                // A fact of the plugin's own: a source, told what it is.
+                signals.set_fact(&name, value);
             }
         });
     })
@@ -1387,6 +1385,8 @@ unsafe extern "C" fn signal_define(
             sys::MIRA_SIGNAL_EQUAL => Op::Compare(Compare::Equal),
             sys::MIRA_SIGNAL_GREATER_OR_EQUAL => Op::Compare(Compare::GreaterOrEqual),
             sys::MIRA_SIGNAL_GREATER => Op::Compare(Compare::Greater),
+            sys::MIRA_SIGNAL_NUMBER => Op::Constant(Signal::Number(param)),
+            sys::MIRA_SIGNAL_TRUTH => Op::Constant(Signal::Bool(param != 0.0)),
             other => {
                 log::error!(target: "plugin", "signal_define: there is no operation {other}");
                 return;

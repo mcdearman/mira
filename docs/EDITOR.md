@@ -29,7 +29,7 @@ mira_app::editor::run(my_game::build()?)?;
 ```sh
 cargo run                                  # a small scene to start from
 cargo run -- chase scoreboard              # a game made of plugins (built into target/, or paths)
-cargo run --example sacred_sites_editor    # a game written in Rust, opened in the app
+cargo run -- examples/sacred_sites         # a game that is a folder of scripts, opened in the app
 ```
 
 What is done in the viewport is the game's: pointer, wheel and keys, in the game's own

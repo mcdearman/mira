@@ -140,7 +140,11 @@ enum {
     MIRA_SIGNAL_LESS_OR_EQUAL = 9,
     MIRA_SIGNAL_EQUAL = 10,
     MIRA_SIGNAL_GREATER_OR_EQUAL = 11,
-    MIRA_SIGNAL_GREATER = 12
+    MIRA_SIGNAL_GREATER = 12,
+    /* A setting: a value that stands until someone changes it, in the graph or in the
+     * rules' text. No inputs; param is the number, or for a truth, 0 for false. */
+    MIRA_SIGNAL_NUMBER = 13,
+    MIRA_SIGNAL_TRUTH = 14
 };
 
 typedef struct MiraVertex {
@@ -475,8 +479,11 @@ typedef struct MiraApi {
      * docs/SIGNALS.md. A plugin gives the graph its own facts by setting signals from a
      * system, builds rules on them as data, and reads any signal by name. */
 
-    /* Sets a signal to a truth (`number` 0: any `value` but 0 is true) or to a number
-     * (`number` 1), defining it if need be. Takes effect when the system returns. */
+    /* States a fact: sets a signal to a truth (`number` 0: any `value` but 0 is true) or to
+     * a number (`number` 1), defining it if need be. It is a source, as what the game's own
+     * code gives the graph is: not among the rules that are kept or written as text. For a
+     * setting that anyone may change afterwards, define a rule with MIRA_SIGNAL_NUMBER or
+     * MIRA_SIGNAL_TRUTH. Takes effect when the system returns. */
     void (*signal_set)(MiraSystem *system, const char *name, size_t len, double value,
                        uint32_t number);
     /* Reads a signal as of its last update: returns 0 if there is none, else 1 and writes

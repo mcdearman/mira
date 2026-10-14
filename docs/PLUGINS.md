@@ -259,6 +259,7 @@ A game need be nothing but scripts. Put its Haskell files in a folder and play i
 
 ```
 cargo run --bin mira-play -- plugins/chase     # the game, in a window
+cargo run --bin mira-play -- examples/sacred_sites --headless   # a game with no window at all
 cargo run -- plugins/chase                     # the game, in the engine app with its tools
 ```
 

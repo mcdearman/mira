@@ -61,7 +61,7 @@ agent can work on a game without windows opening on the person's screen. Any gam
 that way with `MIRA_HIDDEN=1`, or `WindowSettings { visible: false, .. }`.
 
 ```text
-mira_launch  {"command": "cargo run --example sacred_sites -- --headless"}
+mira_launch  {"command": "cargo run --bin mira-play -- examples/sacred_sites --headless"}
 mira_signals
 mira_quit
 ```

@@ -39,10 +39,16 @@ impl Scene {
         // This test's own program is in `deps`, beside the folder the examples are built into.
         let here = std::env::current_exe().expect("this program has a path");
         let beside = here.parent().expect("it is in a folder");
+        // An example that is a folder of scripts is played by the player, which builds them.
+        let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples").join(example);
+        let scripts = !folder.join("main.rs").exists();
         let mut build = Command::new(env!("CARGO"));
-        build
-            .args(["build", "--quiet", "--example", example])
-            .current_dir(env!("CARGO_MANIFEST_DIR"));
+        if scripts {
+            build.args(["build", "--quiet", "-p", "mira_app", "--bin", "mira-play"]);
+        } else {
+            build.args(["build", "--quiet", "--example", example]);
+        }
+        build.current_dir(env!("CARGO_MANIFEST_DIR"));
         if beside
             .components()
             .any(|part| part.as_os_str() == "release")
@@ -53,13 +59,17 @@ impl Scene {
             build.status().is_ok_and(|status| status.success()),
             "{example} did not build"
         );
-        let program = beside.with_file_name("examples").join(example);
+        let program = if scripts { beside.with_file_name("mira-play") } else { beside.with_file_name("examples").join(example) };
         let port = TcpListener::bind("127.0.0.1:0")
             .and_then(|listener| listener.local_addr())
             .expect("a free port")
             .port();
         let address = format!("127.0.0.1:{port}");
-        let child = Command::new(&program)
+        let mut run = Command::new(&program);
+        if scripts {
+            run.arg(&folder);
+        }
+        let child = run
             .env("MIRA_DEBUG", &address)
             .env("MIRA_HIDDEN", "1")
             .env("MIRA_PAUSED", "1")
