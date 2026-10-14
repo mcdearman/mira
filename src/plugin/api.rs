@@ -22,6 +22,7 @@ use crate::{
     asset_server::AssetServer,
     assets::{Assets, Handle},
     audio::{Audio, AudioListener, AudioSource, Playback, Sound, VoiceId},
+    voxel::{BlockId, BlockRegistry, ChunkViewer, VoxelWorld},
     ecs::{DropFn, Entity, System, World},
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
     physics::{Collider, PhysicsWorld, RigidBody},
@@ -74,6 +75,8 @@ pub(crate) struct Registrar<'a> {
     /// What the plugin said about its systems' order: the system's full name, whether it
     /// runs after (or before) the other, and the other's name.
     pub orders: Vec<(String, bool, String)>,
+    /// The parts of the engine the plugin said the game needs.
+    pub required: Vec<String>,
 }
 
 pub(crate) static API: MiraApi = MiraApi {
@@ -140,6 +143,16 @@ pub(crate) static API: MiraApi = MiraApi {
     set_sound_source,
     set_listener,
     set_master_volume,
+    require,
+    voxel_block,
+    voxel_get,
+    voxel_set,
+    voxel_solid,
+    voxel_raycast,
+    set_chunk_viewer,
+    set_cursor_grabbed,
+    cursor_grabbed,
+    quit,
 };
 
 /// Runs `body`, turning a panic into `fallback` so it never unwinds into the plugin.
@@ -1589,5 +1602,143 @@ unsafe extern "C" fn set_master_volume(system: *mut MiraSystem, volume: f32) {
         if let Some(audio) = context(system).and_then(|context| context.world().get_resource::<Audio>()) {
             audio.set_master_volume(volume);
         }
+    })
+}
+
+/// The parts of the engine a game can ask for with `require`.
+pub(crate) const PARTS: [&str; 1] = ["voxels"];
+
+unsafe extern "C" fn require(app: *mut MiraApp, part: *const u8, len: usize) -> i32 {
+    guard("require", -1, || {
+        let (Some(registrar), Some(part)) = (app.cast::<Registrar>().as_mut(), text(part, len)) else {
+            return -1;
+        };
+        if !PARTS.contains(&part) {
+            log::error!(target: "plugin", "require: there is no part of the engine called `{part}`; there are {}", PARTS.join(", "));
+            return -1;
+        }
+        registrar.required.push(part.to_owned());
+        0
+    })
+}
+
+fn ivec(x: i32, y: i32, z: i32) -> glam::IVec3 {
+    glam::IVec3::new(x, y, z)
+}
+
+unsafe extern "C" fn voxel_block(system: *mut MiraSystem, name: *const u8, len: usize) -> sys::MiraBlock {
+    guard("voxel_block", sys::MIRA_BLOCK_UNKNOWN, || {
+        let (Some(context), Some(name)) = (context(system), text(name, len)) else {
+            return sys::MIRA_BLOCK_UNKNOWN;
+        };
+        let registry = context.world().get_resource::<BlockRegistry>();
+        registry.and_then(|registry| registry.find(name)).map_or(sys::MIRA_BLOCK_UNKNOWN, |id| id.0 as u32)
+    })
+}
+
+unsafe extern "C" fn voxel_get(system: *mut MiraSystem, x: i32, y: i32, z: i32) -> sys::MiraBlock {
+    guard("voxel_get", sys::MIRA_BLOCK_UNKNOWN, || {
+        let world = context(system).and_then(|context| context.world().get_resource::<VoxelWorld>());
+        world.and_then(|world| world.get_block(ivec(x, y, z))).map_or(sys::MIRA_BLOCK_UNKNOWN, |id| id.0 as u32)
+    })
+}
+
+unsafe extern "C" fn voxel_set(system: *mut MiraSystem, x: i32, y: i32, z: i32, block: sys::MiraBlock) {
+    guard("voxel_set", (), || {
+        let Some(context) = context(system) else {
+            return;
+        };
+        let Ok(id) = u16::try_from(block) else {
+            log::error!(target: "plugin", "voxel_set: {block} is not a kind of block");
+            return;
+        };
+        context.queue.push(move |world| {
+            if let Some(voxels) = world.get_resource_mut::<VoxelWorld>() {
+                voxels.set_block(ivec(x, y, z), BlockId(id));
+            }
+        });
+    })
+}
+
+unsafe extern "C" fn voxel_solid(system: *mut MiraSystem, x: i32, y: i32, z: i32) -> u32 {
+    guard("voxel_solid", 1, || {
+        let Some(context) = context(system) else {
+            return 1;
+        };
+        let world = context.world();
+        match (world.get_resource::<VoxelWorld>(), world.get_resource::<BlockRegistry>()) {
+            (Some(voxels), Some(registry)) => voxels.is_solid(registry, ivec(x, y, z)) as u32,
+            _ => 0,
+        }
+    })
+}
+
+unsafe extern "C" fn voxel_raycast(
+    system: *mut MiraSystem,
+    origin: *const f32,
+    direction: *const f32,
+    max_distance: f32,
+    hit: *mut sys::MiraVoxelHit,
+) -> u8 {
+    guard("voxel_raycast", 0, || {
+        let (Some(context), Some(origin), Some(direction)) = (context(system), vec3(origin), vec3(direction)) else {
+            return 0;
+        };
+        let world = context.world();
+        let (Some(voxels), Some(registry)) = (world.get_resource::<VoxelWorld>(), world.get_resource::<BlockRegistry>()) else {
+            return 0;
+        };
+        let Some(found) = voxels.raycast(registry, origin, direction, max_distance) else {
+            return 0;
+        };
+        if let Some(hit) = hit.as_mut() {
+            *hit = sys::MiraVoxelHit {
+                block: found.block.into(),
+                normal: found.normal.into(),
+                distance: found.distance,
+                kind: voxels.get_block(found.block).map_or(sys::MIRA_BLOCK_UNKNOWN, |id| id.0 as u32),
+            };
+        }
+        1
+    })
+}
+
+unsafe extern "C" fn set_chunk_viewer(system: *mut MiraSystem, entity: MiraEntity) {
+    guard("set_chunk_viewer", (), || {
+        let Some(context) = context(system) else {
+            return;
+        };
+        let entity = Entity::from_bits(entity);
+        context.queue.push(move |world| {
+            world.insert(entity, ChunkViewer);
+        });
+    })
+}
+
+unsafe extern "C" fn set_cursor_grabbed(system: *mut MiraSystem, grabbed: u32) {
+    guard("set_cursor_grabbed", (), || {
+        if let Some(window) = context(system).and_then(|context| context.world().get_resource::<Window>()) {
+            window.set_cursor_grabbed(grabbed != 0);
+        }
+    })
+}
+
+unsafe extern "C" fn cursor_grabbed(system: *mut MiraSystem) -> u32 {
+    guard("cursor_grabbed", 0, || {
+        let window = context(system).and_then(|context| context.world().get_resource::<Window>());
+        window.is_some_and(Window::cursor_grabbed) as u32
+    })
+}
+
+unsafe extern "C" fn quit(system: *mut MiraSystem) {
+    guard("quit", (), || {
+        let Some(context) = context(system) else {
+            return;
+        };
+        context.queue.push(|world| {
+            if let Some(events) = world.get_resource_mut::<crate::ecs::Events<crate::app::AppExit>>() {
+                events.send(crate::app::AppExit);
+            }
+        });
     })
 }

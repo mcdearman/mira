@@ -354,3 +354,53 @@ void mira_hs_set_listener(MiraSystem *system, MiraEntity entity) {
 void mira_hs_set_master_volume(MiraSystem *system, float volume) {
     api->set_master_volume(system, volume);
 }
+
+/* Parts of the engine, voxels, the window and the game. */
+int32_t mira_hs_require(MiraApp *app, const char *part, size_t len) {
+    return api->require(app, part, len);
+}
+
+uint32_t mira_hs_voxel_block(MiraSystem *system, const char *name, size_t len) {
+    return api->voxel_block(system, name, len);
+}
+
+uint32_t mira_hs_voxel_get(MiraSystem *system, int32_t x, int32_t y, int32_t z) {
+    return api->voxel_get(system, x, y, z);
+}
+
+void mira_hs_voxel_set(MiraSystem *system, int32_t x, int32_t y, int32_t z, uint32_t block) {
+    api->voxel_set(system, x, y, z, block);
+}
+
+uint32_t mira_hs_voxel_solid(MiraSystem *system, int32_t x, int32_t y, int32_t z) {
+    return api->voxel_solid(system, x, y, z);
+}
+
+/* Writes the block hit and the face's normal to `cells` (six ints), and the distance and the
+ * kind to `distance` and `kind`. */
+uint32_t mira_hs_voxel_raycast(MiraSystem *system, float ox, float oy, float oz, float dx,
+                               float dy, float dz, float reach, int32_t *cells, float *distance,
+                               uint32_t *kind) {
+    float origin[3] = {ox, oy, oz}, direction[3] = {dx, dy, dz};
+    MiraVoxelHit hit;
+    if (!api->voxel_raycast(system, origin, direction, reach, &hit)) return 0;
+    for (int i = 0; i < 3; i++) {
+        cells[i] = hit.block[i];
+        cells[3 + i] = hit.normal[i];
+    }
+    *distance = hit.distance;
+    *kind = hit.kind;
+    return 1;
+}
+
+void mira_hs_set_chunk_viewer(MiraSystem *system, MiraEntity entity) {
+    api->set_chunk_viewer(system, entity);
+}
+
+void mira_hs_set_cursor_grabbed(MiraSystem *system, uint32_t grabbed) {
+    api->set_cursor_grabbed(system, grabbed);
+}
+
+uint32_t mira_hs_cursor_grabbed(MiraSystem *system) { return api->cursor_grabbed(system); }
+
+void mira_hs_quit(MiraSystem *system) { api->quit(system); }

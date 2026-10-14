@@ -126,6 +126,17 @@ pub struct MiraField {
 pub type MiraImage = u32;
 pub type MiraSound = u32;
 pub type MiraVoice = u64;
+pub type MiraBlock = u32;
+pub const MIRA_BLOCK_UNKNOWN: MiraBlock = u32::MAX;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MiraVoxelHit {
+    pub block: [i32; 3],
+    pub normal: [i32; 3],
+    pub distance: f32,
+    pub kind: MiraBlock,
+}
 
 pub type MiraEvent = u32;
 
@@ -469,6 +480,23 @@ pub struct MiraApi {
     ),
     pub set_listener: unsafe extern "C" fn(system: *mut MiraSystem, entity: MiraEntity),
     pub set_master_volume: unsafe extern "C" fn(system: *mut MiraSystem, volume: f32),
+
+    pub require: unsafe extern "C" fn(app: *mut MiraApp, part: *const u8, len: usize) -> i32,
+    pub voxel_block: unsafe extern "C" fn(system: *mut MiraSystem, name: *const u8, len: usize) -> MiraBlock,
+    pub voxel_get: unsafe extern "C" fn(system: *mut MiraSystem, x: i32, y: i32, z: i32) -> MiraBlock,
+    pub voxel_set: unsafe extern "C" fn(system: *mut MiraSystem, x: i32, y: i32, z: i32, block: MiraBlock),
+    pub voxel_solid: unsafe extern "C" fn(system: *mut MiraSystem, x: i32, y: i32, z: i32) -> u32,
+    pub voxel_raycast: unsafe extern "C" fn(
+        system: *mut MiraSystem,
+        origin: *const f32,
+        direction: *const f32,
+        max_distance: f32,
+        hit: *mut MiraVoxelHit,
+    ) -> u8,
+    pub set_chunk_viewer: unsafe extern "C" fn(system: *mut MiraSystem, entity: MiraEntity),
+    pub set_cursor_grabbed: unsafe extern "C" fn(system: *mut MiraSystem, grabbed: u32),
+    pub cursor_grabbed: unsafe extern "C" fn(system: *mut MiraSystem) -> u32,
+    pub quit: unsafe extern "C" fn(system: *mut MiraSystem),
 }
 
 /// `mira.Transform`: 48 bytes, 16-byte aligned.

@@ -75,7 +75,8 @@ impl BlockTextures {
     }
 }
 
-/// Adds voxel terrain. Add it after `DefaultPlugins`, and give a camera [`ChunkViewer`].
+/// Adds voxel terrain. Add it after `DefaultPlugins`, and give a camera [`ChunkViewer`]. In
+/// an app with no renderer the terrain is there and changes as it would, and is not drawn.
 pub struct VoxelPlugin {
     pub seed: u32,
     pub settings: VoxelSettings,
@@ -125,17 +126,17 @@ impl Plugin for VoxelPlugin {
             .init_resource::<TaskPool>()
             .init_resource::<VoxelWorld>()
             .init_resource::<ChunkStreaming>()
-            .add_systems(Stage::PreStartup, init_renderer)
             .add_systems(
                 Stage::PostUpdate,
                 (streaming::stream_chunks, streaming::remesh_chunks),
-            )
-            .add_systems(Stage::Prepare, prepare_chunks);
-        app.world
-            .get_resource_mut::<DrawFunctions>()
-            .expect("add VoxelPlugin after DefaultPlugins")
-            .0
-            .push(draw_chunks);
+            );
+        // With no renderer (a game run with no window, a test) the world is made, streamed and
+        // edited all the same, and nothing is drawn.
+        let Some(draw) = app.world.get_resource_mut::<DrawFunctions>() else {
+            return;
+        };
+        draw.0.push(draw_chunks);
+        app.add_systems(Stage::PreStartup, init_renderer).add_systems(Stage::Prepare, prepare_chunks);
         app.world
             .resource_mut::<ShadowDrawFunctions>()
             .0

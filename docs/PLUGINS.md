@@ -370,6 +370,17 @@ app.run()
 `App::reload_native_plugins()` reloads changed plugins immediately, and
 `app.native_plugins().hot_reload = false` turns the file watching off for a shipped game.
 
+## Parts of the engine a game asks for
+
+Some of the engine is not in every game. A plugin asks for such a part while it loads, and
+the engine adds it: `require app "voxels"` in Haskell, `api->require(app, MIRA_STR("voxels"))`
+in C, `app.require("voxels")` in Rust (see [VOXELS.md](VOXELS.md#from-a-script)). Voxels are the
+only such part so far. Ask the first time the plugin loads: a part added after the game has
+begun is made and not drawn.
+
+The window and the game: `setCursorGrabbed` holds the pointer for looking about with the
+mouse, `cursorGrabbed` says whether it is held, and `quit` ends the game after the frame.
+
 ## What the interface does not cover yet
 
 Plugins cannot yet play a model's animations, draw text or UI, play sound,

@@ -68,6 +68,26 @@ Then, for each chunk, in order of position:
 Runs cover the chunk's blocks in storage order (x fastest, then z, then y) and add up to
 exactly 32,768 blocks. A chunk of a single block is one run.
 
+## From a script
+
+A game of scripts asks for voxels as it loads, and then reads and changes the world by
+place, as [`examples/voxel_world/World.hs`](../examples/voxel_world/World.hs) does:
+
+```haskell
+require app "voxels"                            -- in the plugin's setup, the first time it loads
+setChunkViewer sys eye                          -- the world is made around this entity
+Just stone <- voxelBlock sys "stone"            -- kinds by name: air, grass, dirt, stone, sand
+hit <- voxelRaycast sys eyeAt looking 8         -- the first solid block along a ray
+setVoxel sys (x, y, z) stone                    -- or `air` to take one away
+solid <- voxelSolid sys (x, y, z)
+kind <- voxel sys (x, y, z)                     -- Nothing where the world is not made yet
+```
+
+In C these are `require`, `voxel_block`, `voxel_get`, `voxel_set`, `voxel_solid`,
+`voxel_raycast` and `set_chunk_viewer` in `include/mira.h`; in a Rust plugin,
+`App::require` and methods of `System`. Asked for in a game with no window, the world is
+made and streamed as it would be, and not drawn.
+
 ## What isn't here yet
 
 - Blocks are saved as their numeric ids, not their names. A game has to register its blocks

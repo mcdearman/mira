@@ -191,6 +191,19 @@ typedef uint32_t MiraSound;
 /* A sound that is playing, from sound_play. 0 is "none". */
 typedef uint64_t MiraVoice;
 
+/* A kind of block, from voxel_block: 0 is air. MIRA_BLOCK_UNKNOWN is no such kind, or a
+ * place in the world not made yet. */
+typedef uint32_t MiraBlock;
+#define MIRA_BLOCK_UNKNOWN 0xFFFFFFFFu
+
+/* What a ray through the blocks met. */
+typedef struct MiraVoxelHit {
+    int32_t block[3];  /* the solid block it met */
+    int32_t normal[3]; /* the face it met, pointing out of the block; 0 0 0 if it began inside */
+    float distance;
+    MiraBlock kind;
+} MiraVoxelHit;
+
 /* An event type handle, from event_register. 0 is "no event". */
 typedef uint32_t MiraEvent;
 
@@ -539,6 +552,44 @@ typedef struct MiraApi {
     void (*set_listener)(MiraSystem *system, MiraEntity entity);
     /* How loud everything is: 1 as it is, 0 silent. */
     void (*set_master_volume)(MiraSystem *system, float volume);
+
+    /* ---- parts of the engine a game needs (inside mira_plugin_load) ---- */
+
+    /* Says the game needs a part of the engine that not every game has: "voxels" (terrain of
+     * blocks, made and streamed around a chunk viewer). The engine adds it once the plugin has
+     * loaded, if it is not there already. Ask the first time the plugin loads: a part added
+     * after the game has started is not drawn. Returns 0, or -1 for a part there is none of. */
+    int32_t (*require)(MiraApp *app, const char *part, size_t len);
+
+    /* ---- voxels (inside a system; these find nothing in a game without them) ---- */
+
+    /* The kind of block with a name ("air", "grass", "dirt", "stone", "sand"), or
+     * MIRA_BLOCK_UNKNOWN. */
+    MiraBlock (*voxel_block)(MiraSystem *system, const char *name, size_t len);
+    /* The kind of block at a place, or MIRA_BLOCK_UNKNOWN where the world is not made yet. */
+    MiraBlock (*voxel_get)(MiraSystem *system, int32_t x, int32_t y, int32_t z);
+    /* Puts a kind of block at a place (0, air, takes one away), when the system returns.
+     * Nothing happens where the world is not made yet. */
+    void (*voxel_set)(MiraSystem *system, int32_t x, int32_t y, int32_t z, MiraBlock block);
+    /* 1 if the block at a place is solid, or the world is not made there yet; else 0. */
+    uint32_t (*voxel_solid)(MiraSystem *system, int32_t x, int32_t y, int32_t z);
+    /* The first solid block along a ray within `max_distance`, cell by cell so nothing is
+     * missed. `direction` need not be normalized. Returns 0 if it meets none. */
+    uint8_t (*voxel_raycast)(MiraSystem *system, const float *origin, const float *direction,
+                             float max_distance, MiraVoxelHit *hit);
+    /* Makes the entity the one the world is made around (it also needs a transform), when the
+     * system returns: usually the camera. */
+    void (*set_chunk_viewer)(MiraSystem *system, MiraEntity entity);
+
+    /* ---- the window and the game ---- */
+
+    /* Holds the pointer to the window and hides it, for looking about with the mouse, or lets
+     * it go. Does nothing with no window. */
+    void (*set_cursor_grabbed)(MiraSystem *system, uint32_t grabbed);
+    /* 1 while the pointer is held. */
+    uint32_t (*cursor_grabbed)(MiraSystem *system);
+    /* Ends the game after this frame. */
+    void (*quit)(MiraSystem *system);
 } MiraApi;
 
 /* ---- conveniences for C and C++ ---- */

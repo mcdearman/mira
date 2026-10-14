@@ -105,6 +105,21 @@ module Mira
   , setSoundSource
   , setListener
   , setMasterVolume
+    -- * Voxels
+  , require
+  , Block
+  , air
+  , VoxelHit (..)
+  , voxelBlock
+  , voxel
+  , setVoxel
+  , voxelSolid
+  , voxelRaycast
+  , setChunkViewer
+    -- * The window and the game
+  , setCursorGrabbed
+  , cursorGrabbed
+  , quit
     -- * Signals
   , SignalOp (..)
   , setSignal
@@ -175,6 +190,7 @@ module Mira
 import Control.Exception (SomeException, displayException, try)
 import Control.Monad (unless, when)
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
+import Data.Int (Int32)
 import Data.Word (Word32, Word64, Word8)
 import Foreign
   ( Ptr
@@ -182,6 +198,7 @@ import Foreign
   , alloca
   , allocaArray
   , castPtr
+  , peekArray
   , peekElemOff
   , plusPtr
   , pokeElemOff
@@ -1337,3 +1354,111 @@ setListener (System system) (Entity entity) = c_set_listener system entity
 -- | How loud everything is: 1 as it is, 0 silent.
 setMasterVolume :: System -> Float -> IO ()
 setMasterVolume (System system) volume = c_set_master_volume system (realToFrac volume)
+
+-- Parts of the engine, voxels, the window and the game.
+
+foreign import ccall unsafe "mira_hs_require"
+  c_require :: Ptr () -> Ptr CChar -> CSize -> IO CInt
+foreign import ccall unsafe "mira_hs_voxel_block"
+  c_voxel_block :: Ptr () -> Ptr CChar -> CSize -> IO Word32
+foreign import ccall unsafe "mira_hs_voxel_get"
+  c_voxel_get :: Ptr () -> Int32 -> Int32 -> Int32 -> IO Word32
+foreign import ccall unsafe "mira_hs_voxel_set"
+  c_voxel_set :: Ptr () -> Int32 -> Int32 -> Int32 -> Word32 -> IO ()
+foreign import ccall unsafe "mira_hs_voxel_solid"
+  c_voxel_solid :: Ptr () -> Int32 -> Int32 -> Int32 -> IO Word32
+foreign import ccall unsafe "mira_hs_voxel_raycast"
+  c_voxel_raycast ::
+    Ptr () -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> CFloat -> Ptr Int32 -> Ptr CFloat -> Ptr Word32 -> IO Word32
+foreign import ccall unsafe "mira_hs_set_chunk_viewer"
+  c_set_chunk_viewer :: Ptr () -> Word64 -> IO ()
+foreign import ccall unsafe "mira_hs_set_cursor_grabbed"
+  c_set_cursor_grabbed :: Ptr () -> Word32 -> IO ()
+foreign import ccall unsafe "mira_hs_cursor_grabbed"
+  c_cursor_grabbed :: Ptr () -> IO Word32
+foreign import ccall unsafe "mira_hs_quit"
+  c_quit :: Ptr () -> IO ()
+
+-- | Says the game needs a part of the engine that not every game has: @"voxels"@, terrain of
+-- blocks made and streamed around a chunk viewer. Ask the first time the plugin loads.
+require :: App -> String -> IO ()
+require (App app) part = do
+  status <- withName part (c_require app)
+  when (status /= 0) $ ioError (userError ("there is no part of the engine called `" ++ part ++ "`"))
+
+-- | A kind of block. 'air' is none at all.
+newtype Block = Block Word32
+  deriving (Eq, Show)
+
+instance Storable Block where
+  sizeOf _ = 4
+  alignment _ = 4
+  peek ptr = Block <$> peek (castPtr ptr)
+  poke ptr (Block kind) = poke (castPtr ptr) kind
+
+air :: Block
+air = Block 0
+
+-- | What a ray through the blocks met: the block, the face it met (pointing out of the block;
+-- nought if the ray began inside), how far along, and what kind of block it is.
+data VoxelHit = VoxelHit
+  { hitBlock :: !(Int, Int, Int)
+  , hitFace :: !(Int, Int, Int)
+  , hitAlong :: !Float
+  , hitKind :: !Block
+  }
+  deriving (Eq, Show)
+
+unknownBlock :: Word32
+unknownBlock = 0xFFFFFFFF
+
+known :: Word32 -> Maybe Block
+known kind = if kind == unknownBlock then Nothing else Just (Block kind)
+
+-- | The kind of block with a name: @"air"@, @"grass"@, @"dirt"@, @"stone"@, @"sand"@.
+voxelBlock :: System -> String -> IO (Maybe Block)
+voxelBlock (System system) name = known <$> withName name (c_voxel_block system)
+
+-- | The kind of block at a place, or 'Nothing' where the world is not made yet.
+voxel :: System -> (Int, Int, Int) -> IO (Maybe Block)
+voxel (System system) (x, y, z) = known <$> c_voxel_get system (fromIntegral x) (fromIntegral y) (fromIntegral z)
+
+-- | Puts a kind of block at a place ('air' takes one away), when this system returns.
+setVoxel :: System -> (Int, Int, Int) -> Block -> IO ()
+setVoxel (System system) (x, y, z) (Block kind) = c_voxel_set system (fromIntegral x) (fromIntegral y) (fromIntegral z) kind
+
+-- | Whether the block at a place is solid, or the world is not made there yet.
+voxelSolid :: System -> (Int, Int, Int) -> IO Bool
+voxelSolid (System system) (x, y, z) = (/= 0) <$> c_voxel_solid system (fromIntegral x) (fromIntegral y) (fromIntegral z)
+
+-- | The first solid block along a ray from a point in a direction, within a reach.
+voxelRaycast :: System -> V3 -> V3 -> Float -> IO (Maybe VoxelHit)
+voxelRaycast (System system) (V3 ox oy oz) (V3 dx dy dz) reach =
+  allocaArray 6 $ \cells -> alloca $ \along -> alloca $ \kind -> do
+    found <-
+      c_voxel_raycast system (realToFrac ox) (realToFrac oy) (realToFrac oz) (realToFrac dx) (realToFrac dy) (realToFrac dz)
+        (realToFrac reach) cells along kind
+    if found == 0
+      then pure Nothing
+      else do
+        [bx, by, bz, nx, ny, nz] <- map fromIntegral <$> peekArray 6 cells
+        distance <- realToFrac <$> peek along
+        Just . VoxelHit (bx, by, bz) (nx, ny, nz) distance . Block <$> peek kind
+
+-- | Makes the entity the one the world is made around (it also needs a 'Transform'), when
+-- this system returns: usually the camera.
+setChunkViewer :: System -> Entity -> IO ()
+setChunkViewer (System system) (Entity entity) = c_set_chunk_viewer system entity
+
+-- | Holds the pointer to the window and hides it, for looking about with the mouse, or lets
+-- it go.
+setCursorGrabbed :: System -> Bool -> IO ()
+setCursorGrabbed (System system) grabbed = c_set_cursor_grabbed system (flag grabbed)
+
+-- | Whether the pointer is held.
+cursorGrabbed :: System -> IO Bool
+cursorGrabbed (System system) = (/= 0) <$> c_cursor_grabbed system
+
+-- | Ends the game after this frame.
+quit :: System -> IO ()
+quit (System system) = c_quit system
