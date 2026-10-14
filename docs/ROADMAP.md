@@ -562,8 +562,9 @@ depends on resolution rather than scene size.
 - [ ] Scripts built by the engine itself, so that no shell is needed on any system
 - [x] The engine is built for Android on every change (see [ANDROID.md](ANDROID.md)); a
       game there is told its activity, and keeps its saved games among the app's own files
-- [ ] Mobile, so that a game can be made for phones and tablets: a game run on a real
-      Android phone, and packaged for one; builds and packaging for iOS; the app's life on
+- [x] A game packaged for Android: Tail Lights as an `.apk`, built by a workflow
+- [ ] Mobile, so that a game can be made for phones and tablets: a game seen to run on a
+      real Android phone; builds and packaging for iOS; the app's life on
       a phone (put away, brought back, the screen turned,
       the surface lost and made again); touch as input, through the same actions as keys;
       an interface that fits a small screen and its cut-outs; sound and saved games in the

@@ -6,7 +6,7 @@ edition = "2021"
 [workspace]
 # Bare `cargo run` is the engine app; `cargo run --example <name>` finds the engine's examples.
 default-members = [".", "crates/mira_app"]
-members = ["crates/mira_app", "crates/mira_ecs", "crates/mira_plugin", "crates/mira_derive", "crates/mira_ui", "plugins/wave", "plugins/scoreboard"]
+members = ["crates/mira_app", "crates/mira_ecs", "crates/mira_plugin", "crates/mira_derive", "crates/mira_ui", "plugins/wave", "plugins/scoreboard", "android/tail_lights"]
 
 [dependencies]
 mira_plugin = { path = "crates/mira_plugin" }
@@ -23,19 +23,23 @@ glam = { version = "0.30", features = ["bytemuck"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "hdr"] }
 gltf = { version = "1", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength", "KHR_texture_transform"] }
 half = { version = "2", features = ["bytemuck"] }
-intel_tex_2 = "0.5"
 log = "0.4"
 pollster = "0.3"
 wgpu = "30.0.1"
 winit = "0.30.12"
 
-# Game controllers, where there are any to plug in.
+# Game controllers, where there are any to plug in; and compressing pictures into BC7
+# blocks, which a desktop's graphics read and a phone's do not.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 gilrs = "0.11"
+intel_tex_2 = "0.5"
 
 # On Android the window is the activity's that the game is started in.
 [target.'cfg(target_os = "android")'.dependencies]
 winit = { version = "0.30.12", features = ["android-native-activity"] }
+# Sound there goes out through a library written in C++, which needs that language's own
+# library beside it: the shared one, which a package carries with it.
+cpal = { version = "0.15", features = ["oboe-shared-stdcxx"] }
 
 # Debug builds keep what a failure's stack needs (functions by their full names, files and
 # lines) and no more: with full debug information the build folder passed 45 GB. The

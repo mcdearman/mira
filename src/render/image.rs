@@ -85,6 +85,16 @@ impl Image {
     /// Compresses the picture and its smaller levels into BC7 blocks. None for a picture
     /// whose sides are not multiples of four, which block compression can't hold, or one
     /// with no pixels.
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    pub fn process(&self) -> Option<Processed> {
+        // A phone's graphics do not read BC7, so there a picture is kept as it is.
+        None
+    }
+
+    /// Compresses the picture and its smaller levels into BC7 blocks. None for a picture
+    /// whose sides are not multiples of four, which block compression can't hold, or one
+    /// with no pixels. Always none on a phone, whose graphics do not read such blocks.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn process(&self) -> Option<Processed> {
         if !self.has_pixels() || !self.width.is_multiple_of(4) || !self.height.is_multiple_of(4) {
             return None;
