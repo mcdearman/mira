@@ -1549,6 +1549,9 @@ def step : Float = STEP
 fun mira_plugin_abi_version () : UInt32 = M.abiVersion ()
 
 @export
+fun mira_meadow_run (s : Int) (user : Int) : () ! Process = M.run s user
+
+@export
 fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
   M.load api app (\p ->
     let transform = M.lookupComponent p "mira.Transform" in
@@ -1639,6 +1642,52 @@ fn a_meadow_script_is_built_loaded_and_kept_built() {
     assert_eq!(position(&app, entity).z, 2.0, "loaded twice");
     assert!(app.script_problems().next().is_none());
 }
+/// A Meadow system that fails is told of as any system that fails is, with its message, and
+/// the game is not ended by it.
+#[test]
+fn a_meadow_system_that_fails_is_told_of_and_the_game_goes_on() {
+    use crate::live::Live;
+    if !have_meadowboot() {
+        return;
+    }
+    let workspace = Workspace::new("meadow-fails");
+    std::fs::write(
+        workspace.dir.join("Gives.mw"),
+        r#"
+use Mira as M
+
+@export
+fun mira_plugin_abi_version () : UInt32 = M.abiVersion ()
+
+@export
+fun mira_meadow_run (s : Int) (user : Int) : () ! Process = M.run s user
+
+@export
+fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
+  M.load api app (\p -> M.addSystem p "up" M.update "gives_up" [])
+
+@export
+fun gives_up (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  -- Nought, from the clock, so that nothing knows it is nought before the game runs.
+  let nought = floor (M.elapsedSeconds sys *. 0.0) in
+  M.setSignalNumber sys "gives.ratio" (toFloat (100 / nought))
+"#,
+    )
+    .unwrap();
+    let mut app = app();
+    app.load_scripts(&workspace.dir).unwrap();
+    assert!(app.script_problems().next().is_none(), "{:?}", app.script_problems().next());
+    for _ in 0..5 {
+        app.update();
+    }
+    let failures = app.world.resource::<Live>().failures();
+    let failure = failures.first().expect("the failure is told of");
+    assert!(failure.system.ends_with("up") && !failure.message.is_empty(), "{} said {:?}", failure.system, failure.message);
+    // And the engine is still here to say so, and to go on.
+    app.update();
+}
+
 /// The sound example in Meadow plays as the Haskell one does: its scene, the hum from the
 /// ball, the scale a note at a time, and the ball going round.
 #[test]
