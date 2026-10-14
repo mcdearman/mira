@@ -48,7 +48,7 @@ fn main() -> anyhow::Result<()> {
             game.load_scripts(plugin)?;
             continue;
         }
-        if plugin.ends_with(".hs") {
+        if plugin.ends_with(".hs") || plugin.ends_with(".mw") {
             game.load_script(plugin)?;
             continue;
         }

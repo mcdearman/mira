@@ -1537,6 +1537,147 @@ fn a_plugin_makes_sounds_plays_them_and_puts_them_in_the_world() {
     assert_eq!(said(&app, "noisy.playing"), 0.0);
     assert_eq!(app.world.resource::<Audio>().playing(), 1);
 }
+/// The counter (docs/BINDINGS.md) as a Meadow script, written with mira's Meadow bindings.
+const MEADOW_COUNTER: &str = r#"
+-- mira's counter plugin (docs/BINDINGS.md), written with mira's Meadow bindings.
+
+use Mira as M
+
+def step : Float = STEP
+
+@export
+fun mira_plugin_abi_version () : UInt32 = M.abiVersion ()
+
+@export
+fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
+  M.load api app (\p ->
+    let transform = M.lookupComponent p "mira.Transform" in
+    let counter = M.registerComponent p "test.Counter" 4 4 in
+    let loads = M.state p "test.loads" 4 4 in
+    let u1 = M.writeInt32 loads (M.readInt32 loads + 1) in
+    let u2 = M.keep p [transform, counter, M.address loads] in
+    let boot = M.addSystem p "boot" M.startup "counter_boot" [] in
+    let adopt = M.addSystem p "adopt" M.update "counter_adopt" [M.having transform, M.lacking counter] in
+    let stepping = M.addSystem p "step" M.update "counter_step" [M.writes transform, M.writes counter] in
+    if transform == 0 then 0 - 2 else if boot + adopt + stepping == 0 then 0 else 0 - 3)
+
+-- An entity with a counter of 100.
+@export
+fun counter_boot (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  M.insertInt32 sys (M.spawn sys) (M.kept sys 1) 100
+
+-- Each entity with a transform and no counter is given one of 0.
+@export
+fun counter_adopt (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  M.forEach0 sys (\e -> M.insertInt32 sys e (M.kept sys 1) 0)
+
+-- Each moves `step` along x, is put at the number of loads on z, and counts one more.
+@export
+fun counter_step (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let loads = M.readInt32 (M.pointer (M.kept sys 2)) in
+  M.forEach2 sys (\e t c ->
+    let (x, y, z) = M.translation t in
+    let u1 = M.setTranslation t (x +. step, y, toFloat loads) in
+    M.writeInt32 c (M.readInt32 c + 1))
+"#;
+
+/// Whether Meadow scripts can be built here: MeadowBoot is found, as the engine looks for it.
+/// Without it the Meadow tests are skipped, loudly.
+fn have_meadowboot() -> bool {
+    let boot = std::env::var_os("MIRA_MEADOWBOOT").map_or_else(|| PathBuf::from("meadowboot"), PathBuf::from);
+    if Command::new(boot).arg("--version").output().is_ok() {
+        return true;
+    }
+    eprintln!("skipped: MeadowBoot is not here (MIRA_MEADOWBOOT, or meadowboot on the path), so the Meadow scripts were not tested");
+    false
+}
+
+#[test]
+fn a_meadow_script_is_built_loaded_and_kept_built() {
+    if !have_meadowboot() {
+        return;
+    }
+    let workspace = Workspace::new("meadow-scripts");
+    let source = workspace.dir.join("Counter.mw");
+    let mut later = 0;
+    let mut save = |step: &str| {
+        later += 2;
+        std::fs::write(&source, MEADOW_COUNTER.replace("STEP", step)).unwrap();
+        let file = std::fs::File::options().write(true).open(&source).unwrap();
+        file.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(later)).unwrap();
+    };
+    save("1.0");
+
+    let mut app = app();
+    let entity = app.world.spawn(Transform::IDENTITY);
+    app.load_scripts(&workspace.dir).unwrap();
+    assert!(app.script_problems().next().is_none(), "{:?}", app.script_problems().next());
+    assert_eq!(app.native_plugins().loaded().map(|(name, _)| name.to_owned()).collect::<Vec<_>>(), ["counter"]);
+    for _ in 0..5 {
+        app.update();
+    }
+    assert_eq!(position(&app, entity), Vec3::new(5.0, 0.0, 1.0));
+
+    // Saved with a mistake: told of, and the last that built goes on.
+    save("a_number_that_is_not_there");
+    frames_until(&mut app, "the mistake to be told of", |app| app.script_problems().next().is_some());
+    let before = position(&app, entity).x;
+    app.update();
+    assert_eq!(position(&app, entity).x, before + 1.0);
+
+    // Saved right and different: built behind the game and taken up, its data kept.
+    save("10.0");
+    let mut last = position(&app, entity).x;
+    frames_until(&mut app, "the new script to be taken up", |app| {
+        let (now, was) = (position(app, entity).x, last);
+        last = now;
+        now - was == 10.0
+    });
+    assert_eq!(position(&app, entity).z, 2.0, "loaded twice");
+    assert!(app.script_problems().next().is_none());
+}
+/// The sound example in Meadow plays as the Haskell one does: its scene, the hum from the
+/// ball, the scale a note at a time, and the ball going round.
+#[test]
+fn the_meadow_sound_example_plays_from_its_script() {
+    use crate::{
+        assets::Assets,
+        audio::{Audio, AudioListener, AudioSource, SilentAudioPlugin},
+        render::{Camera, Mesh, Mesh3d},
+        time::Time,
+    };
+    if !have_meadowboot() {
+        return;
+    }
+    let workspace = Workspace::new("meadow-sound");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/meadow/sound/Sound.mw");
+    std::fs::copy(script, workspace.dir.join("Sound.mw")).unwrap();
+    let mut app = app();
+    app.add_plugins(SilentAudioPlugin).init_resource::<Assets<Mesh>>();
+    app.load_scripts(&workspace.dir).unwrap();
+    assert!(app.script_problems().next().is_none(), "{:?}", app.script_problems().next());
+    app.world.resource_mut::<Time>().set_fixed_step(Some(std::time::Duration::from_millis(100)));
+    app.update();
+    app.update();
+    assert_eq!(app.world.query::<&Mesh3d>().iter().count(), 2, "the ball and the ground");
+    assert_eq!(app.world.query::<(&Camera, &AudioListener)>().iter().count(), 1);
+    let (hummer, _) = app.world.query::<(Entity, &AudioSource)>().single();
+    let began = position(&app, hummer);
+    assert_eq!(app.world.resource::<Audio>().playing(), 1, "the hum alone at first");
+    let mut most = 0;
+    for _ in 0..30 {
+        app.update();
+        most = most.max(app.world.resource::<Audio>().playing());
+    }
+    assert_eq!(most, 2, "the hum and a note");
+    let now = position(&app, hummer);
+    assert_ne!(now, began, "the ball goes round");
+    assert!((glam::Vec2::new(now.x, now.z).length() - 4.0).abs() < 0.01, "on its circle: {now}");
+}
+
 /// Runs frames until something is so, a script being built behind them: for as long as a
 /// build may take, and no longer.
 fn frames_until(app: &mut App, what: &str, mut so: impl FnMut(&mut App) -> bool) {

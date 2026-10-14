@@ -205,7 +205,51 @@ changes.
 A plugin is native code inside the engine's process. It can crash the app or corrupt memory,
 and the engine cannot prevent that. Only load plugins you trust.
 
-## In Haskell (the default)
+## In Meadow
+
+[Meadow](https://github.com/meadow-lang/meadow) is to be mira's scripting language. A Meadow
+script is a `.mw` file in a game's folder, built by the engine as a Haskell one is (see
+"A game that is a folder of scripts" below), with mira's bindings:
+[`bindings/meadow`](../bindings/meadow), a package named `Mira`.
+
+```
+use Mira as M
+
+@export
+fun mira_plugin_abi_version () : UInt32 = M.abiVersion ()
+
+@export
+fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
+  M.load api app (\p ->
+    let transform = M.lookupComponent p "mira.Transform" in
+    let u = M.keep p [transform] in
+    M.addSystem p "drift" M.update "drift" [M.writes transform])
+
+@export
+fun drift (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  M.forEach1 sys (\e t ->
+    let (x, y, z) = M.translation t in
+    M.setTranslation t (x +. M.deltaSeconds sys, y, z))
+```
+
+Each system is an exported function of its own, `(s : Int) (user : Int) : () ! Process`, named
+when it is added; `M.system s user` gives what the calls take. What a plugin's systems need
+from its setting up (the components it registered, a state block) it keeps with `M.keep`
+and reads with `M.kept`. The example is [`examples/meadow/sound`](../examples/meadow/sound).
+
+To build Meadow scripts the engine needs MeadowBoot: `MIRA_MEADOWBOOT` saying where it is
+(or `meadowboot` on the path), with `MEADOW` and `MEADOWBOOT_STD` set and clang on the path,
+as Meadow's own build asks. MeadowBoot has no released build yet: it is built from Meadow's
+repository. So for now the examples are in Haskell as well, and CI tests the Meadow ones only
+where MeadowBoot is.
+
+What is not here yet, in Meadow: a runtime error in a script ends the game (Meadow is to
+hand it back, for the binding to report as the Haskell ones do); and the bindings cover what
+the sound example uses (components, systems, queries, transforms, meshes, a plain colour, a
+camera, a sun, signals, sound), not yet the whole interface.
+
+## In Haskell
 
 Haskell is the language mira's plugin examples and documentation lead with: plugin code is
 type-checked against the components it uses, and the bindings give it no pointers to misuse.

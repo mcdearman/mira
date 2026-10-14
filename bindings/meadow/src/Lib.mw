@@ -1,0 +1,349 @@
+-- mira's plugin interface, for plugins and scripts written in Meadow.
+--
+-- A plugin is a Meadow package that exports, with `@export`, the functions mira looks for:
+--
+--   @export
+--   fun mira_plugin_abi_version () : UInt32 = M.abiVersion ()
+--
+--   @export
+--   fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
+--     M.load api app (\p -> ...)
+--
+-- and one exported function for each of its systems, `(s : Int) (user : Int) : () ! Process`,
+-- named when the system is added. Inside a system, `M.system s user` gives what the calls
+-- here take. Everything happens on the one thread mira calls a plugin on.
+--
+-- The table of the engine's functions is `include/mira.h` in mira: each call here is one of
+-- its slots. A slot's number is its place after the table's two header words.
+
+use Std.Ffi as Ffi
+use Std.Ffi (Arg, Ptr, Function, Library)
+use Std.Ffi.CType.*
+use Std.Result as R
+use Std.Result.Result.*
+
+-- ---------------------------------------------------------------------------------------
+-- The plugin while it loads, and a system while it runs
+
+-- What a plugin is given to set itself up with: the engine's table, the app being set up,
+-- and a block of memory of the plugin's own that every one of its systems is handed.
+@pub data Plugin = Plugin Ptr Int Ptr
+
+-- One run of one system: the engine's table, the run, and the plugin's block.
+@pub data System = System Ptr Int Ptr
+
+-- The block: the table, then where what the plugin keeps for its systems is.
+def block = [Pointer, Pointer]
+
+-- The version of the plugin interface these bindings speak.
+@pub fun abiVersion () = toUInt32 1
+
+-- Sets a plugin up: `body` registers its components and systems, and answers 0, or anything
+-- else to refuse to load.
+@pub fun load (apiAt : Int) (appAt : Int) (body : Plugin -> Int ! { Process | e }) : Int32 ! { Process | e } =
+  let api = Ptr apiAt in
+  let mine = Ffi.alloc (Ffi.sizeOf (StructOf block)) in
+  let u1 = Ffi.writePtr (Ffi.field mine block 0) api in
+  let u2 = Ffi.writePtr (Ffi.field mine block 1) Ffi.null in
+  toInt32 (body (Plugin api appAt mine))
+
+-- The run of a system, from what mira called the system's function with.
+@pub fun system (s : Int) (user : Int) : System ! { Process | e } =
+  let mine = Ptr user in
+  System (okPtr (Ffi.readPtr (Ffi.field mine block 0))) s mine
+
+-- Keeps numbers for the plugin's systems (the components it registered, say), to be read
+-- back in them with `kept`, by place.
+@pub fun keep (p : Plugin) (numbers : [Int]) : () ! { Process | e } =
+  match p with
+  | Plugin _ _ mine ->
+      let room = Ffi.alloc (8 * max 1 (len numbers)) in
+      let u1 = Ffi.writeInts room 8 numbers in
+      let u2 = Ffi.writePtr (Ffi.field mine block 1) room in
+      ()
+
+-- A pointer as a number to keep, and a kept number as the pointer it was.
+@pub fun address (p : Ptr) : Int = Ffi.address p
+@pub fun pointer (n : Int) : Ptr = Ptr n
+
+-- The number kept at a place.
+@pub fun kept (sys : System) (at : Int) : Int ! { Process | e } =
+  match sys with
+  | System _ _ mine -> ok (Ffi.readInt (Ffi.offset (okPtr (Ffi.readPtr (Ffi.field mine block 1))) (8 * at)) I64)
+
+-- ---------------------------------------------------------------------------------------
+-- Calling the table
+
+fun ok r = match r with | Ok x -> x | Err _ -> 0
+
+fun okFloat r = match r with | Ok x -> x | Err _ -> 0.0
+
+fun okPtr r = match r with | Ok p -> p | Err _ -> Ffi.null
+
+fun slot (api : Ptr) (i : Int) = Ffi.functionAt (okPtr (Ffi.readPtr (Ffi.offset api (8 + 8 * i))))
+
+fun apiOf (sys : System) = match sys with | System api _ _ -> api
+
+fun runOf (sys : System) = match sys with | System _ s _ -> Arg.Int s
+
+fun call (sys : System) (i : Int) (args : [Arg]) = ok (Ffi.callInt (slot (apiOf sys) i) (concatMap (\part -> part) [[runOf sys], args]))
+
+fun callUnit (sys : System) (i : Int) (args : [Arg]) =
+  let r = Ffi.callUnit (slot (apiOf sys) i) (concatMap (\part -> part) [[runOf sys], args]) in ()
+
+-- Text that outlives the call: a name the engine keeps.
+fun lasting (text : String) =
+  Ffi.withText text (\p n ->
+    let q = Ffi.alloc (n + 1) in
+    let u = Ffi.writeInts q 1 (R.unwrapOr [] (Ffi.readUnsigned p 1 n)) in
+    (q, n))
+
+-- The address of an exported function of the plugin itself.
+fun ownFunction (name : String) =
+  match Ffi.own () with
+  | Ok lib -> (match Ffi.function lib name with | Ok f -> Ffi.addressOf f | Err _ -> Ffi.null)
+  | Err _ -> Ffi.null
+
+-- ---------------------------------------------------------------------------------------
+-- Components and state (while loading)
+
+-- A component the engine defines ("mira.Transform"), or another plugin did: its handle, or
+-- 0 if there is none.
+@pub fun lookupComponent (p : Plugin) (name : String) : Int ! { Process | e } =
+  match p with
+  | Plugin api app _ -> Ffi.withText name (\t n -> ok (Ffi.callInt (slot api 2) [Arg.Int app, Arg.Ptr t, Arg.Int n, Arg.Ptr Ffi.null, Arg.Ptr Ffi.null]))
+
+-- Defines a component of this plugin's, `size` bytes aligned to `align`, or finds the one
+-- it defined before a reload. Its handle, or 0.
+@pub fun registerComponent (p : Plugin) (name : String) (size : Int) (align : Int) : Int ! { Process | e } =
+  match p with
+  | Plugin api app _ -> Ffi.withText name (\t n -> ok (Ffi.callInt (slot api 1) [Arg.Int app, Arg.Ptr t, Arg.Int n, Arg.Int size, Arg.Int align, Arg.Int 0]))
+
+-- A block of memory the engine keeps for as long as the app runs, through reloads, found by
+-- name: zeroed the first time.
+@pub fun state (p : Plugin) (name : String) (size : Int) (align : Int) : Ptr ! { Process | e } =
+  match p with
+  | Plugin api app _ -> Ffi.withText name (\t n -> okPtr (Ffi.callPtr (slot api 3) [Arg.Int app, Arg.Ptr t, Arg.Int n, Arg.Int size, Arg.Int align]))
+
+-- ---------------------------------------------------------------------------------------
+-- Systems (while loading)
+
+-- When in the frame a system runs.
+@pub def startup : Int = 0
+@pub def first : Int = 1
+@pub def preUpdate : Int = 2
+@pub def fixedUpdate : Int = 3
+@pub def update : Int = 4
+@pub def postUpdate : Int = 5
+@pub def last : Int = 6
+
+-- What a system does with a component, for the entities it visits: reads it, writes it,
+-- needs it there, or needs it not there. Reads and writes give a pointer to the value, in
+-- the order they are listed.
+@pub fun reads (component : Int) = (component, 0)
+@pub fun writes (component : Int) = (component, 1)
+@pub fun having (component : Int) = (component, 2)
+@pub fun lacking (component : Int) = (component, 3)
+
+-- Adds a system: its name, its stage, the name of the exported function that runs it, and
+-- the entities it visits. Answers 0, or why not as another number.
+@pub fun addSystem (p : Plugin) (name : String) (stage : Int) (run : String) (terms : [(Int, Int)]) : Int ! { Process | e } =
+  match p with
+  | Plugin api app mine ->
+      let desc = [Pointer, Usize, U32, U32, Pointer, Pointer, Pointer, Usize] in
+      let (text, n) = lasting name in
+      let listed = Ffi.alloc (8 * max 1 (len terms)) in
+      let u0 = Ffi.writeInts listed 4 (concatMap (\t -> match t with | (c, a) -> [c, a]) terms) in
+      Ffi.withBuffer (Ffi.sizeOf (StructOf desc)) (\d ->
+        let u1 = Ffi.writePtr (Ffi.field d desc 0) text in
+        let u2 = Ffi.writeInt (Ffi.field d desc 1) Usize n in
+        let u3 = Ffi.writeInt (Ffi.field d desc 2) U32 stage in
+        let u4 = Ffi.writeInt (Ffi.field d desc 3) U32 0 in
+        let u5 = Ffi.writePtr (Ffi.field d desc 4) (ownFunction run) in
+        let u6 = Ffi.writePtr (Ffi.field d desc 5) mine in
+        let u7 = Ffi.writePtr (Ffi.field d desc 6) (if len terms == 0 then Ffi.null else listed) in
+        let u8 = Ffi.writeInt (Ffi.field d desc 7) Usize (len terms) in
+        ok (Ffi.callInt (slot api 4) [Arg.Int app, Arg.Ptr d]))
+
+-- ---------------------------------------------------------------------------------------
+-- Inside a system: time, entities and queries
+
+-- Seconds since the last frame (or the fixed step, in `fixedUpdate`).
+@pub fun deltaSeconds (sys : System) : Float ! { Process | e } = okFloat (Ffi.callFloat32 (slot (apiOf sys) 5) [runOf sys])
+
+-- Seconds since the app began.
+@pub fun elapsedSeconds (sys : System) : Float ! { Process | e } = okFloat (Ffi.callFloat (slot (apiOf sys) 6) [runOf sys])
+
+-- A new entity, made when the system returns.
+@pub fun spawn (sys : System) : Int ! { Process | e } = call sys 9 []
+
+@pub fun despawn (sys : System) (entity : Int) : () ! { Process | e } = callUnit sys 10 [Arg.Int entity]
+
+-- Puts a component's value (the bytes at `value`) on an entity, when the system returns.
+@pub fun insert (sys : System) (entity : Int) (component : Int) (value : Ptr) : () ! { Process | e } =
+  callUnit sys 11 [Arg.Int entity, Arg.Int component, Arg.Ptr value]
+
+-- Puts a component that is one 32-bit integer on an entity.
+@pub fun insertInt32 (sys : System) (entity : Int) (component : Int) (n : Int) : () ! { Process | e } =
+  Ffi.withBuffer 4 (\v ->
+    let u = Ffi.writeInt v I32 n in
+    insert sys entity component v)
+
+-- Puts a component that is one 32-bit float on an entity.
+@pub fun insertFloat32 (sys : System) (entity : Int) (component : Int) (x : Float) : () ! { Process | e } =
+  Ffi.withBuffer 4 (\v ->
+    let u = Ffi.writeFloat v F32 x in
+    insert sys entity component v)
+
+@pub fun remove (sys : System) (entity : Int) (component : Int) : () ! { Process | e } = callUnit sys 12 [Arg.Int entity, Arg.Int component]
+
+-- Runs `body` for each entity the system visits, with the entity and a pointer to each
+-- component it reads or writes, in order. `count` is how many of those there are.
+@pub fun forEach (sys : System) (count : Int) (body : Int -> [Ptr] -> () ! { Process | e }) : () ! { Process | e } =
+  visiting sys count (\entity found -> body entity (map (\i -> pointerAt found i) (range 0 count)))
+
+-- Each entity the system visits, with the buffer the engine wrote its components' pointers to.
+fun visiting sys count body =
+  Ffi.withBuffer 8 (\e -> Ffi.withBuffer (8 * max 1 count) (\found -> visit sys e found body))
+
+-- The same, for a system with no component to read or write, one, two or three: each pointer
+-- is handed over by itself.
+@pub fun forEach0 (sys : System) (body : Int -> () ! { Process | e }) : () ! { Process | e } =
+  visiting sys 0 (\entity found -> body entity)
+
+@pub fun forEach1 (sys : System) (body : Int -> Ptr -> () ! { Process | e }) : () ! { Process | e } =
+  visiting sys 1 (\entity found -> body entity (pointerAt found 0))
+
+@pub fun forEach2 (sys : System) (body : Int -> Ptr -> Ptr -> () ! { Process | e }) : () ! { Process | e } =
+  visiting sys 2 (\entity found -> body entity (pointerAt found 0) (pointerAt found 1))
+
+@pub fun forEach3 (sys : System) (body : Int -> Ptr -> Ptr -> Ptr -> () ! { Process | e }) : () ! { Process | e } =
+  visiting sys 3 (\entity found -> body entity (pointerAt found 0) (pointerAt found 1) (pointerAt found 2))
+
+-- The pointer to the `i`th component the engine wrote for an entity.
+fun pointerAt (found : Ptr) (i : Int) = okPtr (Ffi.readPtr (Ffi.offset found (8 * i)))
+
+fun visit sys e found body =
+  if call sys 7 [Arg.Ptr e, Arg.Ptr found] % 256 == 0 then ()
+  else
+    let u = body (ok (Ffi.readInt e U64)) found in
+    visit sys e found body
+
+-- Reading and writing a 32-bit integer or float that a pointer from `forEach` points at.
+@pub fun readInt32 (at : Ptr) : Int ! { Process | e } = ok (Ffi.readInt at I32)
+@pub fun writeInt32 (at : Ptr) (n : Int) : () ! { Process | e } = let u = Ffi.writeInt at I32 n in ()
+@pub fun readFloat32 (at : Ptr) (index : Int) : Float ! { Process | e } = okFloat (Ffi.readFloat (Ffi.offset at (4 * index)) F32)
+@pub fun writeFloat32 (at : Ptr) (index : Int) (x : Float) : () ! { Process | e } = let u = Ffi.writeFloat (Ffi.offset at (4 * index)) F32 x in ()
+
+-- ---------------------------------------------------------------------------------------
+-- mira.Transform: 48 bytes, 16-aligned; translation at 0, rotation (x y z w) at 16, scale at 32
+
+@pub def transformSize : Int = 48
+@pub def transformAlign : Int = 16
+
+-- Where a transform (pointed at from `forEach`) puts its entity.
+@pub fun translation (t : Ptr) : (Float, Float, Float) ! { Process | e } = (readFloat32 t 0, readFloat32 t 1, readFloat32 t 2)
+
+@pub fun setTranslation (t : Ptr) (at : (Float, Float, Float)) : () ! { Process | e } =
+  match at with
+  | (x, y, z) ->
+      let u1 = writeFloat32 t 0 x in
+      let u2 = writeFloat32 t 1 y in
+      writeFloat32 t 2 z
+
+-- Puts a transform on an entity: where it is, its rotation (x y z w) and its scale.
+@pub fun insertTransform (sys : System) (entity : Int) (transform : Int) (at : (Float, Float, Float)) (rotation : (Float, Float, Float, Float)) (scale : (Float, Float, Float)) : () ! { Process | e } =
+  Ffi.withBuffer 48 (\t ->
+    let u1 = setTranslation t at in
+    let u2 = (match rotation with | (x, y, z, w) -> Ffi.writeFloats (Ffi.offset t 16) 4 [x, y, z, w]) in
+    let u3 = (match scale with | (x, y, z) -> Ffi.writeFloats (Ffi.offset t 32) 4 [x, y, z]) in
+    insert sys entity transform t)
+
+-- ---------------------------------------------------------------------------------------
+-- Logging and the window
+
+-- Says something in the engine's log.
+@pub fun logInfo (sys : System) (message : String) : () ! { Process | e } =
+  Ffi.withText message (\t n -> let r = Ffi.callUnit (slot (apiOf sys) 0) [Arg.Int 3, Arg.Ptr t, Arg.Int n] in ())
+
+@pub fun setWindowTitle (sys : System) (title : String) : () ! { Process | e } =
+  Ffi.withText title (\t n -> callUnit sys 33 [Arg.Ptr t, Arg.Int n])
+
+-- ---------------------------------------------------------------------------------------
+-- Drawing
+
+@pub fun meshCube (sys : System) (size : Float) : Int ! { Process | e } = call sys 23 [Arg.Int 0, Arg.Float32 size]
+@pub fun meshSphere (sys : System) (radius : Float) : Int ! { Process | e } = call sys 23 [Arg.Int 1, Arg.Float32 radius]
+@pub fun meshPlane (sys : System) (size : Float) : Int ! { Process | e } = call sys 23 [Arg.Int 2, Arg.Float32 size]
+
+@pub fun setMesh (sys : System) (entity : Int) (mesh : Int) : () ! { Process | e } = callUnit sys 25 [Arg.Int entity, Arg.Int mesh]
+
+-- A plain matte surface of a colour.
+@pub fun setColor (sys : System) (entity : Int) (color : (Float, Float, Float)) : () ! { Process | e } =
+  match color with
+  | (r, g, b) ->
+      Ffi.withBuffer 36 (\m ->
+        let u1 = Ffi.writeFloats m 4 [r, g, b, 1.0, 0.0, 0.0, 0.0, 0.8, 0.0] in
+        callUnit sys 26 [Arg.Int entity, Arg.Ptr m])
+
+-- Makes an entity a camera (it also needs a transform), the one drawn from.
+@pub fun setCamera (sys : System) (entity : Int) : () ! { Process | e } =
+  Ffi.withBuffer 12 (\c ->
+    let u1 = Ffi.writeFloats c 4 [1.0471976, 0.1] in
+    let u2 = Ffi.writeInt (Ffi.offset c 8) U32 1 in
+    callUnit sys 30 [Arg.Int entity, Arg.Ptr c])
+
+-- Makes an entity a sun (it also needs a transform), shining along its forward direction.
+@pub fun setLight (sys : System) (entity : Int) (intensity : Float) : () ! { Process | e } =
+  Ffi.withBuffer 20 (\l ->
+    let u1 = Ffi.writeFloats l 4 [1.0, 1.0, 1.0, intensity] in
+    let u2 = Ffi.writeInt (Ffi.offset l 16) U32 1 in
+    callUnit sys 31 [Arg.Int entity, Arg.Ptr l])
+
+-- ---------------------------------------------------------------------------------------
+-- Signals
+
+-- States a fact: a signal true or false, as the plugin found it.
+@pub fun setSignal (sys : System) (name : String) (value : Bool) : () ! { Process | e } =
+  Ffi.withText name (\t n -> callUnit sys 48 [Arg.Ptr t, Arg.Int n, Arg.Float (if value then 1.0 else 0.0), Arg.Int 0])
+
+-- States a fact that is a number.
+@pub fun setSignalNumber (sys : System) (name : String) (value : Float) : () ! { Process | e } =
+  Ffi.withText name (\t n -> callUnit sys 48 [Arg.Ptr t, Arg.Int n, Arg.Float value, Arg.Int 1])
+
+-- A signal's value as of its last update (a truth as 1 or 0), or 0 if there is none.
+@pub fun signal (sys : System) (name : String) : Float ! { Process | e } =
+  Ffi.withText name (\t n -> Ffi.withBuffer 8 (\out ->
+    let found = call sys 49 [Arg.Ptr t, Arg.Int n, Arg.Ptr out] in
+    if found == 0 then 0.0 else okFloat (Ffi.readFloat out F64)))
+
+-- ---------------------------------------------------------------------------------------
+-- Sound
+
+-- A plain tone of so many hertz lasting so many seconds; the same two give the same sound.
+@pub fun soundTone (sys : System) (hertz : Float) (seconds : Float) : Int ! { Process | e } = call sys 53 [Arg.Float32 hertz, Arg.Float32 seconds]
+
+-- Plays a sound at once, this loud (1 as it was made). Answers what is playing.
+@pub fun playSound (sys : System) (sound : Int) (volume : Float) : Int ! { Process | e } =
+  call sys 55 [Arg.Int sound, Arg.Float32 volume, Arg.Float32 0.0, Arg.Float32 1.0, Arg.Int 0]
+
+-- Makes an entity give off a sound from where it is, heard within `range` metres.
+@pub fun setSoundSource (sys : System) (entity : Int) (sound : Int) (volume : Float) (range : Float) (looping : Bool) : () ! { Process | e } =
+  callUnit sys 58 [Arg.Int entity, Arg.Int sound, Arg.Float32 volume, Arg.Float32 range, Arg.Int (if looping then 1 else 0)]
+
+-- Makes an entity the ears sources are heard by.
+@pub fun setListener (sys : System) (entity : Int) : () ! { Process | e } = callUnit sys 59 [Arg.Int entity]
+
+-- ---------------------------------------------------------------------------------------
+-- Turning: sine and cosine, until Meadow's standard library has its own. A series about the
+-- nearest whole turn, good to a hundred-thousandth: enough to move things by.
+
+@pub def pi : Float = 3.141592653589793
+
+@pub fun sin (x : Float) : Float =
+  let turns = toFloat (floor ((x +. pi) /. (2.0 *. pi))) in
+  let r = x -. turns *. 2.0 *. pi in
+  let r2 = r *. r in
+  r *. (1.0 -. r2 /. 6.0 *. (1.0 -. r2 /. 20.0 *. (1.0 -. r2 /. 42.0 *. (1.0 -. r2 /. 72.0 *. (1.0 -. r2 /. 110.0 *. (1.0 -. r2 /. 156.0 *. (1.0 -. r2 /. 210.0)))))))
+
+@pub fun cos (x : Float) : Float = sin (x +. pi /. 2.0)
