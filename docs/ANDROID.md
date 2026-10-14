@@ -1,8 +1,22 @@
 # Android
 
 The engine is built for Android (`aarch64-linux-android`) on every change, so nothing gets
-written that a phone cannot have. **It has not yet been run on one**: what is here is what
-it takes to build, and the places where Android is not like a desktop.
+written that a phone cannot have, and Tail Lights is packaged for one. What is here is what
+it takes to build, the places where Android is not like a desktop, and what has been seen
+on real phones.
+
+## On real phones
+
+| Phone | What was seen (October 2026) |
+|---|---|
+| Pixel 8 | Tail Lights plays. |
+| Galaxy S26 | Tail Lights plays, with what is seen decided on the processor. With it decided on the graphics card, as on a desktop, only the background was drawn. |
+
+So on a phone what is seen is decided on the processor (`MIRA_CULL=gpu` asks for the
+card's way). The S26's graphics say they can draw indirectly from what a compute pass
+listed and then draw nothing; why has not been looked into, nor which of the S26's two
+kinds of graphics that phone had. The first package of all closed as it opened on both:
+it lacked the C++ library its sound needs, which the package now carries.
 
 ## Starting a game
 
@@ -47,7 +61,8 @@ game logs, and what a panic says, is in the phone's log: `adb logcat -s mira`.
 | Input | Fingers: see [INPUT.md](INPUT.md). Bind swipes and taps beside keys and the game is the same game. |
 | Saved games | `SaveGames::for_game` keeps them among the app's own files, which the system keeps apart for each app. |
 | Sound | Goes out through the system's own (AAudio, by way of Oboe), as it does through ALSA or WASAPI elsewhere. |
-| Ray tracing, culling on the card | Used where the phone's graphics have them and gone without where they have not, as on any machine. |
+| Ray tracing | Used where the phone's graphics have it and gone without where they have not, as on any machine. |
+| What is seen | Decided on the processor, not the graphics card: see above. |
 
 ## Put away and brought back
 
@@ -66,7 +81,8 @@ Tried so on Windows, with Vulkan. Sound is held where it is while the app is awa
 
 ## What there is not yet
 
-- A game seen to run on a phone: the package is made, and has yet to be tried on one.
+- Why deciding what is seen on the graphics card draws nothing on a Galaxy S26.
+- More phones tried than two, and anything but Tail Lights tried on one.
 - Assets: a desktop game reads `res/` beside the program; in a package they are inside it.
 - The editor and the interface crate, which need a clipboard a phone does not give.
 - iOS.
