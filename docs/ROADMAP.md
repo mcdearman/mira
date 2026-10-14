@@ -559,6 +559,10 @@ depends on resolution rather than scene size.
       there (the tests compile C with clang)
 - [x] Haskell plugins on Windows: built by the same script, run from Git's `sh`; each
       library carries its own GHC runtime there, as GHC has none to share on Windows
+- [x] Meadow scripts: mira's bindings for Meadow (`bindings/meadow`), `.mw` files built by
+      the engine with MeadowBoot, and the sound example in Meadow (`examples/meadow/sound`)
+- [ ] Meadow scripts with the whole interface, a runtime error reported and not fatal, and
+      MeadowBoot installed in CI; then Meadow the language the examples are written in
 - [x] Scripts built by the engine itself, so that no shell is needed on any system: a game
       is a folder of scripts, built, loaded, and built again when one is saved
       (`mira-play <folder>`; see [PLUGINS.md](PLUGINS.md))

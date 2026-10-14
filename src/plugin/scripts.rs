@@ -1,15 +1,18 @@
 //! Scripts: plugins the engine builds itself, from their source.
 //!
 //! A game can be a folder of scripts and nothing else. [`App::load_scripts`] takes each
-//! Haskell file in a folder, builds it into a plugin, and loads it; from then on a script
+//! Meadow file (`.mw`) and each Haskell file (`.hs`) in a folder, builds it into a plugin,
+//! and loads it; from then on a script
 //! that is saved is built again, behind the game, and the game goes on with the new one as
 //! soon as it is ready. One that does not build is told of, with what the compiler said,
 //! and the game carries on with the last that did.
 //!
-//! What is needed to build a script is GHC, on the path. The bindings a script is built
-//! with ([`Mira.hs`](../../../bindings/haskell/Mira.hs), their C half, and `mira.h`) are
-//! carried inside the engine and written out beside what is built, so a game's folder needs
-//! none of them, and no shell is asked to do anything.
+//! What is needed to build a Haskell script is GHC, on the path; a Meadow script, MeadowBoot
+//! (`MIRA_MEADOWBOOT`, or `meadowboot` on the path, with what it needs set as Meadow says:
+//! `MEADOW`, `MEADOWBOOT_STD`, and clang on the path). The bindings a script is built with
+//! ([`bindings/meadow`](../../../bindings/meadow), [`Mira.hs`](../../../bindings/haskell/Mira.hs)
+//! with its C half and `mira.h`) are carried inside the engine and written out beside what
+//! is built, so a game's folder needs none of them, and no shell is asked to do anything.
 
 use std::{
     path::{Path, PathBuf},
@@ -27,6 +30,12 @@ const BINDINGS: [(&str, &str); 3] = [
     ("Mira.hs", include_str!("../../bindings/haskell/Mira.hs")),
     ("mira_hs.c", include_str!("../../bindings/haskell/cbits/mira_hs.c")),
     ("mira.h", include_str!("../../include/mira.h")),
+];
+
+/// The Meadow bindings, as a package of their own that a script's package depends on.
+const MEADOW_BINDINGS: [(&str, &str); 2] = [
+    ("Meadow.toml", include_str!("../../bindings/meadow/Meadow.toml")),
+    ("src/Lib.mw", include_str!("../../bindings/meadow/src/Lib.mw")),
 ];
 
 /// Writes a file only if it is not already so, so that what was built from it stays built.
@@ -116,6 +125,68 @@ pub fn build_haskell(name: &str, source: &Path, out: &Path) -> Result<PathBuf, S
     Ok(built)
 }
 
+/// Builds a Meadow script into the plugin `name`, in the folder `out`, as
+/// [`build_haskell`] does a Haskell one.
+///
+/// The script is made a package of its own under `out/meadow/<name>`, with the bindings
+/// beside it as the package it depends on, `Mira`, and MeadowBoot builds it.
+pub fn build_meadow(name: &str, source: &Path, out: &Path) -> Result<PathBuf, String> {
+    let meadow = out.join("meadow");
+    let package = meadow.join(name);
+    let bindings = meadow.join("Mira");
+    for folder in [package.join("src"), bindings.join("src")] {
+        std::fs::create_dir_all(&folder).map_err(|err| format!("can't make {}: {err}", folder.display()))?;
+    }
+    let _turn = Turn::take(&package.join("building"))?;
+    for (file, text) in MEADOW_BINDINGS {
+        written(&bindings.join(file), text)?;
+    }
+    // A package's name is a module's, so it begins with a capital.
+    let title: String = name.chars().take(1).flat_map(char::to_uppercase).chain(name.chars().skip(1)).collect();
+    written(&package.join("Meadow.toml"), &format!("[package]\nname = \"{title}\"\nversion = \"0.1.0\"\n\n[dependencies]\nMira = {{ path = \"../Mira\" }}\n"))?;
+    let text = std::fs::read_to_string(source).map_err(|err| format!("can't read {}: {err}", source.display()))?;
+    written(&package.join("src").join("Main.mw"), &text)?;
+
+    let boot = std::env::var_os("MIRA_MEADOWBOOT").map_or_else(|| PathBuf::from("meadowboot"), PathBuf::from);
+    let began = std::time::SystemTime::now();
+    let output = Command::new(&boot)
+        .arg("build")
+        .arg(&package)
+        .output()
+        .map_err(|err| format!("MeadowBoot could not be run ({err}); a Meadow script needs it: `meadowboot` on the path, or MIRA_MEADOWBOOT saying where it is"))?;
+    if !output.status.success() {
+        let said = [output.stdout, output.stderr].concat();
+        return Err(String::from_utf8_lossy(&said).trim().to_owned());
+    }
+    // Where MeadowBoot puts the library: named after the package, or as `program` before it
+    // learnt to. The one it has just written is the one wanted.
+    let silo = |within: &Path| within.join("native").join("silo");
+    let candidates = [
+        silo(&package.join("target").join("debug")).join(library_file_name(&title)),
+        silo(&package.join("target").join("debug").join("link").join("target").join("release")).join(library_file_name("program")),
+    ];
+    let made = candidates
+        .iter()
+        .filter_map(|path| Some((std::fs::metadata(path).ok()?.modified().ok()?, path)))
+        .filter(|(when, _)| *when >= began - std::time::Duration::from_secs(1))
+        .max_by_key(|(when, _)| *when)
+        .map(|(_, path)| path.clone())
+        .ok_or_else(|| format!("MeadowBoot said it built {name} and no library was found where it puts one"))?;
+    let built = out.join(library_file_name(name));
+    let beside = out.join(format!("{}.writing", library_file_name(name)));
+    std::fs::copy(&made, &beside).map_err(|err| format!("can't copy {}: {err}", made.display()))?;
+    std::fs::rename(&beside, &built).map_err(|err| format!("can't put {} in its place: {err}", built.display()))?;
+    Ok(built)
+}
+
+/// Builds a script by what it is written in, as its file says.
+fn build(name: &str, source: &Path, out: &Path) -> Result<PathBuf, String> {
+    match source.extension().and_then(|ends| ends.to_str()) {
+        Some("mw") => build_meadow(name, source, out),
+        _ => build_haskell(name, source, out),
+    }
+}
+
 /// A script the engine keeps built.
 pub(super) struct Script {
     name: String,
@@ -130,8 +201,8 @@ pub(super) struct Script {
 }
 
 impl App {
-    /// Builds every Haskell script (`*.hs`) in a folder and loads each as a plugin, named
-    /// after its file. What is built goes in `.mira/build` inside the folder. A script that
+    /// Builds every script in a folder (Meadow, `*.mw`, and Haskell, `*.hs`) and loads each
+    /// as a plugin, named after its file. What is built goes in `.mira/build` inside the folder. A script that
     /// is saved afterwards is built again and taken up while the game runs.
     ///
     /// Scripts that do not build are logged with what the compiler said, and are built and
@@ -142,7 +213,7 @@ impl App {
             .with_context(|| format!("reading the scripts in {}", folder.display()))?
             .flatten()
             .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|ends| ends == "hs"))
+            .filter(|path| path.extension().is_some_and(|ends| ends == "hs" || ends == "mw"))
             .collect();
         sources.sort();
         for source in sources {
@@ -151,14 +222,14 @@ impl App {
         Ok(self)
     }
 
-    /// Builds one Haskell script and loads it as a plugin named after its file, and keeps
+    /// Builds one script and loads it as a plugin named after its file, and keeps
     /// it built as [`load_scripts`](Self::load_scripts) does.
     pub fn load_script(&mut self, source: impl AsRef<Path>) -> anyhow::Result<&mut Self> {
         let source = source.as_ref().to_owned();
         let name = source.file_stem().and_then(|stem| stem.to_str()).context("a script's file has no name")?.to_lowercase();
         let out = source.parent().unwrap_or(Path::new(".")).join(".mira").join("build");
         let mut script = Script { name, built: stamp(&source), source, out, building: None, problem: None };
-        match build_haskell(&script.name, &script.source, &script.out) {
+        match build(&script.name, &script.source, &script.out) {
             Ok(library) => {
                 self.load_native_plugin(&library)?;
             }
@@ -214,7 +285,7 @@ impl App {
                 let (done, building) = mpsc::channel();
                 let (name, source, out) = (script.name.clone(), script.source.clone(), script.out.clone());
                 let began = std::thread::Builder::new().name(format!("building {name}")).spawn(move || {
-                    let _ = done.send(build_haskell(&name, &source, &out));
+                    let _ = done.send(build(&name, &source, &out));
                 });
                 match began {
                     Ok(_) => script.building = Some(building),

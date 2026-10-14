@@ -1,0 +1,85 @@
+-- Sound, in Meadow: a rising scale, a note at a time, and a ball that hums as it goes round you.
+--
+--   cargo run --bin mira-play -- examples/meadow/sound
+--
+-- The whole example is this file: the engine builds it with MeadowBoot, and builds it again
+-- when it is saved. The same game in Haskell is examples/sound/Sound.hs.
+
+use Mira as M
+
+-- The notes of the scale, in hertz, one every quarter of a second from half a second in.
+def scale : [Float] = [261.63, 293.66, 329.63, 349.23, 392.0, 440.0, 493.88, 523.25]
+
+-- How high the ball hums, how far off it can be heard, and how wide its circle is.
+def humPitch : Float = 110.0
+def humRange : Float = 12.0
+def circle : Float = 4.0
+
+@export
+fun mira_plugin_abi_version () : UInt32 = M.abiVersion ()
+
+@export
+fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
+  M.load api app (\p ->
+    let transform = M.lookupComponent p "mira.Transform" in
+    -- Marks the ball that hums: one float, how fast it goes round.
+    let hummer = M.registerComponent p "sound.Hummer" 4 4 in
+    -- How many notes have been played, kept by the engine through a reload.
+    let played = M.state p "sound.played" 4 4 in
+    let u = M.keep p [transform, hummer, M.address played] in
+    let a = M.addSystem p "setup" M.startup "sound_setup" [] in
+    let b = M.addSystem p "tune" M.update "sound_tune" [] in
+    let c = M.addSystem p "circle" M.update "sound_circle" [M.writes transform, M.reads hummer] in
+    a + b + c)
+
+@export
+fun sound_setup (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let transform = M.kept sys 0 in
+  let still = (0.0, 0.0, 0.0, 1.0) in
+  let one = (1.0, 1.0, 1.0) in
+  -- A ball that hums, heard from where it is.
+  let hum = M.soundTone sys humPitch 2.0 in
+  let ball = M.spawn sys in
+  let u1 = M.insertTransform sys ball transform (circle, 1.0, 0.0) still one in
+  let u2 = M.insertFloat32 sys ball (M.kept sys 1) 0.8 in
+  let u3 = M.setMesh sys ball (M.meshSphere sys 0.3) in
+  let u4 = M.setColor sys ball (0.9, 0.6, 0.2) in
+  let u5 = M.setSoundSource sys ball hum 0.6 humRange True in
+  let ground = M.spawn sys in
+  let u6 = M.insertTransform sys ground transform (0.0, 0.0, 0.0) still one in
+  let u7 = M.setMesh sys ground (M.meshPlane sys 30.0) in
+  let u8 = M.setColor sys ground (0.3, 0.32, 0.35) in
+  -- Where you stand: the camera, which is also the ears, looking along -z.
+  let eye = M.spawn sys in
+  let u9 = M.insertTransform sys eye transform (0.0, 1.6, 0.0) still one in
+  let u10 = M.setCamera sys eye in
+  let u11 = M.setListener sys eye in
+  -- A sun, tipped down a little.
+  let sun = M.spawn sys in
+  let u12 = M.insertTransform sys sun transform (0.0, 0.0, 0.0) (0.0 -. 0.38, 0.0, 0.0, 0.92) one in
+  M.setLight sys sun 3.0
+
+-- Each note is played when its time comes.
+@export
+fun sound_tune (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let played = M.pointer (M.kept sys 2) in
+  let next = M.readInt32 played in
+  let now = M.elapsedSeconds sys in
+  if next < len scale and 0.5 +. toFloat next *. 0.25 <= now then
+    let note = M.soundTone sys (noteAt next) 0.22 in
+    let voice = M.playSound sys note 0.5 in
+    M.writeInt32 played (next + 1)
+  else ()
+
+fun noteAt (i : Int) = foldl (\found pair -> match pair with | (j, hz) -> if j == i then hz else found) 0.0 (zip (range 0 (len scale)) scale)
+
+-- The ball goes round you.
+@export
+fun sound_circle (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let now = M.elapsedSeconds sys in
+  M.forEach2 sys (\e t h ->
+    let speed = M.readFloat32 h 0 in
+    M.setTranslation t (M.cos (now *. speed) *. circle, 1.0, M.sin (now *. speed) *. circle))
