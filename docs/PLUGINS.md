@@ -38,6 +38,12 @@ plugins/chase/build.sh && cargo build -p scoreboard
 cargo run --example host -- chase scoreboard
 ```
 
+## Another language
+
+[BINDINGS.md](BINDINGS.md) is the way in for a language mira does not speak yet: the
+smallest plugin to write first, a header cut down to it, and `mira-plugin-check`, which
+loads a library and says whether it did what it should.
+
 ## What a plugin is
 
 Three exported functions:
