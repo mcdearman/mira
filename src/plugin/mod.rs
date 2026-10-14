@@ -25,6 +25,7 @@
 
 mod api;
 mod events;
+pub mod scripts;
 mod system;
 
 pub use events::PluginEvents;
@@ -166,6 +167,8 @@ impl Loaded {
 /// The app's native plugins. Reach it through `App::native_plugins`.
 pub struct NativePlugins {
     plugins: Vec<Loaded>,
+    /// The scripts the engine builds itself, and keeps built.
+    scripts: Vec<scripts::Script>,
     states: HashMap<String, StateBlock>,
     last_check: Option<Instant>,
     /// How often plugin files are checked for changes.
@@ -184,6 +187,7 @@ impl Default for NativePlugins {
     fn default() -> Self {
         Self {
             plugins: Vec::new(),
+            scripts: Vec::new(),
             states: HashMap::new(),
             last_check: None,
             check_interval: Duration::from_millis(200),
@@ -256,6 +260,9 @@ impl App {
 
     /// Called once a frame.
     pub(crate) fn check_native_plugins(&mut self) {
+        if self.native.hot_reload && !self.native.scripts.is_empty() {
+            self.keep_scripts_built();
+        }
         let host = &mut self.native;
         if !host.hot_reload || host.plugins.is_empty() {
             return;

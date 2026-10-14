@@ -559,7 +559,14 @@ depends on resolution rather than scene size.
       there (the tests compile C with clang)
 - [x] Haskell plugins on Windows: built by the same script, run from Git's `sh`; each
       library carries its own GHC runtime there, as GHC has none to share on Windows
-- [ ] Scripts built by the engine itself, so that no shell is needed on any system
+- [x] Scripts built by the engine itself, so that no shell is needed on any system: a game
+      is a folder of scripts, built, loaded, and built again when one is saved
+      (`mira-play <folder>`; see [PLUGINS.md](PLUGINS.md))
+- [ ] Every example a folder of scripts: the Rust examples ported, and what the scripts'
+      interface lacks for them added (sound, named actions, touch, particles, lights, voxels,
+      finding a way, saved games, the interface, flat pictures)
+- [ ] A game of scripts packaged to give to someone: built once, with no compiler needed
+      where it is played
 - [x] The engine is built for Android on every change (see [ANDROID.md](ANDROID.md)); a
       game there is told its activity, and keeps its saved games among the app's own files
 - [x] A game packaged for Android: Tail Lights as an `.apk`, built by a workflow

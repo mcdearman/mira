@@ -3,12 +3,15 @@
 //!
 //! ```text
 //! cargo run                         # the app, on a small scene to start from
-//! cargo run -- chase scoreboard     # the app, on a game made of plugins
+//! cargo run -- plugins/chase        # the app, on a game that is a folder of scripts
+//! cargo run -- chase scoreboard     # the app, on a game made of plugins built already
 //! cargo run -- level.json           # the app, on a scene saved from it (Save writes there)
 //! ```
 //!
-//! An argument is a plugin built into Cargo's output directory (`chase`), or a path to a
-//! shared library; rebuild one while the app is open and it is reloaded. The samples are
+//! An argument is a folder of scripts or one script (`Chase.hs`), which the app builds and
+//! keeps built: save a script while the app is open and the game goes on with it. Or it is a
+//! plugin built into Cargo's output directory (`chase`), or a path to a shared library;
+//! rebuild one while the app is open and it is reloaded. The samples are
 //! examples: `cargo run --example voxel_world`, `--example sacred_sites`, and so on.
 
 use std::path::PathBuf;
@@ -40,6 +43,15 @@ fn main() -> anyhow::Result<()> {
         game.add_systems(Stage::Startup, mira_app::starter::scene);
     }
     for plugin in &plugins {
+        // Scripts, which are built here: a folder of them, or one.
+        if std::path::Path::new(plugin).is_dir() {
+            game.load_scripts(plugin)?;
+            continue;
+        }
+        if plugin.ends_with(".hs") {
+            game.load_script(plugin)?;
+            continue;
+        }
         let path = if plugin.contains(['/', '\\', '.']) {
             PathBuf::from(plugin)
         } else {
