@@ -182,6 +182,11 @@ typedef struct MiraField {
 /* An image handle, from image_load. 0 is "no image". */
 typedef uint32_t MiraImage;
 
+/* A sound, from sound_load or sound_tone. 0 is "no sound". */
+typedef uint32_t MiraSound;
+/* A sound that is playing, from sound_play. 0 is "none". */
+typedef uint64_t MiraVoice;
+
 /* An event type handle, from event_register. 0 is "no event". */
 typedef uint32_t MiraEvent;
 
@@ -499,6 +504,34 @@ typedef struct MiraApi {
      * stage does nothing. Returns 0, or -1 if `name` isn't a system this plugin has added. */
     int32_t (*system_order)(MiraApp *app, const char *name, size_t len, uint32_t relation,
                             const char *other, size_t other_len);
+
+    /* ---- sound (inside a system) ----
+     * These do nothing, and return 0, in an app without sound. */
+
+    /* A plain tone of `hertz` lasting `seconds`: a sound made here, for a beep or a note.
+     * The same two numbers always give the same sound. */
+    MiraSound (*sound_tone)(MiraSystem *system, float hertz, float seconds);
+    /* Loads a sound by name: a WAV or Ogg Vorbis path relative to the app's asset folder.
+     * The same name always gives the same sound. Returns 0 if it cannot be read. */
+    MiraSound (*sound_load)(MiraSystem *system, const char *name, size_t len);
+    /* Plays a sound at once, as it is, not from anywhere in the world. `volume` is 1 as it
+     * was recorded; `pan` runs from -1 (the left ear) to 1; `pitch` is 1 as recorded, 2 an
+     * octave up; `looping` not 0 has it begin again when it ends. Returns what is playing. */
+    MiraVoice (*sound_play)(MiraSystem *system, MiraSound sound, float volume, float pan,
+                            float pitch, uint32_t looping);
+    /* Stops what is playing, when the system returns. */
+    void (*sound_stop)(MiraSystem *system, MiraVoice voice);
+    /* 1 while the voice is still playing, 0 once it has ended or been stopped. */
+    uint32_t (*sound_playing)(MiraSystem *system, MiraVoice voice);
+    /* Makes the entity give off a sound from where it is (it also needs a transform): louder
+     * the nearer the listener, silent beyond `range` metres, and to the side it is on. Takes
+     * effect when the system returns. */
+    void (*set_sound_source)(MiraSystem *system, MiraEntity entity, MiraSound sound,
+                             float volume, float range, uint32_t looping);
+    /* Makes the entity the ears that sources are heard by: usually the camera. */
+    void (*set_listener)(MiraSystem *system, MiraEntity entity);
+    /* How loud everything is: 1 as it is, 0 silent. */
+    void (*set_master_volume)(MiraSystem *system, float volume);
 } MiraApi;
 
 /* ---- conveniences for C and C++ ---- */

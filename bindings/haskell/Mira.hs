@@ -93,6 +93,18 @@ module Mira
   , setTextures
   , spawnModel
   , spawnPrefab
+    -- * Sound
+  , Sound
+  , Voice
+  , soundTone
+  , loadSound
+  , playSound
+  , playSoundWith
+  , stopSound
+  , soundPlaying
+  , setSoundSource
+  , setListener
+  , setMasterVolume
     -- * Signals
   , SignalOp (..)
   , setSignal
@@ -1231,3 +1243,91 @@ instance Storable Transform where
     let q = castPtr (ptr `plusPtr` 16) :: Ptr Float
     pokeElemOff q 0 x >> pokeElemOff q 1 y >> pokeElemOff q 2 z >> pokeElemOff q 3 w
     poke (castPtr (ptr `plusPtr` 32)) s
+
+-- Sound.
+
+foreign import ccall unsafe "mira_hs_sound_tone"
+  c_sound_tone :: Ptr () -> CFloat -> CFloat -> IO Word32
+foreign import ccall unsafe "mira_hs_sound_load"
+  c_sound_load :: Ptr () -> Ptr CChar -> CSize -> IO Word32
+foreign import ccall unsafe "mira_hs_sound_play"
+  c_sound_play :: Ptr () -> Word32 -> CFloat -> CFloat -> CFloat -> Word32 -> IO Word64
+foreign import ccall unsafe "mira_hs_sound_stop"
+  c_sound_stop :: Ptr () -> Word64 -> IO ()
+foreign import ccall unsafe "mira_hs_sound_playing"
+  c_sound_playing :: Ptr () -> Word64 -> IO Word32
+foreign import ccall unsafe "mira_hs_set_sound_source"
+  c_set_sound_source :: Ptr () -> Word64 -> Word32 -> CFloat -> CFloat -> Word32 -> IO ()
+foreign import ccall unsafe "mira_hs_set_listener"
+  c_set_listener :: Ptr () -> Word64 -> IO ()
+foreign import ccall unsafe "mira_hs_set_master_volume"
+  c_set_master_volume :: Ptr () -> CFloat -> IO ()
+
+-- | A sound: a tone made with 'soundTone', or a file read with 'loadSound'. It can be kept
+-- in a component or in state.
+newtype Sound = Sound Word32
+  deriving (Eq, Show)
+
+instance Storable Sound where
+  sizeOf _ = 4
+  alignment _ = 4
+  peek ptr = Sound <$> peek (castPtr ptr)
+  poke ptr (Sound handle) = poke (castPtr ptr) handle
+
+-- | A sound that is playing, from 'playSound'.
+newtype Voice = Voice Word64
+  deriving (Eq, Show)
+
+instance Storable Voice where
+  sizeOf _ = 8
+  alignment _ = 8
+  peek ptr = Voice <$> peek (castPtr ptr)
+  poke ptr (Voice voice) = poke (castPtr ptr) voice
+
+-- | A plain tone: how many hertz, and for how many seconds. The same two numbers give the
+-- same sound, however often it is asked for.
+soundTone :: System -> Float -> Float -> IO Sound
+soundTone (System system) hertz seconds = do
+  handle <- c_sound_tone system (realToFrac hertz) (realToFrac seconds)
+  when (handle == 0) $ ioError (userError "no tone could be made (an app without sound?)")
+  pure (Sound handle)
+
+-- | Loads a sound by name: a WAV or Ogg Vorbis file in the app's asset folder. The same name
+-- gives the same sound.
+loadSound :: System -> String -> IO Sound
+loadSound (System system) name = do
+  handle <- withName name (c_sound_load system)
+  when (handle == 0) $ ioError (userError ("could not load the sound `" ++ name ++ "`"))
+  pure (Sound handle)
+
+-- | Plays a sound at once, this loud (1 is as it was recorded).
+playSound :: System -> Sound -> Float -> IO Voice
+playSound system sound volume = playSoundWith system sound volume 0 1 False
+
+-- | Plays a sound: how loud, where between the ears (-1 the left, 1 the right), how fast and
+-- so how high (1 as recorded, 2 an octave up), and whether it begins again when it ends.
+playSoundWith :: System -> Sound -> Float -> Float -> Float -> Bool -> IO Voice
+playSoundWith (System system) (Sound sound) volume pan pitch looping =
+  Voice <$> c_sound_play system sound (realToFrac volume) (realToFrac pan) (realToFrac pitch) (flag looping)
+
+-- | Stops what is playing, when this system returns.
+stopSound :: System -> Voice -> IO ()
+stopSound (System system) (Voice voice) = c_sound_stop system voice
+
+-- | Whether it is still playing.
+soundPlaying :: System -> Voice -> IO Bool
+soundPlaying (System system) (Voice voice) = (/= 0) <$> c_sound_playing system voice
+
+-- | Makes the entity give off a sound from where it is (it also needs a 'Transform'), when
+-- this system returns: this loud, heard within this many metres, and going round or not.
+setSoundSource :: System -> Entity -> Sound -> Float -> Float -> Bool -> IO ()
+setSoundSource (System system) (Entity entity) (Sound sound) volume range looping =
+  c_set_sound_source system entity sound (realToFrac volume) (realToFrac range) (flag looping)
+
+-- | Makes the entity the ears that sources are heard by: usually the camera.
+setListener :: System -> Entity -> IO ()
+setListener (System system) (Entity entity) = c_set_listener system entity
+
+-- | How loud everything is: 1 as it is, 0 silent.
+setMasterVolume :: System -> Float -> IO ()
+setMasterVolume (System system) volume = c_set_master_volume system (realToFrac volume)

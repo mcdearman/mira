@@ -122,6 +122,8 @@ pub struct MiraField {
 }
 
 pub type MiraImage = u32;
+pub type MiraSound = u32;
+pub type MiraVoice = u64;
 
 pub type MiraEvent = u32;
 
@@ -442,6 +444,29 @@ pub struct MiraApi {
         other: *const u8,
         other_len: usize,
     ) -> i32,
+
+    pub sound_tone: unsafe extern "C" fn(system: *mut MiraSystem, hertz: f32, seconds: f32) -> MiraSound,
+    pub sound_load: unsafe extern "C" fn(system: *mut MiraSystem, name: *const u8, len: usize) -> MiraSound,
+    pub sound_play: unsafe extern "C" fn(
+        system: *mut MiraSystem,
+        sound: MiraSound,
+        volume: f32,
+        pan: f32,
+        pitch: f32,
+        looping: u32,
+    ) -> MiraVoice,
+    pub sound_stop: unsafe extern "C" fn(system: *mut MiraSystem, voice: MiraVoice),
+    pub sound_playing: unsafe extern "C" fn(system: *mut MiraSystem, voice: MiraVoice) -> u32,
+    pub set_sound_source: unsafe extern "C" fn(
+        system: *mut MiraSystem,
+        entity: MiraEntity,
+        sound: MiraSound,
+        volume: f32,
+        range: f32,
+        looping: u32,
+    ),
+    pub set_listener: unsafe extern "C" fn(system: *mut MiraSystem, entity: MiraEntity),
+    pub set_master_volume: unsafe extern "C" fn(system: *mut MiraSystem, volume: f32),
 }
 
 /// `mira.Transform`: 48 bytes, 16-byte aligned.
