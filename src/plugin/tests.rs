@@ -421,8 +421,13 @@ impl Workspace {
 
     /// Compiles `body` into the shared library `name`, with the given `-D` definitions.
     fn compile(&self, name: &str, body: &str, defines: &[&str]) -> PathBuf {
+        self.compile_whole(name, &format!("{PRELUDE}{body}"), defines)
+    }
+
+    /// As `compile`, from a whole source file that includes its own header.
+    fn compile_whole(&self, name: &str, whole: &str, defines: &[&str]) -> PathBuf {
         let source = self.dir.join(format!("{name}.c"));
-        std::fs::write(&source, format!("{PRELUDE}{body}")).unwrap();
+        std::fs::write(&source, whole).unwrap();
         let out = self.library(name);
         // Build beside the target and rename, as a real build does: the engine must never
         // see a half-written library.
@@ -478,6 +483,45 @@ fn counter(world: &World, entity: Entity) -> Option<i32> {
 
 fn position(app: &App, entity: Entity) -> Vec3 {
     app.world.get::<Transform>(entity).unwrap().translation
+}
+
+/// The cut-down header that a language binding starts from describes the counter's calls at
+/// the places the engine fills: built against it alone, the counter runs as it does against
+/// the full one, and its table is the size the engine says.
+#[test]
+fn the_cut_down_header_lays_the_table_out_as_the_engine_does() {
+    let workspace = Workspace::new("cut-header");
+    let whole = format!(
+        "#include \"mira_counter.h\"\nstatic const MiraApi *api;\nMIRA_EXPORT uint32_t mira_plugin_abi_version(void) {{ return MIRA_ABI_VERSION; }}\n{}",
+        COUNTER.replace("    api = a;", "    api = a;\n    if (api->size != sizeof(MiraApi)) return -9;")
+    );
+    let library = workspace.compile_whole("counter", &whole, &["STEP=1.0f"]);
+    let mut app = app();
+    let entity = app.world.spawn(Transform::IDENTITY);
+    app.load_native_plugin(&library).expect("the table is the size the engine says, and the counter loads");
+    for _ in 0..5 {
+        app.update();
+    }
+    assert_eq!(position(&app, entity), Vec3::new(5.0, 0.0, 1.0));
+    // Every slot of the engine's table is in the cut-down one, in the same order.
+    let full = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("include/mira_counter.h")).unwrap();
+    let table = full.split("typedef struct MiraApi {").nth(1).unwrap().split("} MiraApi;").next().unwrap();
+    // A slot is a declaration, to its `;`: a function pointer, `(*name)(...)`, whose first
+    // `(*` is its own, or a `void *name` standing in for one. Comments are left out first.
+    let table: String = table.lines().map(|line| line.split("/*").next().unwrap()).collect::<Vec<_>>().join(" ");
+    let slots: Vec<&str> = table
+        .split(';')
+        .map(str::trim)
+        .filter(|declaration| !declaration.starts_with("uint32_t") && !declaration.is_empty())
+        .filter_map(|line| match line.split_once("(*") {
+            Some((_, rest)) => rest.split(')').next(),
+            None => line.strip_prefix("void *").and_then(|rest| rest.split(';').next()),
+        })
+        .collect();
+    let api = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/plugin/api.rs")).unwrap();
+    let table = api.split("static API: MiraApi = MiraApi {").nth(1).unwrap().split("};").next().unwrap();
+    let engine: Vec<&str> = table.lines().map(|line| line.trim().trim_end_matches(',')).filter(|line| !line.is_empty() && !line.contains(':')).collect();
+    assert_eq!(slots, engine, "mira_counter.h has a slot for each of the engine's, in order");
 }
 
 #[test]
