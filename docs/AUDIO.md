@@ -1,8 +1,8 @@
 # Sound
 
 ```sh
-cargo run --example sound             # a few notes, and a hum that goes round you
-cargo run --example sound -- quiet    # the same with the volume at nothing
+cargo run --bin mira-play -- examples/sound               # a few notes, and a hum that goes round you
+MIRA_AUDIO=0 cargo run --bin mira-play -- examples/sound  # the same, with no sound out
 ```
 
 ## A sound
@@ -77,6 +77,28 @@ until it is let go again: the engine does so itself while an app is put away on 
 `MIRA_AUDIO=0`, or a machine with no sound output, opens nothing: `audio.is_heard()` is
 false. Sounds still begin, last as long and end as they would, so a game behaves the same
 in a test as it does out loud.
+
+## From a script
+
+The example is a script ([`examples/sound/Sound.hs`](../examples/sound/Sound.hs)), and
+everything above can be done from one:
+
+```haskell
+hum <- soundTone sys 110 2                     -- or: loadSound sys "sounds/hum.ogg"
+setSoundSource sys ball hum 0.6 12 True         -- from where the ball is, within 12 metres, going round
+setListener sys eye                             -- the camera is the ears
+note <- soundTone sys 440 0.22
+voice <- playSound sys note 0.5                 -- at once, not from anywhere
+still <- soundPlaying sys voice
+stopSound sys voice
+setMasterVolume sys 0.5
+```
+
+The same sound is given for the same name, or the same pitch and length, however often it
+is asked for, so a script loaded anew has the sounds it had. In C these are `sound_tone`,
+`sound_load`, `sound_play`, `sound_stop`, `sound_playing`, `set_sound_source`,
+`set_listener` and `set_master_volume` in `include/mira.h`; in a Rust plugin, methods of
+`System` by those names.
 
 ## What there is not yet
 

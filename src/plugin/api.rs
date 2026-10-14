@@ -21,6 +21,7 @@ use crate::{
     app::Stage,
     asset_server::AssetServer,
     assets::{Assets, Handle},
+    audio::{Audio, AudioListener, AudioSource, Playback, Sound, VoiceId},
     ecs::{DropFn, Entity, System, World},
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
     physics::{Collider, PhysicsWorld, RigidBody},
@@ -131,6 +132,14 @@ pub(crate) static API: MiraApi = MiraApi {
     signal_define,
     set_camera_orthographic,
     system_order,
+    sound_tone,
+    sound_load,
+    sound_play,
+    sound_stop,
+    sound_playing,
+    set_sound_source,
+    set_listener,
+    set_master_volume,
 };
 
 /// Runs `body`, turning a panic into `fallback` so it never unwinds into the plugin.
@@ -1468,5 +1477,117 @@ unsafe extern "C" fn system_order(
             .orders
             .push((own(name), relation == sys::MIRA_AFTER, other));
         0
+    })
+}
+
+/// Sound handles are asset ids offset by one, so that zero can mean "none".
+fn sound_handle(sound: sys::MiraSound) -> Option<Handle<Sound>> {
+    sound.checked_sub(1).map(Handle::from_id)
+}
+
+unsafe extern "C" fn sound_tone(system: *mut MiraSystem, hertz: f32, seconds: f32) -> sys::MiraSound {
+    guard("sound_tone", 0, || {
+        let Some(context) = context(system) else {
+            return 0;
+        };
+        context.sound(&format!("tone:{hertz}:{seconds}"), || Ok(Sound::tone(hertz, seconds))).map_or(0, |id| id + 1)
+    })
+}
+
+unsafe extern "C" fn sound_load(system: *mut MiraSystem, name: *const u8, len: usize) -> sys::MiraSound {
+    guard("sound_load", 0, || {
+        let (Some(context), Some(name)) = (context(system), text(name, len)) else {
+            return 0;
+        };
+        // Beside the app's other files, where there is an asset server to say where.
+        let path = match context.world().get_resource::<AssetServer>() {
+            Some(server) => server.root().join(name),
+            None => std::path::PathBuf::from(name),
+        };
+        context.sound(name, || Sound::load(&path)).map_or(0, |id| id + 1)
+    })
+}
+
+unsafe extern "C" fn sound_play(
+    system: *mut MiraSystem,
+    sound: sys::MiraSound,
+    volume: f32,
+    pan: f32,
+    pitch: f32,
+    looping: u32,
+) -> sys::MiraVoice {
+    guard("sound_play", 0, || {
+        let (Some(context), Some(sound)) = (context(system), sound_handle(sound)) else {
+            return 0;
+        };
+        let world = context.world();
+        let (Some(audio), Some(sounds)) = (world.get_resource::<Audio>(), world.get_resource::<Assets<Sound>>()) else {
+            return 0;
+        };
+        let how = Playback { volume, pan, pitch, looping: looping != 0 };
+        sounds.get(sound).map_or(0, |sound| audio.play_with(sound, how).0)
+    })
+}
+
+unsafe extern "C" fn sound_stop(system: *mut MiraSystem, voice: sys::MiraVoice) {
+    guard("sound_stop", (), || {
+        let Some(context) = context(system) else {
+            return;
+        };
+        context.queue.push(move |world| {
+            if let Some(audio) = world.get_resource_mut::<Audio>() {
+                audio.stop(VoiceId(voice));
+            }
+        });
+    })
+}
+
+unsafe extern "C" fn sound_playing(system: *mut MiraSystem, voice: sys::MiraVoice) -> u32 {
+    guard("sound_playing", 0, || {
+        let audio = context(system).and_then(|context| context.world().get_resource::<Audio>());
+        audio.is_some_and(|audio| audio.is_playing(VoiceId(voice))) as u32
+    })
+}
+
+unsafe extern "C" fn set_sound_source(
+    system: *mut MiraSystem,
+    entity: MiraEntity,
+    sound: sys::MiraSound,
+    volume: f32,
+    range: f32,
+    looping: u32,
+) {
+    guard("set_sound_source", (), || {
+        let (Some(context), Some(sound)) = (context(system), sound_handle(sound)) else {
+            return;
+        };
+        let mut source = AudioSource::new(sound).heard_within(range).with_volume(volume);
+        if looping != 0 {
+            source = source.looping();
+        }
+        let entity = Entity::from_bits(entity);
+        context.queue.push(move |world| {
+            world.insert(entity, source);
+        });
+    })
+}
+
+unsafe extern "C" fn set_listener(system: *mut MiraSystem, entity: MiraEntity) {
+    guard("set_listener", (), || {
+        let Some(context) = context(system) else {
+            return;
+        };
+        let entity = Entity::from_bits(entity);
+        context.queue.push(move |world| {
+            world.insert(entity, AudioListener);
+        });
+    })
+}
+
+unsafe extern "C" fn set_master_volume(system: *mut MiraSystem, volume: f32) {
+    guard("set_master_volume", (), || {
+        if let Some(audio) = context(system).and_then(|context| context.world().get_resource::<Audio>()) {
+            audio.set_master_volume(volume);
+        }
     })
 }

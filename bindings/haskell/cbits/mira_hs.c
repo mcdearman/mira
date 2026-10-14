@@ -321,3 +321,36 @@ int32_t mira_hs_system_order(MiraApp *app, const char *name, size_t len, uint32_
                              const char *other, size_t other_len) {
     return api->system_order(app, name, len, relation, other, other_len);
 }
+
+/* Sound. */
+uint32_t mira_hs_sound_tone(MiraSystem *system, float hertz, float seconds) {
+    return api->sound_tone(system, hertz, seconds);
+}
+
+uint32_t mira_hs_sound_load(MiraSystem *system, const char *name, size_t len) {
+    return api->sound_load(system, name, len);
+}
+
+uint64_t mira_hs_sound_play(MiraSystem *system, uint32_t sound, float volume, float pan,
+                            float pitch, uint32_t looping) {
+    return api->sound_play(system, sound, volume, pan, pitch, looping);
+}
+
+void mira_hs_sound_stop(MiraSystem *system, uint64_t voice) { api->sound_stop(system, voice); }
+
+uint32_t mira_hs_sound_playing(MiraSystem *system, uint64_t voice) {
+    return api->sound_playing(system, voice);
+}
+
+void mira_hs_set_sound_source(MiraSystem *system, MiraEntity entity, uint32_t sound, float volume,
+                              float range, uint32_t looping) {
+    api->set_sound_source(system, entity, sound, volume, range, looping);
+}
+
+void mira_hs_set_listener(MiraSystem *system, MiraEntity entity) {
+    api->set_listener(system, entity);
+}
+
+void mira_hs_set_master_volume(MiraSystem *system, float volume) {
+    api->set_master_volume(system, volume);
+}

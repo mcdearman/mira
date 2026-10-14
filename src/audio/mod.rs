@@ -26,6 +26,11 @@ use glam::Vec3;
 pub use mixer::VoiceId;
 pub use sound::Sound;
 
+/// The sounds that were asked for by name (a file's, or a tone's pitch and length), so that
+/// asking again gives the same one: a plugin loaded anew gets the sounds it had.
+#[derive(Default)]
+pub(crate) struct SoundNames(pub(crate) std::collections::HashMap<String, Handle<Sound>>);
+
 use crate::{
     app::{App, Plugin, Stage},
     assets::{Assets, Handle},
@@ -331,11 +336,27 @@ fn stop_source(world: &mut World, entity: Entity) {
 
 pub struct AudioPlugin;
 
+/// Sound with no output opened, whatever the machine has: everything plays as it would and
+/// is heard by no one. For tests and tools.
+pub struct SilentAudioPlugin;
+
+impl Plugin for SilentAudioPlugin {
+    fn build(&self, app: &mut App) {
+        set_up(app, false);
+    }
+}
+
 impl Plugin for AudioPlugin {
     fn build(&self, app: &mut App) {
-        let mut audio = Audio::default();
         // `MIRA_AUDIO=0` is for tests and machines that should stay quiet.
-        if std::env::var("MIRA_AUDIO").as_deref() != Ok("0") {
+        set_up(app, std::env::var("MIRA_AUDIO").as_deref() != Ok("0"));
+    }
+}
+
+fn set_up(app: &mut App, heard: bool) {
+    {
+        let mut audio = Audio::default();
+        if heard {
             match device::open(audio.mixer.clone()) {
                 Ok(rate) => {
                     audio.heard = true;
@@ -345,7 +366,7 @@ impl Plugin for AudioPlugin {
             }
         }
         app.world.insert_resource(audio);
-        app.init_resource::<Assets<Sound>>().add_systems(Stage::Last, (play_sources, keep_playing));
+        app.init_resource::<Assets<Sound>>().init_resource::<SoundNames>().add_systems(Stage::Last, (play_sources, keep_playing));
         app.world.on_remove::<AudioSource>(stop_source);
     }
 }
@@ -358,7 +379,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(crate::time::TimePlugin).add_plugins(crate::transform::TransformPlugin);
         app.world.insert_resource(Audio::default());
-        app.init_resource::<Assets<Sound>>().add_systems(Stage::Last, (play_sources, keep_playing));
+        app.init_resource::<Assets<Sound>>().init_resource::<SoundNames>().add_systems(Stage::Last, (play_sources, keep_playing));
         app.world.on_remove::<AudioSource>(stop_source);
         app.world.resource_mut::<Time>().set_fixed_step(Some(std::time::Duration::from_millis(20)));
         app

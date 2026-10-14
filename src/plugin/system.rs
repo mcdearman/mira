@@ -7,6 +7,7 @@ use super::events::PluginEvents;
 use crate::{
     asset_server::AssetServer,
     assets::Assets,
+    audio::{Audio, Sound, SoundNames},
     ecs::{
         Access, CommandQueue, ComponentKey, Entity, ErasedStorage, FilteredAccess, System, Tick,
         World,
@@ -129,6 +130,9 @@ impl System for DynamicSystem {
         access.read_resource::<crate::signal::Signals>();
         access.write_resource::<Assets<Image>>();
         access.read_resource::<PluginEvents>();
+        access.read_resource::<Audio>();
+        access.write_resource::<Assets<Sound>>();
+        access.write_resource::<SoundNames>();
         self.access = Some(access);
     }
 
@@ -358,6 +362,30 @@ impl Context<'_> {
     }
 
     /// Adds a mesh to the app's assets.
+    /// The sound with a name, made the first time the name is asked for and the same one
+    /// every time after. None in an app without sound, or if it could not be made.
+    pub(crate) fn sound(&mut self, name: &str, make: impl FnOnce() -> anyhow::Result<Sound>) -> Option<u32> {
+        let sounds = self.world.resource_cell::<Assets<Sound>>()?;
+        let names = self.world.resource_cell::<SoundNames>()?;
+        // SAFETY: as in `shape_mesh`: the running system declared write access to both.
+        let ((sounds, ticks), (names, _)) = unsafe { (sounds.get_mut::<Assets<Sound>>(), names.get_mut::<SoundNames>()) };
+        if let Some(known) = names.0.get(name) {
+            return Some(known.id());
+        }
+        match make() {
+            Ok(sound) => {
+                ticks.changed = self.tick;
+                let handle = sounds.add(sound);
+                names.0.insert(name.to_owned(), handle);
+                Some(handle.id())
+            }
+            Err(err) => {
+                log::error!(target: "plugin", "the sound `{name}`: {err:#}");
+                None
+            }
+        }
+    }
+
     pub(crate) fn add_mesh(&mut self, mesh: Mesh) -> Option<u32> {
         let cell = self.world.resource_cell::<Assets<Mesh>>()?;
         // SAFETY: the running system has exclusive use of the world, declared write access to

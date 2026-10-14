@@ -204,6 +204,16 @@ impl Field {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Image(pub u32);
 
+/// A sound, from [`System::sound_tone`] or [`System::load_sound`].
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sound(pub u32);
+
+/// A sound that is playing, from [`System::play_sound`].
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Voice(pub u64);
+
 /// An event type whose events are `T`, from [`App::event`].
 pub struct Event<T> {
     id: sys::MiraEvent,
@@ -977,6 +987,65 @@ impl System {
         // SAFETY: called inside the system; the engine copies the name.
         let image = unsafe { (api().image_load)(self.raw, name.as_ptr(), name.len()) };
         (image != 0).then_some(Image(image))
+    }
+
+    /// A plain tone of `hertz` lasting `seconds`. The same two numbers give the same sound.
+    /// None in an app without sound.
+    pub fn sound_tone(&mut self, hertz: f32, seconds: f32) -> Option<Sound> {
+        // SAFETY: called inside the system.
+        let sound = unsafe { (api().sound_tone)(self.raw, hertz, seconds) };
+        (sound != 0).then_some(Sound(sound))
+    }
+
+    /// Loads a sound by name: a WAV or Ogg Vorbis path relative to the app's asset folder.
+    /// The same name gives the same sound. None if it cannot be read.
+    pub fn load_sound(&mut self, name: &str) -> Option<Sound> {
+        // SAFETY: called inside the system; the engine copies the name.
+        let sound = unsafe { (api().sound_load)(self.raw, name.as_ptr(), name.len()) };
+        (sound != 0).then_some(Sound(sound))
+    }
+
+    /// Plays a sound at once, as loud as `volume` (1 as recorded), and says what is playing.
+    pub fn play_sound(&mut self, sound: Sound, volume: f32) -> Voice {
+        self.play_sound_with(sound, volume, 0.0, 1.0, false)
+    }
+
+    /// Plays a sound: `pan` from -1 (left) to 1, `pitch` 1 as recorded and 2 an octave up,
+    /// and `looping` to begin again when it ends, until it is stopped.
+    pub fn play_sound_with(&mut self, sound: Sound, volume: f32, pan: f32, pitch: f32, looping: bool) -> Voice {
+        // SAFETY: called inside the system.
+        Voice(unsafe { (api().sound_play)(self.raw, sound.0, volume, pan, pitch, looping as u32) })
+    }
+
+    /// Stops what is playing, when this system returns.
+    pub fn stop_sound(&mut self, voice: Voice) {
+        // SAFETY: called inside the system.
+        unsafe { (api().sound_stop)(self.raw, voice.0) }
+    }
+
+    /// Whether the voice is still playing.
+    pub fn sound_playing(&self, voice: Voice) -> bool {
+        // SAFETY: called inside the system.
+        unsafe { (api().sound_playing)(self.raw, voice.0) != 0 }
+    }
+
+    /// Makes the entity give off a sound from where it is, heard within `range` metres,
+    /// when this system returns. It also needs a transform.
+    pub fn set_sound_source(&mut self, entity: Entity, sound: Sound, volume: f32, range: f32, looping: bool) {
+        // SAFETY: called inside the system.
+        unsafe { (api().set_sound_source)(self.raw, entity.0, sound.0, volume, range, looping as u32) }
+    }
+
+    /// Makes the entity the ears that sources are heard by, when this system returns.
+    pub fn set_listener(&mut self, entity: Entity) {
+        // SAFETY: called inside the system.
+        unsafe { (api().set_listener)(self.raw, entity.0) }
+    }
+
+    /// How loud everything is: 1 as it is, 0 silent.
+    pub fn set_master_volume(&mut self, volume: f32) {
+        // SAFETY: called inside the system.
+        unsafe { (api().set_master_volume)(self.raw, volume) }
     }
 
     /// Sets the textures of the entity's material, when this system returns.

@@ -1323,6 +1323,83 @@ fn build_haskell(workspace: &Workspace, step: &str) -> PathBuf {
     workspace.library("stepper")
 }
 
+/// Makes sounds, plays one, gives one to an entity, and says what it found, as signals.
+const NOISY: &str = r#"
+static MiraComponent transform_c;
+static int32_t *frames;
+static MiraVoice *note;
+
+static void say(MiraSystem *s, const char *name, size_t len, uint32_t value) {
+    api->signal_set(s, name, len, (double)value, 1);
+}
+
+static void setup(MiraSystem *s, void *user) {
+    MiraTransform here = {{3, 0, 0}, 0, {0, 0, 0, 1}, {1, 1, 1}, 0};
+    MiraSound tone = api->sound_tone(s, 440.0f, 0.5f);
+    say(s, MIRA_STR("noisy.same"), tone != 0 && tone == api->sound_tone(s, 440.0f, 0.5f) && tone != api->sound_tone(s, 220.0f, 0.5f));
+    say(s, MIRA_STR("noisy.missing"), api->sound_load(s, MIRA_STR("no/such/sound.wav")) == 0);
+    *note = api->sound_play(s, tone, 0.5f, 0.0f, 1.0f, 1);
+    say(s, MIRA_STR("noisy.began"), api->sound_playing(s, *note));
+
+    MiraEntity hummer = api->spawn(s);
+    api->insert(s, hummer, transform_c, &here);
+    api->set_sound_source(s, hummer, tone, 0.6f, 12.0f, 1);
+    MiraEntity ears = api->spawn(s);
+    here.translation[0] = 0;
+    api->insert(s, ears, transform_c, &here);
+    api->set_listener(s, ears);
+    api->set_master_volume(s, 0.25f);
+}
+
+static void later(MiraSystem *s, void *user) {
+    *frames += 1;
+    if (*frames == 3) api->sound_stop(s, *note);
+    say(s, MIRA_STR("noisy.playing"), api->sound_playing(s, *note));
+}
+
+MIRA_EXPORT int32_t mira_plugin_load(const MiraApi *a, MiraApp *app) {
+    api = a;
+    transform_c = api->component_lookup(app, MIRA_STR("mira.Transform"), NULL, NULL);
+    frames = api->state(app, MIRA_STR("noisy.frames"), sizeof(int32_t), _Alignof(int32_t));
+    note = api->state(app, MIRA_STR("noisy.note"), sizeof(MiraVoice), _Alignof(MiraVoice));
+    MiraSystemDesc systems[] = {
+        {MIRA_STR("setup"), MIRA_STAGE_STARTUP, 0, setup, NULL, NULL, 0},
+        {MIRA_STR("later"), MIRA_STAGE_UPDATE, 0, later, NULL, NULL, 0},
+    };
+    for (int i = 0; i < 2; i++)
+        if (api->system_add(app, &systems[i]) != 0) return -1;
+    return 0;
+}
+"#;
+
+#[test]
+fn a_plugin_makes_sounds_plays_them_and_puts_them_in_the_world() {
+    use crate::audio::{Audio, AudioListener, AudioSource, SilentAudioPlugin};
+    let workspace = Workspace::new("noisy");
+    let library = workspace.compile("noisy", NOISY, &["ABI=MIRA_ABI_VERSION"]);
+    let mut app = app();
+    app.add_plugins(SilentAudioPlugin);
+    app.load_native_plugin(&library).unwrap();
+    let said = |app: &App, what: &str| app.world.resource::<crate::signal::Signals>().number(what);
+    app.update();
+    app.update();
+    // The same numbers give the same tone, a file that is not there gives none, and what
+    // was played is playing.
+    for what in ["noisy.same", "noisy.missing", "noisy.began", "noisy.playing"] {
+        assert_eq!(said(&app, what), 1.0, "{what}");
+    }
+    // The note that goes round, and the hummer's sound once it was heard to be there.
+    assert_eq!(app.world.resource::<Audio>().playing(), 2);
+    assert_eq!(app.world.resource::<Audio>().master_volume(), 0.25);
+    assert_eq!(app.world.query::<&AudioSource>().iter().count(), 1);
+    assert_eq!(app.world.query::<&AudioListener>().iter().count(), 1);
+    // Stopped on the plugin's third frame: it plays no longer, and the hummer still does.
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(said(&app, "noisy.playing"), 0.0);
+    assert_eq!(app.world.resource::<Audio>().playing(), 1);
+}
 /// Runs frames until something is so, a script being built behind them: for as long as a
 /// build may take, and no longer.
 fn frames_until(app: &mut App, what: &str, mut so: impl FnMut(&mut App) -> bool) {
@@ -1383,6 +1460,46 @@ fn a_folder_of_scripts_is_built_loaded_and_kept_built() {
         now - was == 10.0
     });
     assert!(app.script_problems().next().is_none());
+}
+
+/// The sound example is a script and nothing else: built from a copy of its folder, it sets
+/// its scene, hums from the ball, and plays its scale a note at a time.
+#[test]
+fn the_sound_example_plays_from_its_script() {
+    use crate::{
+        assets::Assets,
+        audio::{Audio, AudioListener, AudioSource, SilentAudioPlugin},
+        render::{Camera, Mesh, Mesh3d},
+        time::Time,
+    };
+    if !have_ghc() {
+        return;
+    }
+    let workspace = Workspace::new("sound-example");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sound/Sound.hs");
+    std::fs::copy(script, workspace.dir.join("Sound.hs")).unwrap();
+
+    let mut app = app();
+    app.add_plugins(SilentAudioPlugin).init_resource::<Assets<Mesh>>();
+    app.load_scripts(&workspace.dir).unwrap();
+    assert!(app.script_problems().next().is_none(), "{:?}", app.script_problems().next());
+    // A tenth of a second a frame: the scale's eight notes are due within three seconds.
+    app.world.resource_mut::<Time>().set_fixed_step(Some(std::time::Duration::from_millis(100)));
+    app.update();
+    app.update();
+    assert_eq!(app.world.query::<&Mesh3d>().iter().count(), 2, "the ball and the ground");
+    assert_eq!(app.world.query::<(&Camera, &AudioListener)>().iter().count(), 1);
+    let (hummer, _) = app.world.query::<(Entity, &AudioSource)>().single();
+    let began = position(&app, hummer);
+    // The hum alone at first, and then the notes as they come due, each over before the next.
+    assert_eq!(app.world.resource::<Audio>().playing(), 1);
+    let mut most = 0;
+    for _ in 0..30 {
+        app.update();
+        most = most.max(app.world.resource::<Audio>().playing());
+    }
+    assert_eq!(most, 2, "the hum and a note");
+    assert_ne!(position(&app, hummer), began, "the ball goes round");
 }
 
 #[test]
