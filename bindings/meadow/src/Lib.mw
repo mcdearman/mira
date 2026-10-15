@@ -1,16 +1,11 @@
 -- mira's plugin interface, for plugins and scripts written in Meadow.
 --
--- A plugin is a Meadow package that exports, with `@export`, the functions mira looks for:
---
---   @export
---   fun mira_plugin_abi_version () : UInt32 = M.abiVersion ()
+-- A plugin is a Meadow package that depends on this one and exports, with `@export`, the
+-- function mira loads it with:
 --
 --   @export
 --   fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
 --     M.load api app (\p -> ...)
---
---   @export
---   fun mira_meadow_run (s : Int) (user : Int) : () ! Process = M.run s user
 --
 -- and one exported function for each of its systems, `(s : Int) (user : Int) : () ! Process`,
 -- named when the system is added. Inside a system, `M.system s user` gives what the calls
@@ -24,6 +19,9 @@ use Std.Ffi (Arg, Ptr, Function, Library)
 use Std.Ffi.CType.*
 use Std.Result as R
 use Std.Result.Result.*
+use Std.Num.Float as F
+use Std.String as S
+use Std.Collections.Vector as V
 
 -- ---------------------------------------------------------------------------------------
 -- The plugin while it loads, and a system while it runs
@@ -38,8 +36,12 @@ use Std.Result.Result.*
 -- The block: the table, then where what the plugin keeps for its systems is.
 def block = [Pointer, Pointer]
 
--- The version of the plugin interface these bindings speak.
+-- The version of the plugin interface these bindings speak, which the engine asks a plugin
+-- for first. Exported from here, as Meadow exports a dependency's exports with a package's.
 @pub fun abiVersion () = toUInt32 1
+
+@export
+fun mira_plugin_abi_version () : UInt32 = abiVersion ()
 
 -- Sets a plugin up: `body` registers its components and systems, and answers 0, or anything
 -- else to refuse to load.
@@ -128,6 +130,44 @@ fun ownFunction (name : String) =
   match p with
   | Plugin api app _ -> Ffi.withText name (\t n -> okPtr (Ffi.callPtr (slot api 3) [Arg.Int app, Arg.Ptr t, Arg.Int n, Arg.Int size, Arg.Int align]))
 
+-- What one field of a component holds, for `describeComponent`.
+@pub def fieldF32 : Int = 0
+@pub def fieldF64 : Int = 1
+@pub def fieldI32 : Int = 2
+@pub def fieldI64 : Int = 3
+@pub def fieldU8 : Int = 4
+@pub def fieldU32 : Int = 5
+@pub def fieldBool : Int = 6
+@pub def fieldEntity : Int = 7
+
+-- Says what a component of this plugin's holds, so that the editor can show it and scenes can
+-- save it: each field's name, what it holds, how many of them, and how many bytes in it
+-- starts. Answers 0, or why not as another number.
+@pub fun describeComponent (p : Plugin) (component : Int) (fields : [(String, Int, Int, Int)]) : Int ! { Process | e } =
+  match p with
+  | Plugin api app _ ->
+      let room = Ffi.alloc (32 * max 1 (len fields)) in
+      let u = V.forEach (\i -> describeField room i (V.getOr ("", 0, 0, 0) fields i)) (range 0 (len fields)) in
+      ok (Ffi.callInt (slot api 40) [Arg.Int app, Arg.Int component, Arg.Ptr room, Arg.Int (len fields)]) % 4294967296
+
+-- One `MiraField`: the name, its length, the type, the count and the offset.
+fun describeField (room : Ptr) (i : Int) (field : (String, Int, Int, Int)) =
+  let (name, kind, count, offset) = field in
+  let (text, n) = lasting name in
+  let at = Ffi.offset room (32 * i) in
+  let u1 = Ffi.writePtr at text in
+  let u2 = Ffi.writeInt (Ffi.offset at 8) Usize n in
+  let u3 = Ffi.writeInt (Ffi.offset at 16) U32 kind in
+  let u4 = Ffi.writeInt (Ffi.offset at 20) U32 count in
+  let u5 = Ffi.writeInt (Ffi.offset at 24) Usize offset in
+  ()
+
+-- Asks for a part of the engine a plain game is without ("voxels"), before any system that
+-- uses it runs. Answers 0, or why not as another number.
+@pub fun require (p : Plugin) (part : String) : Int ! { Process | e } =
+  match p with
+  | Plugin api app _ -> Ffi.withText part (\t n -> ok (Ffi.callInt (slot api 61) [Arg.Int app, Arg.Ptr t, Arg.Int n]) % 4294967296)
+
 -- ---------------------------------------------------------------------------------------
 -- Systems (while loading)
 
@@ -152,7 +192,7 @@ fun ownFunction (name : String) =
 -- the entities it visits. Answers 0, or why not as another number.
 --
 -- The engine calls the system through `mira_meadow_run`, below, which calls the function
--- named here: if it fails (an `error`, a division by nought), the engine is told, as it is
+-- named here: if it fails (a division by nought, say), the engine is told, as it is
 -- of any system that fails, and the game goes on.
 @pub fun addSystem (p : Plugin) (name : String) (stage : Int) (run : String) (terms : [(Int, Int)]) : Int ! { Process | e } =
   match p with
@@ -175,18 +215,32 @@ fun ownFunction (name : String) =
         let u8 = Ffi.writeInt (Ffi.field d desc 7) Usize (len terms) in
         ok (Ffi.callInt (slot api 4) [Arg.Int app, Arg.Ptr d]))
 
+-- Adds a system with more than one query: the first is query 0, the next 1, and so on, each
+-- gone through with `forEachIn` or `foldIn`. Two queries may reach the same component only
+-- if one of them only reads it, or `having` and `lacking` keep them apart.
+@pub fun addSystemWith (p : Plugin) (name : String) (stage : Int) (run : String) (queries : [[(Int, Int)]]) : Int ! { Process | e } =
+  let first = addSystem p name stage run (V.getOr [] queries 0) in
+  if first != 0 then first
+  else V.foldl (\status terms -> if status != 0 then status else addQuery p name terms) 0 (V.drop queries 1)
+
+-- Another query for the system of that name, added above.
+fun addQuery (p : Plugin) (name : String) (terms : [(Int, Int)]) =
+  match p with
+  | Plugin api app _ ->
+      let listed = Ffi.alloc (8 * max 1 (len terms)) in
+      let u = Ffi.writeInts listed 4 (concatMap (\t -> match t with | (c, a) -> [c, a]) terms) in
+      let q = Ffi.withText name (\t n -> ok (Ffi.callInt (slot api 13) [Arg.Int app, Arg.Ptr t, Arg.Int n, Arg.Ptr listed, Arg.Int (len terms)]) % 4294967296) in
+      if q > 0 and q < 2147483648 then 0 else 0 - 4
+
 -- What the engine hands the runner for one system: the plugin's block, and the function
 -- that is the system.
 def running = [Pointer, Pointer]
 
 -- Runs one system for the engine: calls the function that is the system, with the plugin's
 -- block as its `user`, and if that call failed tells the engine why, with `system_fail`.
--- A plugin exports it under the name the bindings give the engine, as Meadow exports only a
--- package's own functions:
---
---   @export
---   fun mira_meadow_run (s : Int) (user : Int) : () ! Process = M.run s user
-@pub fun run (s : Int) (user : Int) : () ! Process =
+-- Exported from here, with every plugin.
+@export
+fun mira_meadow_run (s : Int) (user : Int) : () ! Process =
   let one = Ptr user in
   let mine = okPtr (Ffi.readPtr (Ffi.field one running 0)) in
   let body = Ffi.functionAt (okPtr (Ffi.readPtr (Ffi.field one running 1))) in
@@ -227,6 +281,12 @@ def running = [Pointer, Pointer]
     let u = Ffi.writeFloat v F32 x in
     insert sys entity component v)
 
+-- Puts a component that is 32-bit floats, one after another, on an entity.
+@pub fun insertFloats (sys : System) (entity : Int) (component : Int) (xs : [Float]) : () ! { Process | e } =
+  Ffi.withBuffer (4 * max 1 (len xs)) (\v ->
+    let u = Ffi.writeFloats v 4 xs in
+    insert sys entity component v)
+
 @pub fun remove (sys : System) (entity : Int) (component : Int) : () ! { Process | e } = callUnit sys 12 [Arg.Int entity, Arg.Int component]
 
 -- Runs `body` for each entity the system visits, with the entity and a pointer to each
@@ -261,6 +321,44 @@ fun visit sys e found body =
     let u = body (ok (Ffi.readInt e U64)) found in
     visit sys e found body
 
+-- As `forEach`, for the system's query `q` (from `addSystemWith`): from its first entity
+-- each time, so that one can go through a query inside another.
+@pub fun forEachIn (sys : System) (q : Int) (count : Int) (body : Int -> [Ptr] -> () ! { Process | e }) : () ! { Process | e } =
+  folding sys q count () (\u entity found -> body entity (map (\i -> pointerAt found i) (range 0 count)))
+
+@pub fun forEachIn1 (sys : System) (q : Int) (body : Int -> Ptr -> () ! { Process | e }) : () ! { Process | e } =
+  folding sys q 1 () (\u entity found -> body entity (pointerAt found 0))
+
+@pub fun forEachIn2 (sys : System) (q : Int) (body : Int -> Ptr -> Ptr -> () ! { Process | e }) : () ! { Process | e } =
+  folding sys q 2 () (\u entity found -> body entity (pointerAt found 0) (pointerAt found 1))
+
+@pub fun forEachIn3 (sys : System) (q : Int) (body : Int -> Ptr -> Ptr -> Ptr -> () ! { Process | e }) : () ! { Process | e } =
+  folding sys q 3 () (\u entity found -> body entity (pointerAt found 0) (pointerAt found 1) (pointerAt found 2))
+
+-- Works something out from each entity of query `q` in turn: `body` is given what it has so
+-- far (`start`, before the first), the entity and its components' pointers, and answers what
+-- it has after it.
+@pub fun foldIn (sys : System) (q : Int) (count : Int) (start : a) (body : a -> Int -> [Ptr] -> a ! { Process | e }) : a ! { Process | e } =
+  folding sys q count start (\so entity found -> body so entity (map (\i -> pointerAt found i) (range 0 count)))
+
+@pub fun foldIn1 (sys : System) (q : Int) (start : a) (body : a -> Int -> Ptr -> a ! { Process | e }) : a ! { Process | e } =
+  folding sys q 1 start (\so entity found -> body so entity (pointerAt found 0))
+
+@pub fun foldIn2 (sys : System) (q : Int) (start : a) (body : a -> Int -> Ptr -> Ptr -> a ! { Process | e }) : a ! { Process | e } =
+  folding sys q 2 start (\so entity found -> body so entity (pointerAt found 0) (pointerAt found 1))
+
+@pub fun foldIn3 (sys : System) (q : Int) (start : a) (body : a -> Int -> Ptr -> Ptr -> Ptr -> a ! { Process | e }) : a ! { Process | e } =
+  folding sys q 3 start (\so entity found -> body so entity (pointerAt found 0) (pointerAt found 1) (pointerAt found 2))
+
+-- Query `q` from its start, with the buffer the engine writes each entity's pointers to.
+fun folding sys q count start body =
+  let u = callUnit sys 16 [Arg.Int q] in
+  Ffi.withBuffer 8 (\e -> Ffi.withBuffer (8 * max 1 count) (\found -> foldVisit sys q e found start body))
+
+fun foldVisit sys q e found so body =
+  if call sys 14 [Arg.Int q, Arg.Ptr e, Arg.Ptr found] % 256 == 0 then so
+  else foldVisit sys q e found (body so (ok (Ffi.readInt e U64)) found) body
+
 -- Reading and writing a 32-bit integer or float that a pointer from `forEach` points at.
 @pub fun readInt32 (at : Ptr) : Int ! { Process | e } = ok (Ffi.readInt at I32)
 @pub fun writeInt32 (at : Ptr) (n : Int) : () ! { Process | e } = let u = Ffi.writeInt at I32 n in ()
@@ -290,6 +388,108 @@ fun visit sys e found body =
     let u2 = (match rotation with | (x, y, z, w) -> Ffi.writeFloats (Ffi.offset t 16) 4 [x, y, z, w]) in
     let u3 = (match scale with | (x, y, z) -> Ffi.writeFloats (Ffi.offset t 32) 4 [x, y, z]) in
     insert sys entity transform t)
+
+-- Puts a transform on an entity at a place, unturned and at its own size.
+@pub fun insertAt (sys : System) (entity : Int) (transform : Int) (at : (Float, Float, Float)) : () ! { Process | e } =
+  insertTransform sys entity transform at unturned (1.0, 1.0, 1.0)
+
+-- The rotation that turns nothing.
+@pub def unturned : (Float, Float, Float, Float) = (0.0, 0.0, 0.0, 1.0)
+
+-- A transform's rotation (x y z w), and its scale.
+@pub fun rotation (t : Ptr) : (Float, Float, Float, Float) ! { Process | e } = (readFloat32 t 4, readFloat32 t 5, readFloat32 t 6, readFloat32 t 7)
+
+@pub fun setRotation (t : Ptr) (q : (Float, Float, Float, Float)) : () ! { Process | e } =
+  let (x, y, z, w) = q in
+  let u = Ffi.writeFloats (Ffi.offset t 16) 4 [x, y, z, w] in
+  ()
+
+@pub fun scale (t : Ptr) : (Float, Float, Float) ! { Process | e } = (readFloat32 t 8, readFloat32 t 9, readFloat32 t 10)
+
+@pub fun setScale (t : Ptr) (s : (Float, Float, Float)) : () ! { Process | e } =
+  let (x, y, z) = s in
+  let u = Ffi.writeFloats (Ffi.offset t 32) 4 [x, y, z] in
+  ()
+
+-- ---------------------------------------------------------------------------------------
+-- Vectors and rotations, as mira's are: a rotation is a unit quaternion (x y z w), and an
+-- entity looks along its -Z.
+
+@pub fun plus (a : (Float, Float, Float)) (b : (Float, Float, Float)) : (Float, Float, Float) =
+  let (ax, ay, az) = a in
+  let (bx, by, bz) = b in
+  (ax +. bx, ay +. by, az +. bz)
+
+@pub fun minus (a : (Float, Float, Float)) (b : (Float, Float, Float)) : (Float, Float, Float) =
+  let (ax, ay, az) = a in
+  let (bx, by, bz) = b in
+  (ax -. bx, ay -. by, az -. bz)
+
+@pub fun scaled (s : Float) (v : (Float, Float, Float)) : (Float, Float, Float) =
+  let (x, y, z) = v in
+  (s *. x, s *. y, s *. z)
+
+@pub fun dot (a : (Float, Float, Float)) (b : (Float, Float, Float)) : Float =
+  let (ax, ay, az) = a in
+  let (bx, by, bz) = b in
+  ax *. bx +. ay *. by +. az *. bz
+
+@pub fun cross (a : (Float, Float, Float)) (b : (Float, Float, Float)) : (Float, Float, Float) =
+  let (ax, ay, az) = a in
+  let (bx, by, bz) = b in
+  (ay *. bz -. az *. by, az *. bx -. ax *. bz, ax *. by -. ay *. bx)
+
+@pub fun length (v : (Float, Float, Float)) : Float = F.sqrt (dot v v)
+
+@pub fun distance (a : (Float, Float, Float)) (b : (Float, Float, Float)) : Float = length (minus a b)
+
+-- The vector of length 1 the same way, or the vector itself if it has no length.
+@pub fun unit (v : (Float, Float, Float)) : (Float, Float, Float) =
+  let n = length v in
+  if n == 0.0 then v else scaled (1.0 /. n) v
+
+-- Turning `angle` radians about `axis`.
+@pub fun around (axis : (Float, Float, Float)) (angle : Float) : (Float, Float, Float, Float) =
+  let (x, y, z) = scaled (F.sin (angle /. 2.0)) (unit axis) in
+  (x, y, z, F.cos (angle /. 2.0))
+
+-- Turning by `b`, then by `a`.
+@pub fun times (a : (Float, Float, Float, Float)) (b : (Float, Float, Float, Float)) : (Float, Float, Float, Float) =
+  let (ax, ay, az, aw) = a in
+  let (bx, by, bz, bw) = b in
+  (aw *. bx +. ax *. bw +. ay *. bz -. az *. by,
+   aw *. by -. ax *. bz +. ay *. bw +. az *. bx,
+   aw *. bz +. ax *. by -. ay *. bx +. az *. bw,
+   aw *. bw -. ax *. bx -. ay *. by -. az *. bz)
+
+-- A vector turned by a rotation.
+@pub fun rotating (q : (Float, Float, Float, Float)) (v : (Float, Float, Float)) : (Float, Float, Float) =
+  let (x, y, z) = v in
+  let (qx, qy, qz, qw) = q in
+  let (rx, ry, rz, rw) = times (times q (x, y, z, 0.0)) (0.0 -. qx, 0.0 -. qy, 0.0 -. qz, qw) in
+  (rx, ry, rz)
+
+-- The rotation that has something at `eye` look at `target`, upright.
+@pub fun lookingAt (eye : (Float, Float, Float)) (target : (Float, Float, Float)) : (Float, Float, Float, Float) =
+  let forward = unit (minus target eye) in
+  let right = unit (cross forward (0.0, 1.0, 0.0)) in
+  let up = cross right forward in
+  ofColumns right up (scaled (0.0 -. 1.0) forward)
+
+-- The rotation whose columns are these: where it turns x, y and z.
+fun ofColumns (x : (Float, Float, Float)) (y : (Float, Float, Float)) (z : (Float, Float, Float)) : (Float, Float, Float, Float) =
+  let (m00, m10, m20) = x in
+  let (m01, m11, m21) = y in
+  let (m02, m12, m22) = z in
+  let trace = m00 +. m11 +. m22 in
+  if trace >. 0.0 then
+    (let s = F.sqrt (trace +. 1.0) *. 2.0 in ((m21 -. m12) /. s, (m02 -. m20) /. s, (m10 -. m01) /. s, s /. 4.0))
+  else if m00 >. m11 and m00 >. m22 then
+    (let s = F.sqrt (1.0 +. m00 -. m11 -. m22) *. 2.0 in (s /. 4.0, (m01 +. m10) /. s, (m02 +. m20) /. s, (m21 -. m12) /. s))
+  else if m11 >. m22 then
+    (let s = F.sqrt (1.0 +. m11 -. m00 -. m22) *. 2.0 in ((m01 +. m10) /. s, s /. 4.0, (m12 +. m21) /. s, (m02 -. m20) /. s))
+  else
+    (let s = F.sqrt (1.0 +. m22 -. m00 -. m11) *. 2.0 in ((m02 +. m20) /. s, (m12 +. m21) /. s, s /. 4.0, (m10 -. m01) /. s))
 
 -- ---------------------------------------------------------------------------------------
 -- Logging and the window
@@ -332,6 +532,22 @@ fun visit sys e found body =
     let u2 = Ffi.writeInt (Ffi.offset l 16) U32 1 in
     callUnit sys 31 [Arg.Int entity, Arg.Ptr l])
 
+-- Makes an entity an orthographic camera, the one drawn from: the view is `height` metres of
+-- the world tall, and things do not shrink with distance; nothing nearer than `near` or
+-- farther than `far` is drawn.
+@pub fun setCameraOrthographic (sys : System) (entity : Int) (height : Float) (near : Float) (far : Float) : () ! { Process | e } =
+  callUnit sys 51 [Arg.Int entity, Arg.Float32 height, Arg.Float32 near, Arg.Float32 far, Arg.Int 1]
+
+-- The light that reaches everything, from no direction: its colour and how strong it is.
+@pub fun setAmbient (sys : System) (color : (Float, Float, Float)) (intensity : Float) : () ! { Process | e } =
+  let (r, g, b) = color in
+  Ffi.withBuffer 12 (\c ->
+    let u = Ffi.writeFloats c 4 [r, g, b] in
+    callUnit sys 32 [Arg.Ptr c, Arg.Float32 intensity])
+
+-- Makes `child` move with `parent`: its transform is then relative to the parent's.
+@pub fun setParent (sys : System) (child : Int) (parent : Int) : () ! { Process | e } = callUnit sys 44 [Arg.Int child, Arg.Int parent]
+
 -- ---------------------------------------------------------------------------------------
 -- Signals
 
@@ -349,6 +565,47 @@ fun visit sys e found body =
     let found = call sys 49 [Arg.Ptr t, Arg.Int n, Arg.Ptr out] in
     if found == 0 then 0.0 else okFloat (Ffi.readFloat out F64)))
 
+-- Whether a signal is true (and there is one).
+@pub fun signalIsTrue (sys : System) (name : String) : Bool ! { Process | e } = not (signal sys name == 0.0)
+
+-- How a rule works its signal out from its inputs, for `defineSignal`.
+@pub def signalAnd : Int = 0
+@pub def signalOr : Int = 1
+@pub def signalNot : Int = 2
+-- How many inputs are true.
+@pub def signalCount : Int = 3
+@pub def signalSum : Int = 4
+-- Input 1 if input 0 is true, else input 2.
+@pub def signalSelect : Int = 5
+-- The seconds input 0 has been true; input 1 sets it back to nought.
+@pub def signalTimer : Int = 6
+-- Input 0 against input 1.
+@pub def signalLess : Int = 8
+@pub def signalLessOrEqual : Int = 9
+@pub def signalEqual : Int = 10
+@pub def signalGreaterOrEqual : Int = 11
+@pub def signalGreater : Int = 12
+
+-- Defines a signal worked out from others, its inputs, by name (a rule), or defines it anew,
+-- when the system returns.
+@pub fun defineSignal (sys : System) (name : String) (op : Int) (inputs : [String]) : () ! { Process | e } =
+  defining sys name op 0.0 inputs
+
+-- A rule true once its input has been true for so many seconds.
+@pub fun defineHeldFor (sys : System) (name : String) (seconds : Float) (input : String) : () ! { Process | e } =
+  defining sys name 7 seconds [input]
+
+-- A setting: a number, or a truth, that stands until someone changes it, in the graph or in
+-- the rules' text.
+@pub fun defineNumber (sys : System) (name : String) (value : Float) : () ! { Process | e } = defining sys name 13 value []
+
+@pub fun defineTruth (sys : System) (name : String) (value : Bool) : () ! { Process | e } =
+  defining sys name 14 (if value then 1.0 else 0.0) []
+
+fun defining sys name op param inputs =
+  Ffi.withText name (\t n -> Ffi.withText (S.join " " inputs) (\i m ->
+    callUnit sys 50 [Arg.Ptr t, Arg.Int n, Arg.Int op, Arg.Float param, Arg.Ptr i, Arg.Int m]))
+
 -- ---------------------------------------------------------------------------------------
 -- Sound
 
@@ -365,3 +622,138 @@ fun visit sys e found body =
 
 -- Makes an entity the ears sources are heard by.
 @pub fun setListener (sys : System) (entity : Int) : () ! { Process | e } = callUnit sys 59 [Arg.Int entity]
+
+-- ---------------------------------------------------------------------------------------
+-- Input. "Down" is held now; "pressed" and "released" are true only on the frame the key or
+-- button changed.
+
+-- Keys: the letters, the digit row, and the others named.
+@pub def keyA : Int = 0
+@pub def keyB : Int = 1
+@pub def keyC : Int = 2
+@pub def keyD : Int = 3
+@pub def keyE : Int = 4
+@pub def keyF : Int = 5
+@pub def keyG : Int = 6
+@pub def keyH : Int = 7
+@pub def keyI : Int = 8
+@pub def keyJ : Int = 9
+@pub def keyK : Int = 10
+@pub def keyL : Int = 11
+@pub def keyM : Int = 12
+@pub def keyN : Int = 13
+@pub def keyO : Int = 14
+@pub def keyP : Int = 15
+@pub def keyQ : Int = 16
+@pub def keyR : Int = 17
+@pub def keyS : Int = 18
+@pub def keyT : Int = 19
+@pub def keyU : Int = 20
+@pub def keyV : Int = 21
+@pub def keyW : Int = 22
+@pub def keyX : Int = 23
+@pub def keyY : Int = 24
+@pub def keyZ : Int = 25
+@pub def digit0 : Int = 26
+@pub def digit1 : Int = 27
+@pub def digit2 : Int = 28
+@pub def digit3 : Int = 29
+@pub def digit4 : Int = 30
+@pub def digit5 : Int = 31
+@pub def digit6 : Int = 32
+@pub def digit7 : Int = 33
+@pub def digit8 : Int = 34
+@pub def digit9 : Int = 35
+@pub def keySpace : Int = 36
+@pub def keyEnter : Int = 37
+@pub def keyEscape : Int = 38
+@pub def keyTab : Int = 39
+@pub def keyBackspace : Int = 40
+@pub def keyArrowLeft : Int = 41
+@pub def keyArrowRight : Int = 42
+@pub def keyArrowUp : Int = 43
+@pub def keyArrowDown : Int = 44
+@pub def keyShiftLeft : Int = 45
+@pub def keyShiftRight : Int = 46
+@pub def keyControlLeft : Int = 47
+@pub def keyControlRight : Int = 48
+@pub def keyAltLeft : Int = 49
+@pub def keyAltRight : Int = 50
+
+-- F1 to F12.
+@pub fun functionKey (n : Int) : Int = 50 + n
+
+@pub def mouseLeft : Int = 0
+@pub def mouseRight : Int = 1
+@pub def mouseMiddle : Int = 2
+
+@pub fun keyDown (sys : System) (key : Int) : Bool ! { Process | e } = call sys 17 [Arg.Int key] % 256 != 0
+@pub fun keyPressed (sys : System) (key : Int) : Bool ! { Process | e } = call sys 18 [Arg.Int key] % 256 != 0
+@pub fun keyReleased (sys : System) (key : Int) : Bool ! { Process | e } = call sys 19 [Arg.Int key] % 256 != 0
+@pub fun mouseDown (sys : System) (button : Int) : Bool ! { Process | e } = call sys 20 [Arg.Int button] % 256 != 0
+@pub fun mousePressed (sys : System) (button : Int) : Bool ! { Process | e } = call sys 21 [Arg.Int button] % 256 != 0
+
+-- How far the mouse moved this frame, across and down.
+@pub fun mouseMotion (sys : System) : (Float, Float) ! { Process | e } =
+  Ffi.withBuffer 8 (\d ->
+    let u = Ffi.writeFloats d 4 [0.0, 0.0] in
+    let r = callUnit sys 22 [Arg.Ptr d] in
+    (readFloat32 d 0, readFloat32 d 1))
+
+-- Holds the pointer to the window, hidden, so that the mouse only turns things, or lets it go.
+@pub fun setCursorGrabbed (sys : System) (grabbed : Bool) : () ! { Process | e } = callUnit sys 68 [Arg.Int (if grabbed then 1 else 0)]
+
+@pub fun cursorGrabbed (sys : System) : Bool ! { Process | e } = call sys 69 [] % 4294967296 != 0
+
+-- Ends the game after this frame.
+@pub fun quit (sys : System) : () ! { Process | e } = callUnit sys 70 []
+
+-- ---------------------------------------------------------------------------------------
+-- Voxels: a world of blocks, after `require p "voxels"`. A place is a block's whole-number
+-- coordinates; a kind of block is a number, air being 0.
+
+@pub def air : Int = 0
+
+-- What a ray through the blocks met: the block, the face of it (pointing out, or 0 0 0 if
+-- the ray began inside), how far along the ray, and the block's kind.
+@pub data VoxelHit = VoxelHit (Int, Int, Int) (Int, Int, Int) Float Int
+
+-- A kind of block by name ("stone"), if there is one.
+@pub fun voxelBlock (sys : System) (name : String) : Maybe Int ! { Process | e } =
+  Ffi.withText name (\t n -> known (call sys 62 [Arg.Ptr t, Arg.Int n]))
+
+-- The kind of block at a place, if the world is made there.
+@pub fun voxel (sys : System) (at : (Int, Int, Int)) : Maybe Int ! { Process | e } =
+  let (x, y, z) = at in
+  known (call sys 63 [Arg.Int x, Arg.Int y, Arg.Int z])
+
+-- Puts a kind of block at a place (air takes one away), when the system returns.
+@pub fun setVoxel (sys : System) (at : (Int, Int, Int)) (block : Int) : () ! { Process | e } =
+  let (x, y, z) = at in
+  callUnit sys 64 [Arg.Int x, Arg.Int y, Arg.Int z, Arg.Int block]
+
+-- Whether the block at a place is solid, or the world is not made there yet.
+@pub fun voxelSolid (sys : System) (at : (Int, Int, Int)) : Bool ! { Process | e } =
+  let (x, y, z) = at in
+  call sys 65 [Arg.Int x, Arg.Int y, Arg.Int z] % 4294967296 != 0
+
+-- The first solid block along a ray from origin the way of direction, within each.
+@pub fun voxelRaycast (sys : System) (origin : (Float, Float, Float)) (direction : (Float, Float, Float)) (reach : Float) : Maybe VoxelHit ! { Process | e } =
+  let (ox, oy, oz) = origin in
+  let (dx, dy, dz) = direction in
+  Ffi.withBuffer 12 (\o -> Ffi.withBuffer 12 (\d -> Ffi.withBuffer 32 (\hit ->
+    let u1 = Ffi.writeFloats o 4 [ox, oy, oz] in
+    let u2 = Ffi.writeFloats d 4 [dx, dy, dz] in
+    if call sys 66 [Arg.Ptr o, Arg.Ptr d, Arg.Float32 reach, Arg.Ptr hit] % 256 == 0 then None
+    else
+      let cell = \i -> ok (Ffi.readInt (Ffi.offset hit (4 * i)) I32) in
+      Just (VoxelHit (cell 0, cell 1, cell 2) (cell 3, cell 4, cell 5) (readFloat32 hit 6) (ok (Ffi.readInt (Ffi.offset hit 28) U32))))))
+
+-- Makes an entity the one the world is made around (it also needs a transform): usually the
+-- camera.
+@pub fun setChunkViewer (sys : System) (entity : Int) : () ! { Process | e } = callUnit sys 67 [Arg.Int entity]
+
+-- A block's kind, or none for MIRA_BLOCK_UNKNOWN.
+fun known (block : Int) : Maybe Int =
+  let kind = block % 4294967296 in
+  if kind == 4294967295 then None else Just kind

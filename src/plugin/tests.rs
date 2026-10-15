@@ -1546,12 +1546,6 @@ use Mira as M
 def step : Float = STEP
 
 @export
-fun mira_plugin_abi_version () : UInt32 = M.abiVersion ()
-
-@export
-fun mira_meadow_run (s : Int) (user : Int) : () ! Process = M.run s user
-
-@export
 fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
   M.load api app (\p ->
     let transform = M.lookupComponent p "mira.Transform" in
@@ -1594,6 +1588,10 @@ fn have_meadowboot() -> bool {
     if Command::new(boot).arg("--version").output().is_ok() {
         return true;
     }
+    assert!(
+        std::env::var("MIRA_REQUIRE_MEADOWBOOT").as_deref() != Ok("1"),
+        "MeadowBoot is required (MIRA_REQUIRE_MEADOWBOOT=1) but could not be run"
+    );
     eprintln!("skipped: MeadowBoot is not here (MIRA_MEADOWBOOT, or meadowboot on the path), so the Meadow scripts were not tested");
     false
 }
@@ -1655,12 +1653,6 @@ fn a_meadow_system_that_fails_is_told_of_and_the_game_goes_on() {
         workspace.dir.join("Gives.mw"),
         r#"
 use Mira as M
-
-@export
-fun mira_plugin_abi_version () : UInt32 = M.abiVersion ()
-
-@export
-fun mira_meadow_run (s : Int) (user : Int) : () ! Process = M.run s user
 
 @export
 fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
@@ -1833,13 +1825,24 @@ fn the_sound_example_plays_from_its_script() {
 /// itself, and red's clock runs only while no scout is on a site.
 #[test]
 fn the_sacred_sites_play_from_their_script() {
-    use crate::{assets::Assets, render::Mesh, signal::Signals, signal_rules::Rules, time::Time};
-    if !have_ghc() {
-        return;
+    if have_ghc() {
+        play_the_sacred_sites("examples/sacred_sites/Sites.hs", "sites-example");
     }
-    let workspace = Workspace::new("sites-example");
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sacred_sites/Sites.hs");
-    std::fs::copy(script, workspace.dir.join("Sites.hs")).unwrap();
+}
+
+/// The same game, from the Meadow script, played the same.
+#[test]
+fn the_sacred_sites_play_from_their_meadow_script() {
+    if have_meadowboot() {
+        play_the_sacred_sites("examples/meadow/sacred_sites/Sites.mw", "meadow-sites-example");
+    }
+}
+
+fn play_the_sacred_sites(script: &str, workspace: &str) {
+    use crate::{assets::Assets, render::Mesh, signal::Signals, signal_rules::Rules, time::Time};
+    let workspace = Workspace::new(workspace);
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join(script);
+    std::fs::copy(&script, workspace.dir.join(script.file_name().unwrap())).unwrap();
 
     let mut app = app();
     app.init_resource::<Assets<Mesh>>();
@@ -1885,13 +1888,24 @@ fn the_sacred_sites_play_from_their_script() {
 /// cubes turn, and a ball it throws falls, bounces and comes to rest on the ground.
 #[test]
 fn the_voxel_world_plays_from_its_script() {
-    use crate::{assets::Assets, input::{InjectedInput, InputPlugin, KeyCode}, render::Mesh, time::Time, voxel::{ChunkViewer, VoxelWorld}};
-    if !have_ghc() {
-        return;
+    if have_ghc() {
+        play_the_voxel_world("examples/voxel_world/World.hs", "voxel-example");
     }
-    let workspace = Workspace::new("voxel-example");
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/voxel_world/World.hs");
-    std::fs::copy(script, workspace.dir.join("World.hs")).unwrap();
+}
+
+/// The same world, from the Meadow script, played the same.
+#[test]
+fn the_voxel_world_plays_from_its_meadow_script() {
+    if have_meadowboot() {
+        play_the_voxel_world("examples/meadow/voxel_world/World.mw", "meadow-voxel-example");
+    }
+}
+
+fn play_the_voxel_world(script: &str, workspace: &str) {
+    use crate::{assets::Assets, input::{InjectedInput, InputPlugin, KeyCode}, render::Mesh, time::Time, voxel::{ChunkViewer, VoxelWorld}};
+    let workspace = Workspace::new(workspace);
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join(script);
+    std::fs::copy(&script, workspace.dir.join(script.file_name().unwrap())).unwrap();
 
     let mut app = app();
     app.add_plugins(InputPlugin).init_resource::<Assets<Mesh>>();

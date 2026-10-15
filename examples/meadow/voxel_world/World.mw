@@ -1,0 +1,267 @@
+-- A world of blocks to fly about in, break and build: the voxel terrain, made and streamed
+-- around you, with a ring of spinning cubes above it and balls to throw at it. The same game
+-- as examples/voxel_world, in Meadow.
+--
+-- > cargo run --bin mira-play -- examples/meadow/voxel_world
+--
+-- Click to take the mouse, and look about with it. WASD to fly, Space and Shift to rise and
+-- fall, Control to go faster. Left click breaks the block you look at, right click puts one
+-- against it; 1 to 4 choose stone, dirt, grass or sand. F throws a ball. Escape lets the
+-- mouse go, and a second Escape ends the game.
+
+use Mira as M
+use Mira (System, VoxelHit)
+use Std.Ffi (Ptr)
+use Std.Num.Float as F
+use Std.Collections.Vector as V
+
+-- How far a block can be reached, in metres.
+def reach : Float = 8.0
+
+-- The blocks 1 to 4 choose.
+def choices : [(Int, String)] = [(M.digit1, "stone"), (M.digit2, "dirt"), (M.digit3, "grass"), (M.digit4, "sand")]
+
+-- What the systems are kept, by place: the components, then where the state blocks are.
+def transformAt : Int = 0
+def spinAt : Int = 1
+def flyerAt : Int = 2
+def ballAt : Int = 3
+-- The ball's mesh, the block being placed, and the frames and seconds the title has counted.
+def ballMeshAt : Int = 4
+def chosenAt : Int = 5
+def countedAt : Int = 6
+def sinceAt : Int = 7
+
+@export
+fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
+  M.load api app (\p ->
+    let voxels = M.require p "voxels" in
+    let transform = M.lookupComponent p "mira.Transform" in
+    -- Turns about an axis (three floats), so many radians a second (one more).
+    let spin = M.registerComponent p "world.Spin" 16 4 in
+    -- The camera you fly: how fast, how much the mouse turns it, and where it is looking
+    -- (across and up, in radians).
+    let flyer = M.registerComponent p "world.Flyer" 16 4 in
+    -- A thrown ball: how it is moving (three floats), how big it is, how much of a bounce it
+    -- keeps, and the seconds it has left.
+    let ball = M.registerComponent p "world.Ball" 24 4 in
+    let ballMesh = M.state p "world.ball" 4 4 in
+    let chosen = M.state p "world.chosen" 4 4 in
+    let counted = M.state p "world.counted" 4 4 in
+    let since = M.state p "world.since" 4 4 in
+    let u = M.keep p [transform, spin, flyer, ball, M.address ballMesh, M.address chosen, M.address counted, M.address since] in
+    let added =
+      [
+        M.addSystem p "setup" M.startup "world_setup" [],
+        M.addSystem p "spin" M.update "world_spin" [M.reads spin, M.writes transform],
+        M.addSystem p "fly" M.update "world_fly" [M.writes flyer, M.writes transform],
+        M.addSystem p "bounce" M.fixedUpdate "world_bounce" [M.writes ball, M.writes transform],
+        M.addSystem p "title" M.update "world_title" []
+      ]
+    in if voxels == 0 and added == [0, 0, 0, 0, 0] then 0 else 0 - 3)
+
+-- A state block, by its place in what is kept.
+fun keptPtr (sys : System) (at : Int) = M.pointer (M.kept sys at)
+
+@export
+fun world_setup (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let transform = M.kept sys transformAt in
+  let cube = M.meshCube sys 1.0 in
+  let u1 = M.writeInt32 (keptPtr sys ballMeshAt) (M.meshSphere sys 0.5) in
+  let u2 = M.writeInt32 (keptPtr sys chosenAt) (match M.voxelBlock sys "stone" with | Just b -> b | None -> M.air) in
+
+  -- A ring of spinning cubes going round a point above the hills, each placed relative to it.
+  let pivot = M.spawn sys in
+  let u3 = M.insertAt sys pivot transform (28.0, 84.0, neg 28.0) in
+  let u4 = M.insertFloats sys pivot (M.kept sys spinAt) [0.0, 1.0, 0.0, 0.3] in
+  let ring = V.forEach (\i -> piece sys cube pivot (toFloat i /. 12.0 *. F.tau)) (range 0 12) in
+
+  let sun = M.spawn sys in
+  let u5 = M.insertTransform sys sun transform (0.0, 0.0, 0.0) (M.lookingAt (0.0, 0.0, 0.0) (neg 0.5, neg 1.0, neg 0.3)) (1.0, 1.0, 1.0) in
+  let u6 = M.setLight sys sun 3.0 in
+  let u7 = M.setAmbient sys (1.0, 1.0, 1.0) 0.45 in
+
+  -- You, looking out over the land: the camera, which the world is made around.
+  let (yaw, pitch) = towards (1.0, neg 0.35, neg 1.0) in
+  let eye = M.spawn sys in
+  let u8 = M.insertTransform sys eye transform (0.0, 95.0, 0.0) (turned yaw pitch) (1.0, 1.0, 1.0) in
+  let u9 = M.insertFloats sys eye (M.kept sys flyerAt) [12.0, 0.002, yaw, pitch] in
+  let u10 = M.setCamera sys eye in
+  M.setChunkViewer sys eye
+
+-- One cube of the ring, `angle` round it.
+fun piece (sys : System) (cube : Int) (pivot : Int) (angle : Float) : () ! Process =
+  let entity = M.spawn sys in
+  let u1 = M.insertAt sys entity (M.kept sys transformAt) (F.cos angle *. 10.0, 0.0, F.sin angle *. 10.0) in
+  let (ax, ay, az) = M.unit (F.cos angle, 1.0, F.sin angle) in
+  let u2 = M.insertFloats sys entity (M.kept sys spinAt) [ax, ay, az, 1.5] in
+  let u3 = M.setMesh sys entity cube in
+  let u4 = M.setColor sys entity (0.5 +. F.cos angle *. 0.4, 0.5, 0.5 +. F.sin angle *. 0.4) in
+  M.setParent sys entity pivot
+
+@export
+fun world_spin (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let dt = M.deltaSeconds sys in
+  M.forEach2 sys (\entity spinning place ->
+    let axis = (M.readFloat32 spinning 0, M.readFloat32 spinning 1, M.readFloat32 spinning 2) in
+    M.setRotation place (M.times (M.rotation place) (M.around axis (M.readFloat32 spinning 3 *. dt))))
+
+@export
+fun world_fly (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let grabbed = M.cursorGrabbed sys in
+  let u1 = (if M.keyPressed sys M.keyEscape then (if grabbed then M.setCursorGrabbed sys False else M.quit sys) else ()) in
+  let u2 = (if not grabbed and M.mousePressed sys M.mouseLeft then M.setCursorGrabbed sys True else ()) in
+  M.forEach2 sys (\entity me place -> fly sys grabbed me place)
+
+fun fly (sys : System) (grabbed : Bool) (me : Ptr) (place : Ptr) : () ! Process =
+  -- Turning with the mouse, while it is held.
+  let speed = M.readFloat32 me 0 in
+  let turning = M.readFloat32 me 1 in
+  let (dx, dy) = if grabbed then M.mouseMotion sys else (0.0, 0.0) in
+  let yaw = M.readFloat32 me 2 -. dx *. turning in
+  let pitch = within (neg 1.54) 1.54 (M.readFloat32 me 3 -. dy *. turning) in
+  let u1 = M.writeFloat32 me 2 yaw in
+  let u2 = M.writeFloat32 me 3 pitch in
+  let facing = turned yaw pitch in
+  let forward = M.rotating facing (0.0, 0.0, neg 1.0) in
+  let right = M.rotating facing (1.0, 0.0, 0.0) in
+  let way =
+    V.foldl (\sum held -> let (key, v) = held in if M.keyDown sys key then M.plus sum v else sum) (0.0, 0.0, 0.0)
+      [(M.keyW, forward), (M.keyS, M.scaled (neg 1.0) forward), (M.keyD, right), (M.keyA, M.scaled (neg 1.0) right), (M.keySpace, (0.0, 1.0, 0.0)), (M.keyShiftLeft, (0.0, neg 1.0, 0.0))]
+  in
+  let boost = if M.keyDown sys M.keyControlLeft then 5.0 else 1.0 in
+  let here = M.translation place in
+  let moved = if M.length way == 0.0 then here else M.plus here (M.scaled (speed *. boost *. M.deltaSeconds sys) (M.unit way)) in
+  let u3 = M.setTranslation place moved in
+  let u4 = M.setRotation place facing in
+
+  -- Breaking and building, at what is looked at.
+  let breaking = grabbed and M.mousePressed sys M.mouseLeft in
+  let placing = grabbed and M.mousePressed sys M.mouseRight in
+  let u5 = (if breaking or placing then build sys moved forward breaking else ()) in
+  let u6 = V.forEach (\choice -> choose sys choice) choices in
+  if M.keyPressed sys M.keyF then throw sys (M.plus moved forward) forward else ()
+
+-- Breaks the block looked at, or puts the chosen one against the face looked at.
+fun build (sys : System) (from : (Float, Float, Float)) (forward : (Float, Float, Float)) (breaking : Bool) : () ! Process =
+  match M.voxelRaycast sys from forward reach with
+  | Just (VoxelHit block face d kind) ->
+      if breaking then M.setVoxel sys block M.air
+      else if face == (0, 0, 0) then ()
+      else M.setVoxel sys (beside block face) (M.readInt32 (keptPtr sys chosenAt))
+  | None -> ()
+
+-- Chooses a block, if its key was pressed.
+fun choose (sys : System) (choice : (Int, String)) : () ! Process =
+  let (key, name) = choice in
+  if M.keyPressed sys key then
+    (match M.voxelBlock sys name with
+     | Just b -> M.writeInt32 (keptPtr sys chosenAt) b
+     | None -> ())
+  else ()
+
+-- A ball, thrown from `at` the way of `forward`.
+fun throw (sys : System) (at : (Float, Float, Float)) (forward : (Float, Float, Float)) : () ! Process =
+  let thrown = M.spawn sys in
+  let u1 = M.insertTransform sys thrown (M.kept sys transformAt) at M.unturned (0.6, 0.6, 0.6) in
+  let (vx, vy, vz) = M.scaled 30.0 forward in
+  let u2 = M.insertFloats sys thrown (M.kept sys ballAt) [vx, vy, vz, 0.3, 0.6, 15.0] in
+  let u3 = M.setMesh sys thrown (M.readInt32 (keptPtr sys ballMeshAt)) in
+  M.setColor sys thrown (1.0, 0.77, 0.24)
+
+-- Balls fall and bounce off the blocks, an axis at a time: if the leading edge would end up
+-- in a solid block, that axis bounces instead.
+@export
+fun world_bounce (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let dt = M.deltaSeconds sys in
+  M.forEach2 sys (\entity thrown place ->
+    let left = M.readFloat32 thrown 5 -. dt in
+    if not (left >. 0.0) then M.despawn sys entity
+    else
+      let size = M.readFloat32 thrown 3 in
+      let keep = M.readFloat32 thrown 4 in
+      let fallen = M.plus (M.readFloat32 thrown 0, M.readFloat32 thrown 1, M.readFloat32 thrown 2) (0.0, neg (20.0 *. dt), 0.0) in
+      let (there, after) = V.foldl (\so axis -> step sys dt size keep so axis) (M.translation place, fallen) [0, 1, 2] in
+      let (ax, ay, az) = after in
+      let u1 = M.writeFloat32 thrown 0 ax in
+      let u2 = M.writeFloat32 thrown 1 ay in
+      let u3 = M.writeFloat32 thrown 2 az in
+      let u4 = M.writeFloat32 thrown 5 left in
+      M.setTranslation place there)
+
+-- One axis of a ball's move: where it gets to, and how it is moving after.
+fun step (sys : System) (dt : Float) (size : Float) (keep : Float) (so : ((Float, Float, Float), (Float, Float, Float))) (axis : Int) : ((Float, Float, Float), (Float, Float, Float)) ! Process =
+  let (position, velocity) = so in
+  let moving = component axis velocity *. dt in
+  let probe = setComponent axis (component axis position +. moving +. size *. sign moving) position in
+  if M.voxelSolid sys (cell probe) then (position, bounced axis keep velocity)
+  else (setComponent axis (component axis position +. moving) position, velocity)
+
+-- What happens to a ball's speed along an axis when it meets a block that way: back, and less
+-- of it; meeting the ground, it also rolls less and comes to rest.
+fun bounced (axis : Int) (keep : Float) (v : (Float, Float, Float)) : (Float, Float, Float) =
+  if axis == 1 then
+    (let (x, y, z) = v in
+     let up = neg y *. keep in
+     (x *. 0.9, if F.abs up <. 1.0 then 0.0 else up, z *. 0.9))
+  else setComponent axis (neg (component axis v) *. keep) v
+
+@export
+fun world_title (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let counted = keptPtr sys countedAt in
+  let since = keptPtr sys sinceAt in
+  let frames = M.readInt32 counted + 1 in
+  let elapsed = M.readFloat32 since 0 +. M.deltaSeconds sys in
+  if elapsed <. 0.5 then
+    (let u = M.writeInt32 counted frames in
+     M.writeFloat32 since 0 elapsed)
+  else
+    let now = M.readInt32 (keptPtr sys chosenAt) in
+    let name = V.foldl (\found choice -> let (key, n) = choice in if isBlock sys n now then n else found) "?" choices in
+    let fps = F.round (toFloat frames /. elapsed) in
+    let u1 = M.setWindowTitle sys "mira: ${fps} fps; placing ${name} (1-4); click: break and place, F: a ball" in
+    let u2 = M.writeInt32 counted 0 in
+    M.writeFloat32 since 0 0.0
+
+-- Whether the block of that name is this kind.
+fun isBlock (sys : System) (name : String) (kind : Int) : Bool ! Process =
+  match M.voxelBlock sys name with
+  | Just b -> b == kind
+  | None -> False
+
+-- Looking in a direction: the yaw and pitch that face it.
+fun towards (direction : (Float, Float, Float)) : (Float, Float) =
+  let (x, y, z) = M.unit direction in
+  (F.atan2 (neg x) (neg z), F.atan2 y (F.sqrt (1.0 -. y *. y)))
+
+-- The rotation of a flyer: turned about the vertical, then tipped up or down.
+fun turned (yaw : Float) (pitch : Float) : (Float, Float, Float, Float) =
+  M.times (M.around (0.0, 1.0, 0.0) yaw) (M.around (1.0, 0.0, 0.0) pitch)
+
+fun component (axis : Int) (v : (Float, Float, Float)) : Float =
+  let (x, y, z) = v in
+  if axis == 0 then x else if axis == 1 then y else z
+
+fun setComponent (axis : Int) (value : Float) (v : (Float, Float, Float)) : (Float, Float, Float) =
+  let (x, y, z) = v in
+  if axis == 0 then (value, y, z) else if axis == 1 then (x, value, z) else (x, y, value)
+
+fun cell (v : (Float, Float, Float)) : (Int, Int, Int) =
+  let (x, y, z) = v in
+  (floor x, floor y, floor z)
+
+fun beside (a : (Int, Int, Int)) (b : (Int, Int, Int)) : (Int, Int, Int) =
+  let (ax, ay, az) = a in
+  let (bx, by, bz) = b in
+  (ax + bx, ay + by, az + bz)
+
+fun sign (x : Float) : Float = if x >. 0.0 then 1.0 else if x <. 0.0 then neg 1.0 else 0.0
+
+fun within (low : Float) (high : Float) (x : Float) : Float = if x <. low then low else if x >. high then high else x
+
+fun neg (x : Float) : Float = 0.0 -. x

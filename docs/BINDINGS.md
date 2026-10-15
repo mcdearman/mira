@@ -89,7 +89,8 @@ prints the same.
 ## After the counter
 
 The counter passes in Meadow too, written by hand over `Std.Ffi` and again with mira's
-Meadow bindings ([`bindings/meadow`](../bindings/meadow)): the second is about forty lines.
+Meadow bindings ([`bindings/meadow`](../bindings/meadow)): the second is about forty lines,
+and the games in [`examples/meadow`](../examples/meadow) are written with the same bindings.
 
 The rest of the table follows the same patterns. [`Mira.hs`](../bindings/haskell/Mira.hs)
 is a whole binding, for Haskell, written over the C glue in

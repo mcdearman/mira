@@ -216,12 +216,6 @@ script is a `.mw` file in a game's folder, built by the engine as a Haskell one 
 use Mira as M
 
 @export
-fun mira_plugin_abi_version () : UInt32 = M.abiVersion ()
-
-@export
-fun mira_meadow_run (s : Int) (user : Int) : () ! Process = M.run s user
-
-@export
 fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
   M.load api app (\p ->
     let transform = M.lookupComponent p "mira.Transform" in
@@ -236,22 +230,31 @@ fun drift (s : Int) (user : Int) : () ! Process =
     M.setTranslation t (x +. M.deltaSeconds sys, y, z))
 ```
 
-Every Meadow plugin exports `mira_meadow_run` as above, one line: the engine calls each of
-its systems through it, so that a system that fails (a division by nought, say) is told of
-as any failing system is, and the game goes on. Each system is an exported function of its
-own, `(s : Int) (user : Int) : () ! Process`, named when it is added; `M.system s user` gives what the calls take. What a plugin's systems need
+The bindings export the rest of what the engine looks for: the interface's version, and the
+runner the engine calls each system through, so that a system that fails (a division by
+nought, say) is told of as any failing system is, and the game goes on. Each system is an
+exported function of its own, `(s : Int) (user : Int) : () ! Process`, named when it is
+added; `M.system s user` gives what the calls take. What a plugin's systems need
 from its setting up (the components it registered, a state block) it keeps with `M.keep`
-and reads with `M.kept`. The example is [`examples/meadow/sound`](../examples/meadow/sound).
+and reads with `M.kept`. The examples are [`examples/meadow`](../examples/meadow): the sound
+example, and the sacred sites and the voxel world, the same games as their Haskell scripts.
+A system with more than one query adds it with `M.addSystemWith` and goes through each with
+`M.forEachIn` or `M.foldIn`, by number; a fold is how a system works something out from
+its entities, as the sacred sites' facts are.
 
 To build Meadow scripts the engine needs MeadowBoot: `MIRA_MEADOWBOOT` saying where it is
-(or `meadowboot` on the path), with `MEADOW` and `MEADOWBOOT_STD` set and clang on the path,
-as Meadow's own build asks. MeadowBoot has no released build yet: it is built from Meadow's
-repository. So for now the examples are in Haskell as well, and CI tests the Meadow ones only
-where MeadowBoot is.
+(or `meadowboot` on the path), and clang on the path. It comes from Meadow's prerelease
+([meadowboot-v0.1.0-pre.2](https://github.com/meadow-lang/meadow/releases/tag/meadowboot-v0.1.0-pre.2),
+for Windows and Linux on x86-64), unpacked anywhere: it finds the `meadow` and `lib/Std`
+beside it. CI tests the Meadow scripts on Linux and Windows with it, and fails if it cannot
+run them; there is no macOS build of it yet. For now the examples are in Haskell as well.
 
-What is not here yet, in Meadow: the bindings cover what
-the sound example uses (components, systems, queries, transforms, meshes, a plain colour, a
-camera, a sun, signals, sound), not yet the whole interface.
+What is not here yet, in Meadow: the bindings cover components (and describing them), state,
+systems with any number of queries, transforms and the vectors and rotations to work them
+out, input and the cursor, meshes, plain colours, cameras (orthographic too), lights,
+parents, signals and their rules, sound, and voxels; not yet physics, events, meshes made
+from vertices, images and textures, models and prefabs, the order of systems, or loaded
+sounds.
 
 ## In Haskell
 

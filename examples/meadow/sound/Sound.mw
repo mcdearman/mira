@@ -17,12 +17,6 @@ def humRange : Float = 12.0
 def circle : Float = 4.0
 
 @export
-fun mira_plugin_abi_version () : UInt32 = M.abiVersion ()
-
-@export
-fun mira_meadow_run (s : Int) (user : Int) : () ! Process = M.run s user
-
-@export
 fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
   M.load api app (\p ->
     let transform = M.lookupComponent p "mira.Transform" in

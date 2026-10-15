@@ -17,6 +17,8 @@ env:
   CARGO_TERM_COLOR: always
   # The Haskell plugin tests must run here, not skip.
   MIRA_REQUIRE_GHC: 1
+  # The MeadowBoot the Meadow scripts are built with, where there is one (see the jobs).
+  MEADOWBOOT_RELEASE: meadowboot-v0.1.0-pre.2
 
 jobs:
   check:
@@ -64,6 +66,17 @@ jobs:
       if: runner.os == 'Linux'
       with:
         version: '3.10'
+    # Meadow is the scripting language to be. Its scripts are built with MeadowBoot, from
+    # Meadow's prerelease, and their tests must run here, not skip; it has no macOS build yet.
+    - name: MeadowBoot
+      if: runner.os == 'Linux'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release download "$MEADOWBOOT_RELEASE" -R meadow-lang/meadow -p '*linux-gnu*' -D "$RUNNER_TEMP/meadowboot"
+        tar -xzf "$RUNNER_TEMP"/meadowboot/*.tar.gz -C "$RUNNER_TEMP/meadowboot"
+        echo "MIRA_MEADOWBOOT=$(find "$RUNNER_TEMP/meadowboot" -name MeadowBoot -type f | head -n 1)" >> "$GITHUB_ENV"
+        echo "MIRA_REQUIRE_MEADOWBOOT=1" >> "$GITHUB_ENV"
     - name: Full suite
       run: scripts/check.sh
 
@@ -81,6 +94,18 @@ jobs:
       with:
         ghc-version: '9.12.2'
         enable-stack: false
+    - name: MeadowBoot
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        $into = Join-Path $env:RUNNER_TEMP meadowboot
+        gh release download $env:MEADOWBOOT_RELEASE -R meadow-lang/meadow -p '*windows-msvc*' -D $into
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+        Expand-Archive (Get-ChildItem $into -Filter *.zip).FullName -DestinationPath $into
+        $boot = (Get-ChildItem $into -Recurse -Filter MeadowBoot.exe | Select-Object -First 1).FullName
+        "MIRA_MEADOWBOOT=$boot" >> $env:GITHUB_ENV
+        "MIRA_REQUIRE_MEADOWBOOT=1" >> $env:GITHUB_ENV
     - name: Build
       run: cargo build --workspace --all-targets
     - name: Test

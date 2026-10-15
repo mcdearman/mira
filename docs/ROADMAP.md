@@ -113,7 +113,7 @@ contract is `include/mira.h`; see [PLUGINS.md](PLUGINS.md).
 - [ ] Optional terms and change filters in queries; hooks from plugins
 - [ ] Removing a plugin at runtime, with its components and systems
 - [ ] A generic script host for languages that can't build a shared library themselves
-- [ ] Meadow bindings, once Meadow can export C functions
+- [x] Meadow bindings, once Meadow can export C functions (`bindings/meadow`)
 - [ ] Bindings generated from the header for at least one more compiled language (Zig)
 - [x] Hot reload for shaders and textures (see [HOT_RELOAD.md](HOT_RELOAD.md))
 - [ ] Hot reload for meshes, models and scenes (shared with Phase 1), and for the shaders that
@@ -561,8 +561,10 @@ depends on resolution rather than scene size.
       library carries its own GHC runtime there, as GHC has none to share on Windows
 - [x] Meadow scripts: mira's bindings for Meadow (`bindings/meadow`), `.mw` files built by
       the engine with MeadowBoot, and the sound example in Meadow (`examples/meadow/sound`)
-- [ ] Meadow scripts with the whole interface, a runtime error reported and not fatal, and
-      MeadowBoot installed in CI; then Meadow the language the examples are written in
+- [x] Meadow: a system that fails is reported and the game goes on; the sacred sites and
+      the voxel world in Meadow (`examples/meadow`), played by the same tests as in Haskell
+- [ ] Meadow scripts with the whole interface (physics, events, images, models, system
+      order), and MeadowBoot installed in CI; then Meadow the language the examples lead with
 - [x] Scripts built by the engine itself, so that no shell is needed on any system: a game
       is a folder of scripts, built, loaded, and built again when one is saved
       (`mira-play <folder>`; see [PLUGINS.md](PLUGINS.md))
