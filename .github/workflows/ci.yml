@@ -44,12 +44,16 @@ jobs:
         xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)
         echo "Building with $xcode"
         echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
+        echo "SDKROOT=$xcode/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk" >> "$GITHUB_ENV"
     # Haskell is the default plugin language; its bindings are tested by building and
     # hot-reloading real plugins.
     - uses: haskell-actions/setup@v2
       with:
         ghc-version: '9.12.2'
         enable-stack: false
+    - name: GHC's C toolchain
+      if: runner.os == 'macOS'
+      run: ghc --info | grep -iE 'sysroot|C compiler|ld command|linker' || true
     # check.sh lints the Haskell when hlint is there. One platform is enough for a linter.
     - uses: haskell-actions/hlint-setup@v2
       if: runner.os == 'Linux'
