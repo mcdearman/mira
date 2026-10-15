@@ -17,8 +17,8 @@ env:
   CARGO_TERM_COLOR: always
   # The Haskell plugin tests must run here, not skip.
   MIRA_REQUIRE_GHC: 1
-  # The MeadowBoot the Meadow scripts are built with, where there is one (see the jobs).
-  MEADOWBOOT_RELEASE: meadowboot-v0.1.0-pre.2
+  # The MeadowBoot the Meadow scripts are built with (see the jobs).
+  MEADOWBOOT_RELEASE: meadowboot-v0.1.0-pre.3
 
 jobs:
   check:
@@ -67,13 +67,20 @@ jobs:
       with:
         version: '3.10'
     # Meadow is mira's scripting language. Its scripts are built with MeadowBoot, from
-    # Meadow's prerelease, and their tests must run here, not skip; it has no macOS build yet.
+    # Meadow's prerelease (the archive for this runner's system), and their tests must run
+    # here, not skip.
     - name: MeadowBoot
-      if: runner.os == 'Linux'
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        gh release download "$MEADOWBOOT_RELEASE" -R meadow-lang/meadow -p '*linux-gnu*' -D "$RUNNER_TEMP/meadowboot"
+        case "$(uname -s)-$(uname -m)" in
+          Linux-x86_64) target=x86_64-unknown-linux-gnu ;;
+          Linux-aarch64) target=aarch64-unknown-linux-gnu ;;
+          Darwin-arm64) target=aarch64-apple-darwin ;;
+          Darwin-x86_64) target=x86_64-apple-darwin ;;
+          *) echo "no MeadowBoot for $(uname -s)-$(uname -m)"; exit 1 ;;
+        esac
+        gh release download "$MEADOWBOOT_RELEASE" -R meadow-lang/meadow -p "meadowboot-$target.tar.gz" -D "$RUNNER_TEMP/meadowboot"
         tar -xzf "$RUNNER_TEMP"/meadowboot/*.tar.gz -C "$RUNNER_TEMP/meadowboot"
         echo "MIRA_MEADOWBOOT=$(find "$RUNNER_TEMP/meadowboot" -name MeadowBoot -type f | head -n 1)" >> "$GITHUB_ENV"
         echo "MIRA_REQUIRE_MEADOWBOOT=1" >> "$GITHUB_ENV"
@@ -100,7 +107,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
       run: |
         $into = Join-Path $env:RUNNER_TEMP meadowboot
-        gh release download $env:MEADOWBOOT_RELEASE -R meadow-lang/meadow -p '*windows-msvc*' -D $into
+        gh release download $env:MEADOWBOOT_RELEASE -R meadow-lang/meadow -p 'meadowboot-x86_64-pc-windows-msvc.zip' -D $into
         if ($LASTEXITCODE -ne 0) { exit 1 }
         Expand-Archive (Get-ChildItem $into -Filter *.zip).FullName -DestinationPath $into
         $boot = (Get-ChildItem $into -Recurse -Filter MeadowBoot.exe | Select-Object -First 1).FullName

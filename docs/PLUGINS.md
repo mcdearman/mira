@@ -246,11 +246,11 @@ its entities, as the sacred sites' facts are.
 
 To build Meadow scripts the engine needs MeadowBoot: `MIRA_MEADOWBOOT` saying where it is
 (or `meadowboot` on the path), and clang on the path. It comes from Meadow's prerelease
-([meadowboot-v0.1.0-pre.2](https://github.com/meadow-lang/meadow/releases/tag/meadowboot-v0.1.0-pre.2),
-for Windows and Linux on x86-64), unpacked anywhere: it finds the `meadow` and `lib/Std`
-beside it. CI tests the Meadow scripts on Linux and Windows with it, and fails if it cannot
-run them; there is no macOS build of it yet, so on a Mac the Haskell examples are the ones to
-play, and the editor's tests and the hosted game use the Haskell sacred sites everywhere.
+([meadowboot-v0.1.0-pre.3](https://github.com/meadow-lang/meadow/releases/tag/meadowboot-v0.1.0-pre.3):
+Windows on x86-64, Linux and macOS on x86-64 and ARM), unpacked anywhere: it finds the
+`meadow` and `lib/Std` beside it. CI tests the Meadow scripts on Linux, macOS and Windows
+with it, and fails if it cannot run them. The editor's tests and the hosted game still use
+the Haskell sacred sites, so that they need no prerelease.
 
 The bindings cover the whole of `mira.h`: components (and describing them), state, systems
 with any number of queries and their order, events (the engine's contacts among them),
