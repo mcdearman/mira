@@ -21,8 +21,8 @@ The game is in one panel; around it are its entities as a tree, an inspector tha
 chosen one, its signals, and a conversation with an agent. See [docs/EDITOR.md](docs/EDITOR.md).
 Everything else here is an example. Most are games written as scripts in Meadow, mira's
 scripting language, played with the player, which builds them. It needs MeadowBoot, from
-Meadow's [prerelease](https://github.com/meadow-lang/meadow/releases/tag/meadowboot-v0.1.0-pre.2)
-for Windows and Linux, and clang (see [docs/PLUGINS.md](docs/PLUGINS.md)):
+Meadow's [prerelease](https://github.com/meadow-lang/meadow/releases/tag/meadowboot-v0.1.0-pre.3)
+for Windows, Linux and macOS, and clang (see [docs/PLUGINS.md](docs/PLUGINS.md)):
 
 ```
 cargo run --release --bin mira-play -- examples/voxel_world
