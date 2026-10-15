@@ -249,12 +249,14 @@ for Windows and Linux on x86-64), unpacked anywhere: it finds the `meadow` and `
 beside it. CI tests the Meadow scripts on Linux and Windows with it, and fails if it cannot
 run them; there is no macOS build of it yet. For now the examples are in Haskell as well.
 
-What is not here yet, in Meadow: the bindings cover components (and describing them), state,
-systems with any number of queries, transforms and the vectors and rotations to work them
-out, input and the cursor, meshes, plain colours, cameras (orthographic too), lights,
-parents, signals and their rules, sound, and voxels; not yet physics, events, meshes made
-from vertices, images and textures, models and prefabs, the order of systems, or loaded
-sounds.
+The bindings cover the whole of `mira.h`: components (and describing them), state, systems
+with any number of queries and their order, events (the engine's contacts among them),
+transforms and the vectors and rotations to work them out, input and the cursor, meshes
+(shapes, or from vertices), materials and textures, cameras, lights, parents, models and
+prefabs, physics, signals and their rules, sound, and voxels. Each is a call or two over
+the table, named as the header names it. A test runs the C scene plugin's checks (physics,
+contacts, events between plugins) against a Meadow port of it; images, models, prefabs and
+loaded sounds are bound and not yet tested from Meadow.
 
 ## In Haskell
 

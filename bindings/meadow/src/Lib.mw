@@ -362,6 +362,11 @@ fun foldVisit sys q e found so body =
 -- Reading and writing a 32-bit integer or float that a pointer from `forEach` points at.
 @pub fun readInt32 (at : Ptr) : Int ! { Process | e } = ok (Ffi.readInt at I32)
 @pub fun writeInt32 (at : Ptr) (n : Int) : () ! { Process | e } = let u = Ffi.writeInt at I32 n in ()
+@pub fun readInt32At (at : Ptr) (index : Int) : Int ! { Process | e } = ok (Ffi.readInt (Ffi.offset at (4 * index)) I32)
+@pub fun writeInt32At (at : Ptr) (index : Int) (n : Int) : () ! { Process | e } = let u = Ffi.writeInt (Ffi.offset at (4 * index)) I32 n in ()
+-- An entity, or another 64-bit number, kept in a state block.
+@pub fun readInt64 (at : Ptr) : Int ! { Process | e } = ok (Ffi.readInt at I64)
+@pub fun writeInt64 (at : Ptr) (n : Int) : () ! { Process | e } = let u = Ffi.writeInt at I64 n in ()
 @pub fun readFloat32 (at : Ptr) (index : Int) : Float ! { Process | e } = okFloat (Ffi.readFloat (Ffi.offset at (4 * index)) F32)
 @pub fun writeFloat32 (at : Ptr) (index : Int) (x : Float) : () ! { Process | e } = let u = Ffi.writeFloat (Ffi.offset at (4 * index)) F32 x in ()
 
@@ -383,11 +388,16 @@ fun foldVisit sys q e found so body =
 
 -- Puts a transform on an entity: where it is, its rotation (x y z w) and its scale.
 @pub fun insertTransform (sys : System) (entity : Int) (transform : Int) (at : (Float, Float, Float)) (rotation : (Float, Float, Float, Float)) (scale : (Float, Float, Float)) : () ! { Process | e } =
+  withTransform at rotation scale (\t -> insert sys entity transform t)
+
+-- A `MiraTransform` of these, for `body` to hand the engine.
+fun withTransform at rotation scale body =
   Ffi.withBuffer 48 (\t ->
+    let u0 = Ffi.writeFloats t 4 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] in
     let u1 = setTranslation t at in
-    let u2 = (match rotation with | (x, y, z, w) -> Ffi.writeFloats (Ffi.offset t 16) 4 [x, y, z, w]) in
-    let u3 = (match scale with | (x, y, z) -> Ffi.writeFloats (Ffi.offset t 32) 4 [x, y, z]) in
-    insert sys entity transform t)
+    let u2 = setRotation t rotation in
+    let u3 = setScale t scale in
+    body t)
 
 -- Puts a transform on an entity at a place, unturned and at its own size.
 @pub fun insertAt (sys : System) (entity : Int) (transform : Int) (at : (Float, Float, Float)) : () ! { Process | e } =
@@ -545,8 +555,70 @@ fun ofColumns (x : (Float, Float, Float)) (y : (Float, Float, Float)) (z : (Floa
     let u = Ffi.writeFloats c 4 [r, g, b] in
     callUnit sys 32 [Arg.Ptr c, Arg.Float32 intensity])
 
--- Makes `child` move with `parent`: its transform is then relative to the parent's.
+-- Makes `child` move with `parent`: its transform is then relative to the parent's. With
+-- `noEntity` as the parent, it stands by itself again.
 @pub fun setParent (sys : System) (child : Int) (parent : Int) : () ! { Process | e } = callUnit sys 44 [Arg.Int child, Arg.Int parent]
+
+-- No entity, where one is asked for.
+@pub def noEntity : Int = 0 - 1
+
+-- Despawns an entity and everything below it (a model and its parts, say).
+@pub fun despawnTree (sys : System) (entity : Int) : () ! { Process | e } = callUnit sys 45 [Arg.Int entity]
+
+-- How a surface looks: its colour (red, green, blue and how opaque, linear), the light it
+-- gives off itself, how rough it is (0 mirror-smooth to 1 matte) and how metallic (0 or 1).
+@pub fun setMaterial (sys : System) (entity : Int) (color : (Float, Float, Float, Float)) (glow : (Float, Float, Float)) (roughness : Float) (metallic : Float) : () ! { Process | e } =
+  let (r, g, b, a) = color in
+  let (er, eg, eb) = glow in
+  Ffi.withBuffer 36 (\m ->
+    let u = Ffi.writeFloats m 4 [r, g, b, a, er, eg, eb, roughness, metallic] in
+    callUnit sys 26 [Arg.Int entity, Arg.Ptr m])
+
+-- Makes an entity a perspective camera: its vertical field of view in radians, the nearest
+-- distance drawn, and whether it is active (the first active camera is the one drawn).
+@pub fun setCameraWith (sys : System) (entity : Int) (fov : Float) (near : Float) (active : Bool) : () ! { Process | e } =
+  Ffi.withBuffer 12 (\c ->
+    let u1 = Ffi.writeFloats c 4 [fov, near] in
+    let u2 = Ffi.writeInt (Ffi.offset c 8) U32 (if active then 1 else 0) in
+    callUnit sys 30 [Arg.Int entity, Arg.Ptr c])
+
+-- Makes an entity a sun of a colour, so strong, casting shadows or not.
+@pub fun setLightWith (sys : System) (entity : Int) (color : (Float, Float, Float)) (intensity : Float) (shadows : Bool) : () ! { Process | e } =
+  let (r, g, b) = color in
+  Ffi.withBuffer 20 (\l ->
+    let u1 = Ffi.writeFloats l 4 [r, g, b, intensity] in
+    let u2 = Ffi.writeInt (Ffi.offset l 16) U32 (if shadows then 1 else 0) in
+    callUnit sys 31 [Arg.Int entity, Arg.Ptr l])
+
+-- A mesh of these vertices (each a position, a normal and a texture coordinate) and the
+-- triangles through them, three indices each, counter-clockwise seen from the front. 0 if
+-- it cannot be made.
+@pub fun meshCreate (sys : System) (vertices : [((Float, Float, Float), (Float, Float, Float), (Float, Float))]) (indices : [Int]) : Int ! { Process | e } =
+  let floats = concatMap (\v -> let (p, n, uv) = v in let (px, py, pz) = p in let (nx, ny, nz) = n in let (u, w) = uv in [px, py, pz, nx, ny, nz, u, w]) vertices in
+  Ffi.withBuffer (4 * max 1 (len floats)) (\vs -> Ffi.withBuffer (4 * max 1 (len indices)) (\is ->
+    let u1 = Ffi.writeFloats vs 4 floats in
+    let u2 = Ffi.writeInts is 4 indices in
+    call sys 24 [Arg.Ptr vs, Arg.Int (len vertices), Arg.Ptr is, Arg.Int (len indices)] % 4294967296))
+
+-- An image by name: a PNG or JPEG in the game's assets, with "?linear" after it for data
+-- such as a normal map. It draws as plain white until it has arrived.
+@pub fun imageLoad (sys : System) (name : String) : Int ! { Process | e } =
+  Ffi.withText name (\t n -> call sys 41 [Arg.Ptr t, Arg.Int n] % 4294967296)
+
+-- An entity's textures: its colour, its normals, and how metallic and rough; 0 leaves one
+-- unset.
+@pub fun setTextures (sys : System) (entity : Int) (color : Int) (normal : Int) (metallicRoughness : Int) : () ! { Process | e } =
+  callUnit sys 42 [Arg.Int entity, Arg.Int color, Arg.Int normal, Arg.Int metallicRoughness]
+
+-- A glTF model by name, at a place: one new entity, with one below it for each part, which
+-- appear when the system returns.
+@pub fun spawnModel (sys : System) (name : String) (at : (Float, Float, Float)) (rotation : (Float, Float, Float, Float)) (scale : (Float, Float, Float)) : Int ! { Process | e } =
+  Ffi.withText name (\t n -> withTransform at rotation scale (\x -> call sys 43 [Arg.Ptr t, Arg.Int n, Arg.Ptr x]))
+
+-- A prefab by name (a scene file in the game's assets, or a scene's name), at a place: one
+-- new entity, with the prefab's entities below it from the next frame.
+@pub fun spawnPrefab (sys : System) (name : String) (at : (Float, Float, Float)) (rotation : (Float, Float, Float, Float)) (scale : (Float, Float, Float)) : Int ! { Process | e } =
+  Ffi.withText name (\t n -> withTransform at rotation scale (\x -> call sys 46 [Arg.Ptr t, Arg.Int n, Arg.Ptr x]))
 
 -- ---------------------------------------------------------------------------------------
 -- Signals
@@ -622,6 +694,24 @@ fun defining sys name op param inputs =
 
 -- Makes an entity the ears sources are heard by.
 @pub fun setListener (sys : System) (entity : Int) : () ! { Process | e } = callUnit sys 59 [Arg.Int entity]
+
+-- A sound by name: a WAV or Ogg Vorbis file in the game's assets. 0 if it cannot be read.
+@pub fun soundLoad (sys : System) (name : String) : Int ! { Process | e } =
+  Ffi.withText name (\t n -> call sys 54 [Arg.Ptr t, Arg.Int n] % 4294967296)
+
+-- Plays a sound at once: how loud (1 as it was made), to which side (-1 the left ear to 1),
+-- at what pitch (1 as it was made, 2 an octave up), and whether it begins again when it ends.
+@pub fun playSoundWith (sys : System) (sound : Int) (volume : Float) (pan : Float) (pitch : Float) (looping : Bool) : Int ! { Process | e } =
+  call sys 55 [Arg.Int sound, Arg.Float32 volume, Arg.Float32 pan, Arg.Float32 pitch, Arg.Int (if looping then 1 else 0)]
+
+-- Stops what is playing, when the system returns.
+@pub fun stopSound (sys : System) (voice : Int) : () ! { Process | e } = callUnit sys 56 [Arg.Int voice]
+
+-- Whether it is still playing.
+@pub fun soundPlaying (sys : System) (voice : Int) : Bool ! { Process | e } = call sys 57 [Arg.Int voice] % 4294967296 != 0
+
+-- How loud everything is: 1 as it is, 0 silent.
+@pub fun setMasterVolume (sys : System) (volume : Float) : () ! { Process | e } = callUnit sys 60 [Arg.Float32 volume]
 
 -- ---------------------------------------------------------------------------------------
 -- Input. "Down" is held now; "pressed" and "released" are true only on the frame the key or
@@ -757,3 +847,149 @@ fun defining sys name op param inputs =
 fun known (block : Int) : Maybe Int =
   let kind = block % 4294967296 in
   if kind == 4294967295 then None else Just kind
+
+-- ---------------------------------------------------------------------------------------
+-- One entity of a query, by itself
+
+-- The pointers to an entity's components, as query `q` of the system would give them, if
+-- it matches the query.
+@pub fun getIn (sys : System) (q : Int) (entity : Int) (count : Int) : Maybe [Ptr] ! { Process | e } =
+  Ffi.withBuffer (8 * max 1 count) (\found ->
+    if call sys 15 [Arg.Int q, Arg.Int entity, Arg.Ptr found] % 256 == 0 then None
+    else Just (map (\i -> pointerAt found i) (range 0 count)))
+
+-- ---------------------------------------------------------------------------------------
+-- The order of systems (while loading)
+
+-- Has the system of that name run before, or after, another within its stage: another of
+-- this plugin's systems by its name, or anyone's by its full name ("plugin::system", or a
+-- set such as "signals"). Answers 0, or why not as another number.
+@pub fun runBefore (p : Plugin) (name : String) (other : String) : Int ! { Process | e } = ordering p name 0 other
+@pub fun runAfter (p : Plugin) (name : String) (other : String) : Int ! { Process | e } = ordering p name 1 other
+
+fun ordering p name relation other =
+  match p with
+  | Plugin api app _ ->
+      Ffi.withText name (\t n -> Ffi.withText other (\o m ->
+        ok (Ffi.callInt (slot api 52) [Arg.Int app, Arg.Ptr t, Arg.Int n, Arg.Int relation, Arg.Ptr o, Arg.Int m]) % 4294967296))
+
+-- ---------------------------------------------------------------------------------------
+-- Events: values of a fixed size sent by one system and read by others, this frame and the
+-- next. Each system reads each event once.
+
+-- An event type by name, `size` bytes, found by any plugin that knows the name (the engine's
+-- own too, as "mira.Contact"). Its handle, or 0.
+@pub fun registerEvent (p : Plugin) (name : String) (size : Int) : Int ! { Process | e } =
+  match p with
+  | Plugin api app _ -> Ffi.withText name (\t n -> ok (Ffi.callInt (slot api 27) [Arg.Int app, Arg.Ptr t, Arg.Int n, Arg.Int size]) % 4294967296)
+
+-- Sends an event: the bytes at `value`.
+@pub fun sendEvent (sys : System) (event : Int) (value : Ptr) : () ! { Process | e } = callUnit sys 28 [Arg.Int event, Arg.Ptr value]
+
+-- Sends an event that is 32-bit floats, one after another.
+@pub fun sendFloats (sys : System) (event : Int) (xs : [Float]) : () ! { Process | e } =
+  Ffi.withBuffer (4 * max 1 (len xs)) (\v ->
+    let u = Ffi.writeFloats v 4 xs in
+    sendEvent sys event v)
+
+-- Sends an event that is 32-bit integers, one after another.
+@pub fun sendInts (sys : System) (event : Int) (ns : [Int]) : () ! { Process | e } =
+  Ffi.withBuffer (4 * max 1 (len ns)) (\v ->
+    let u = Ffi.writeInts v 4 ns in
+    sendEvent sys event v)
+
+-- Works something out from each event of a type this system has not read yet, as `foldIn`
+-- does from entities: `body` is given what it has so far and a pointer to the event, `size`
+-- bytes.
+@pub fun foldEvents (sys : System) (event : Int) (size : Int) (start : a) (body : a -> Ptr -> a ! { Process | e }) : a ! { Process | e } =
+  Ffi.withBuffer (max 1 size) (\v -> eventsFrom sys event v start body)
+
+fun eventsFrom sys event v so body =
+  if call sys 29 [Arg.Int event, Arg.Ptr v] % 256 == 0 then so
+  else eventsFrom sys event v (body so v) body
+
+@pub fun forEachEvent (sys : System) (event : Int) (size : Int) (body : Ptr -> () ! { Process | e }) : () ! { Process | e } =
+  foldEvents sys event size () (\u v -> body v)
+
+-- Two colliders touched in a physics step: the engine's "mira.Contact", of `contactSize`
+-- bytes. The two entities, where, the way from the first toward the second, and how hard
+-- (in newton-seconds).
+@pub data Contact = Contact Int Int (Float, Float, Float) (Float, Float, Float) Float
+
+@pub def contactSize : Int = 48
+
+@pub fun contactEvent (p : Plugin) : Int ! { Process | e } = registerEvent p "mira.Contact" contactSize
+
+@pub fun readContact (v : Ptr) : Contact ! { Process | e } =
+  Contact (ok (Ffi.readInt v U64)) (ok (Ffi.readInt (Ffi.offset v 8) U64))
+    (readFloat32 v 4, readFloat32 v 5, readFloat32 v 6) (readFloat32 v 7, readFloat32 v 8, readFloat32 v 9) (readFloat32 v 10)
+
+-- ---------------------------------------------------------------------------------------
+-- Physics, after ``require p "physics"`` where a game is without it.
+
+-- The solid form of a collider, and what its size is.
+-- A sphere: the radius first.
+@pub def colliderSphere : Int = 0
+-- A box: half of its extent along x, y and z.
+@pub def colliderBox : Int = 1
+-- An upright capsule: the radius, then the height.
+@pub def colliderCapsule : Int = 2
+-- Everything below the entity's position.
+@pub def colliderGround : Int = 3
+
+-- Makes an entity solid: its shape and size, its friction, how much of a bounce it keeps (0
+-- to 1), and whether it only notices what overlaps it (a sensor) and blocks nothing.
+@pub fun setCollider (sys : System) (entity : Int) (shape : Int) (size : (Float, Float, Float)) (friction : Float) (restitution : Float) (sensor : Bool) : () ! { Process | e } =
+  let (a, b, c) = size in
+  Ffi.withBuffer 28 (\d ->
+    let u1 = Ffi.writeInt d U32 shape in
+    let u2 = Ffi.writeFloats (Ffi.offset d 4) 4 [a, b, c, friction, restitution] in
+    let u3 = Ffi.writeInt (Ffi.offset d 24) U32 (if sensor then 1 else 0) in
+    callUnit sys 34 [Arg.Int entity, Arg.Ptr d])
+
+-- How a body moves: by gravity, forces and collisions; only by its velocity, pushing and
+-- never pushed; or as its transform is set, pushing and never pushed.
+@pub def bodyDynamic : Int = 0
+@pub def bodyKinematic : Int = 1
+@pub def bodyAnimated : Int = 2
+
+-- Makes an entity with a collider move: how, its mass in kilograms (0 to work it out from
+-- the collider), how it is moving to begin with, and whether it is kept upright.
+@pub fun setBody (sys : System) (entity : Int) (kind : Int) (mass : Float) (velocity : (Float, Float, Float)) (upright : Bool) : () ! { Process | e } =
+  let (x, y, z) = velocity in
+  Ffi.withBuffer 24 (\d ->
+    let u1 = Ffi.writeInt d U32 kind in
+    let u2 = Ffi.writeFloats (Ffi.offset d 4) 4 [mass, x, y, z] in
+    let u3 = Ffi.writeInt (Ffi.offset d 20) U32 (if upright then 1 else 0) in
+    callUnit sys 35 [Arg.Int entity, Arg.Ptr d])
+
+-- A sudden push on a dynamic body, in newton-seconds.
+@pub fun applyImpulse (sys : System) (entity : Int) (impulse : (Float, Float, Float)) : () ! { Process | e } =
+  withVector impulse (\v -> callUnit sys 36 [Arg.Int entity, Arg.Ptr v])
+
+@pub fun setVelocity (sys : System) (entity : Int) (velocity : (Float, Float, Float)) : () ! { Process | e } =
+  withVector velocity (\v -> callUnit sys 37 [Arg.Int entity, Arg.Ptr v])
+
+-- A body's velocity, if the entity has a body.
+@pub fun velocity (sys : System) (entity : Int) : Maybe (Float, Float, Float) ! { Process | e } =
+  withVector (0.0, 0.0, 0.0) (\v ->
+    if call sys 38 [Arg.Int entity, Arg.Ptr v] % 256 == 0 then None
+    else Just (readFloat32 v 0, readFloat32 v 1, readFloat32 v 2))
+
+-- What a ray through the colliders met: the entity, the point, the way the surface faces
+-- there, and how far along the ray.
+@pub data RayHit = RayHit Int (Float, Float, Float) (Float, Float, Float) Float
+
+-- The first collider a ray from `origin` the way of `direction` meets within `reach`, as
+-- things stood after the last physics step.
+@pub fun raycast (sys : System) (origin : (Float, Float, Float)) (direction : (Float, Float, Float)) (reach : Float) : Maybe RayHit ! { Process | e } =
+  withVector origin (\o -> withVector direction (\d -> Ffi.withBuffer 40 (\hit ->
+    if call sys 39 [Arg.Ptr o, Arg.Ptr d, Arg.Float32 reach, Arg.Ptr hit] % 256 == 0 then None
+    else Just (RayHit (ok (Ffi.readInt hit U64)) (readFloat32 hit 2, readFloat32 hit 3, readFloat32 hit 4) (readFloat32 hit 5, readFloat32 hit 6, readFloat32 hit 7) (readFloat32 hit 8)))))
+
+-- Three floats in memory, for `body` to hand the engine.
+fun withVector (v : (Float, Float, Float)) body =
+  let (x, y, z) = v in
+  Ffi.withBuffer 12 (\p ->
+    let u = Ffi.writeFloats p 4 [x, y, z] in
+    body p)

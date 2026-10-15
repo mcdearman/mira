@@ -275,6 +275,86 @@ MIRA_EXPORT int32_t mira_plugin_load(const MiraApi *a, MiraApp *app) {
 }
 "#;
 
+/// The scene plugin in Meadow, with mira's bindings: and besides, a mesh made from its
+/// vertices and a material, on the ground, and its systems put in order.
+const MEADOW_SCENE: &str = r#"
+use Mira as M
+use Mira (Contact, RayHit)
+use Std.Num.Float as F
+
+-- What is kept: the transform, test.Report (the contacts, the speed, the ray and the ticks
+-- sent), where the ball is kept, and the two events.
+@export
+fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
+  M.load api app (\p ->
+    let transform = M.lookupComponent p "mira.Transform" in
+    let report = M.registerComponent p "test.Report" 16 4 in
+    let ball = M.state p "test.ball" 8 8 in
+    let tick = M.registerEvent p "test.Tick" 4 in
+    let contact = M.contactEvent p in
+    if tick == 0 or contact == 0 then 0 - 2
+    -- The same name with another size would make the two sides misread each other.
+    else if M.registerEvent p "test.Tick" 64 != 0 then 0 - 3
+    else
+      let u = M.keep p [transform, report, M.address ball, tick, contact] in
+      let added = [M.addSystem p "setup" M.startup "scene_setup" [], M.addSystem p "observe" M.update "scene_observe" [M.writes report], M.addSystem p "later" M.update "scene_later" []] in
+      if added == [0, 0, 0] and M.runAfter p "later" "observe" == 0 and M.runBefore p "nothing" "observe" != 0 then 0 else 0 - 4)
+
+@export
+fun scene_setup (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let transform = M.kept sys 0 in
+  let camera = M.spawn sys in
+  let u1 = M.insertAt sys camera transform (0.0, 0.0, 0.0) in
+  let u2 = M.setCameraWith sys camera 1.0 0.5 True in
+  let sun = M.spawn sys in
+  let u3 = M.insertAt sys sun transform (0.0, 0.0, 0.0) in
+  let u4 = M.setLightWith sys sun (1.0, 0.5, 0.25) 4.0 False in
+  let u5 = M.setAmbient sys (0.1, 0.2, 0.3) 0.7 in
+  let u6 = M.setWindowTitle sys "no window here; must not crash" in
+
+  let ground = M.spawn sys in
+  let u7 = M.insertAt sys ground transform (0.0, 0.0, 0.0) in
+  let u8 = M.setCollider sys ground M.colliderGround (0.0, 0.0, 0.0) 0.5 0.0 False in
+  let triangle = M.meshCreate sys [((0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0)), ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (1.0, 0.0)), ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0), (0.0, 1.0))] [0, 2, 1] in
+  let u9 = M.setMesh sys ground triangle in
+  let u10 = M.setMaterial sys ground (0.2, 0.4, 0.6, 1.0) (0.0, 0.5, 0.0) 0.3 1.0 in
+
+  let ball = M.spawn sys in
+  let u11 = M.writeInt64 (M.pointer (M.kept sys 2)) ball in
+  let u12 = M.insertAt sys ball transform (0.0, 5.0, 0.0) in
+  let u13 = M.insertFloats sys ball (M.kept sys 1) [0.0, 0.0, 0.0, 0.0] in
+  let u14 = M.setCollider sys ball M.colliderSphere (0.5, 0.0, 0.0) 0.5 0.0 False in
+  M.setBody sys ball M.bodyDynamic 2.0 (0.0, 0.0, 0.0) False
+
+@export
+fun scene_observe (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let ball = M.readInt64 (M.pointer (M.kept sys 2)) in
+  M.forEach1 sys (\e report ->
+    let sent = M.readInt32At report 3 in
+    let u1 = M.sendInts sys (M.kept sys 3) [sent] in
+    let u2 = M.writeInt32At report 3 (sent + 1) in
+    let touches =
+      M.foldEvents sys (M.kept sys 4) M.contactSize 0 (\n v ->
+        match M.readContact v with
+        | Contact a b point normal impulse -> if a == ball or b == ball then n + 1 else n)
+    in
+    let u3 = M.writeInt32At report 0 (M.readInt32At report 0 + touches) in
+    let speed = (match M.velocity sys e with | Just (x, y, z) -> F.abs y | None -> 0.0 -. 1.0) in
+    let u4 = M.writeFloat32 report 1 speed in
+    let ray =
+      (match M.raycast sys (0.0, 10.0, 0.0) (0.0, 0.0 -. 3.0, 0.0) 100.0 with
+       | Just (RayHit hit point normal distance) -> if hit == ball then distance else 0.0 -. 1.0
+       | None -> 0.0 -. 1.0)
+    in
+    let u5 = M.writeFloat32 report 2 ray in
+    if M.keyPressed sys M.keyEnter then M.applyImpulse sys e (0.0, 20.0, 0.0) else ())
+
+@export
+fun scene_later (s : Int) (user : Int) : () ! Process = ()
+"#;
+
 /// A separate plugin that knows nothing of the first but the name and size of its event.
 const LISTENER: &str = r#"
 typedef struct { int32_t n; } Tick;
@@ -1073,6 +1153,37 @@ fn only<T: Copy>(app: &App, component: &str) -> (Entity, T) {
 
 #[test]
 fn a_plugin_can_own_the_scene_use_physics_and_talk_to_another_plugin() {
+    let workspace = Workspace::new("scene");
+    let scene = workspace.compile("scene", SCENE, &["ABI=MIRA_ABI_VERSION"]);
+    play_the_scene(&workspace, |app| {
+        app.load_native_plugin(&scene).unwrap();
+    });
+}
+
+/// The same, with the scene plugin in Meadow; and the mesh and material it gives the ground.
+#[test]
+fn a_meadow_plugin_can_own_the_scene_use_physics_and_talk_to_another_plugin() {
+    use crate::{assets::Assets, render::{Material, Mesh, Mesh3d}};
+    if !have_meadowboot() {
+        return;
+    }
+    let workspace = Workspace::new("meadow-scene");
+    let scripts = workspace.dir.join("scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("Scene.mw"), MEADOW_SCENE).unwrap();
+    let mut app = play_the_scene(&workspace, |app| {
+        app.init_resource::<Assets<Mesh>>();
+        app.load_scripts(&scripts).unwrap();
+        assert!(app.script_problems().next().is_none(), "{:?}", app.script_problems().next());
+    });
+    let (mesh, material) = app.world.query::<(&Mesh3d, &Material)>().iter().map(|(mesh, material)| (*mesh, *material)).next().expect("the ground has a mesh and a material");
+    assert_eq!(app.world.resource::<Assets<Mesh>>().get(mesh.0).map(|mesh| mesh.vertices.len()), Some(3), "the triangle");
+    assert_eq!((material.color.b, material.emissive.g, material.roughness, material.metallic), (0.6, 0.5, 0.3, 1.0));
+}
+
+/// Plays the scene plugin, loaded by load_scene, with the listener beside it, and checks
+/// what it did.
+fn play_the_scene(workspace: &Workspace, load_scene: impl FnOnce(&mut App)) -> App {
     use crate::{
         input::{ButtonInput, InputPlugin, KeyCode},
         physics::PhysicsPlugin,
@@ -1090,8 +1201,6 @@ fn a_plugin_can_own_the_scene_use_physics_and_talk_to_another_plugin() {
         ticks_sent: i32,
     }
 
-    let workspace = Workspace::new("scene");
-    let scene = workspace.compile("scene", SCENE, &["ABI=MIRA_ABI_VERSION"]);
     let listener = workspace.compile("listener", LISTENER, &["ABI=MIRA_ABI_VERSION"]);
 
     let mut app = app();
@@ -1099,7 +1208,7 @@ fn a_plugin_can_own_the_scene_use_physics_and_talk_to_another_plugin() {
     app.world
         .resource_mut::<Time>()
         .set_fixed_step(Some(Duration::from_secs_f64(1.0 / 60.0)));
-    app.load_native_plugin(&scene).unwrap();
+    load_scene(&mut app);
     app.load_native_plugin(&listener).unwrap();
     for _ in 0..180 {
         app.update();
@@ -1139,6 +1248,7 @@ fn a_plugin_can_own_the_scene_use_physics_and_talk_to_another_plugin() {
         app.update();
     }
     assert!(position(&app, ball).y > 1.0, "the ball was knocked upward");
+    app
 }
 
 /// An app with what a plugin needs to load files, rooted at a folder with a picture and a
