@@ -18,7 +18,7 @@ env:
   # The Haskell plugin tests must run here, not skip.
   MIRA_REQUIRE_GHC: 1
   # The MeadowBoot the Meadow scripts are built with, where there is one (see the jobs).
-  MEADOWBOOT_RELEASE: meadowboot-v0.1.0-pre.1
+  MEADOWBOOT_RELEASE: meadowboot-v0.1.0-pre.2
 
 jobs:
   check:
@@ -76,7 +76,6 @@ jobs:
       with:
         ghc-version: '9.12.2'
         enable-stack: false
-    # The archive's paths are written with backslashes, which Git's unzip refuses.
     - name: MeadowBoot
       shell: pwsh
       env:
