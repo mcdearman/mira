@@ -1647,6 +1647,112 @@ fn a_plugin_makes_sounds_plays_them_and_puts_them_in_the_world() {
     assert_eq!(said(&app, "noisy.playing"), 0.0);
     assert_eq!(app.world.resource::<Audio>().playing(), 1);
 }
+/// What a Meadow script does with files and sounds, through mira's bindings: an image on a
+/// cube, a model and a prefab, one entity found by itself, sounds loaded, played, stopped.
+/// What it found it says as signals.
+const MEADOW_FILES: &str = r#"
+use Mira as M
+use Mira (System)
+
+-- What is kept: the transform, then where the model and the note are kept.
+@export
+fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
+  M.load api app (\p ->
+    let transform = M.lookupComponent p "mira.Transform" in
+    let hen = M.state p "files.hen" 8 8 in
+    let note = M.state p "files.note" 8 8 in
+    let frames = M.state p "files.frames" 4 4 in
+    let u = M.keep p [transform, M.address hen, M.address note, M.address frames] in
+    let added = [M.addSystem p "setup" M.startup "files_setup" [], M.addSystemWith p "later" M.update "files_later" [[], [M.reads transform]]] in
+    if added == [0, 0] then 0 else 0 - 4)
+
+fun say (sys : System) (name : String) (so : Bool) : () ! Process = M.setSignalNumber sys name (if so then 1.0 else 0.0)
+
+@export
+fun files_setup (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let transform = M.kept sys 0 in
+  let sword = M.spawn sys in
+  let u1 = M.insertAt sys sword transform (0.0, 0.0, 0.0) in
+  let u2 = M.setMesh sys sword (M.meshCube sys 1.0) in
+  let tile = M.imageLoad sys "tile.png" in
+  let u3 = say sys "files.one_image" (tile != 0 and tile == M.imageLoad sys "tile.png") in
+  let u4 = M.setTextures sys sword tile 0 0 in
+  let hen = M.spawnModel sys "hen.glb" (5.0, 0.0, 0.0) M.unturned (1.0, 1.0, 1.0) in
+  let u5 = M.writeInt64 (M.pointer (M.kept sys 1)) hen in
+  let camp = M.spawnPrefab sys "camp.json" (5.0, 0.0, 0.0) M.unturned (1.0, 1.0, 1.0) in
+  let u6 = say sys "files.missing_sound" (M.soundLoad sys "no/such/sound.wav" == 0) in
+  let tone = M.soundTone sys 440.0 0.5 in
+  let note = M.playSoundWith sys tone 0.5 0.0 1.0 True in
+  let u7 = M.writeInt64 (M.pointer (M.kept sys 2)) note in
+  let u8 = say sys "files.began" (M.soundPlaying sys note) in
+  M.setMasterVolume sys 0.25
+
+@export
+fun files_later (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let frames = M.pointer (M.kept sys 3) in
+  let n = M.readInt32 frames + 1 in
+  let u1 = M.writeInt32 frames n in
+  let note = M.readInt64 (M.pointer (M.kept sys 2)) in
+  let u2 = (if n == 3 then M.stopSound sys note else ()) in
+  let u3 = say sys "files.playing" (M.soundPlaying sys note) in
+  -- The model, found by itself in the system's second query, once it is there.
+  let hen = M.readInt64 (M.pointer (M.kept sys 1)) in
+  let u4 = (match M.getIn1 sys 1 hen with | Just place -> M.setSignalNumber sys "files.hen_x" (M.readFloat32 place 0) | None -> ()) in
+  if M.keyPressed sys M.keyBackspace then M.despawnTree sys hen else ()
+"#;
+
+#[test]
+fn a_meadow_script_loads_files_finds_an_entity_and_plays_and_stops_sounds() {
+    use crate::{
+        audio::{Audio, SilentAudioPlugin},
+        input::{ButtonInput, KeyCode},
+        render::{Material, Mesh3d},
+        transform::Parent,
+    };
+    if !have_meadowboot() {
+        return;
+    }
+    let workspace = Workspace::new("meadow-files");
+    let mut app = app_with_assets(&workspace);
+    app.add_plugins(SilentAudioPlugin);
+    let scripts = workspace.dir.join("scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("Files.mw"), MEADOW_FILES).unwrap();
+    app.load_scripts(&scripts).unwrap();
+    assert!(app.script_problems().next().is_none(), "{:?}", app.script_problems().next());
+    let said = |app: &App, what: &str| app.world.resource::<crate::signal::Signals>().number(what);
+    for _ in 0..3 {
+        app.update();
+    }
+    for what in ["files.one_image", "files.missing_sound", "files.began"] {
+        assert_eq!(said(&app, what), 1.0, "{what}");
+    }
+    assert_eq!(said(&app, "files.hen_x"), 5.0, "the model, found by itself");
+    assert_eq!(app.world.resource::<Audio>().master_volume(), 0.25);
+    // The tile on the cube, the model's parts and the prefab's tents.
+    let drawn: Vec<(Mesh3d, Material)> = app.world.query::<(&Mesh3d, &Material)>().iter().map(|(mesh, material)| (*mesh, *material)).collect();
+    let server = app.world.resource::<crate::asset_server::AssetServer>();
+    let on_the_cube = drawn.iter().find(|(mesh, _)| server.name_of(mesh.0) == Some("shape:cube:1")).and_then(|(_, material)| material.base_color_texture);
+    assert_eq!(on_the_cube.and_then(|texture| server.name_of(texture)), Some("tile.png"), "the image is on the cube");
+    let hen_parts = |app: &mut App| app.world.query::<(Entity, &Parent, &Mesh3d)>().iter().count();
+    assert!(hen_parts(&mut app) > 0, "the model's parts");
+    let tents = app.world.query::<&crate::prefab::PrefabInstance>().iter().map(|instance| instance.entities().len()).next();
+    assert_eq!(tents, Some(2), "the prefab's two tents");
+    // Stopped on the script's third frame: so it says, the frame after it stopped.
+    for _ in 0..2 {
+        app.update();
+    }
+    assert_eq!(said(&app, "files.playing"), 0.0);
+    // And the model, with all its parts, cleared away on a key.
+    app.world.resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::Backspace);
+    for _ in 0..2 {
+        app.update();
+    }
+    assert_eq!(hen_parts(&mut app), 0, "the model and its parts are gone");
+}
+
 /// The counter (docs/BINDINGS.md) as a Meadow script, written with mira's Meadow bindings.
 const MEADOW_COUNTER: &str = r#"
 -- mira's counter plugin (docs/BINDINGS.md), written with mira's Meadow bindings.

@@ -254,9 +254,9 @@ with any number of queries and their order, events (the engine's contacts among 
 transforms and the vectors and rotations to work them out, input and the cursor, meshes
 (shapes, or from vertices), materials and textures, cameras, lights, parents, models and
 prefabs, physics, signals and their rules, sound, and voxels. Each is a call or two over
-the table, named as the header names it. A test runs the C scene plugin's checks (physics,
-contacts, events between plugins) against a Meadow port of it; images, models, prefabs and
-loaded sounds are bound and not yet tested from Meadow.
+the table, named as the header names it. The tests run the C scene plugin's checks (physics,
+contacts, events between plugins) against a Meadow port of it, and a Meadow script loads an
+image, a model and a prefab, finds one entity by itself, and plays and stops sounds.
 
 ## In Haskell
 

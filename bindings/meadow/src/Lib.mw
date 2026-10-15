@@ -858,6 +858,12 @@ fun known (block : Int) : Maybe Int =
     if call sys 15 [Arg.Int q, Arg.Int entity, Arg.Ptr found] % 256 == 0 then None
     else Just (map (\i -> pointerAt found i) (range 0 count)))
 
+-- The same, for a query that reads or writes one component: its pointer.
+@pub fun getIn1 (sys : System) (q : Int) (entity : Int) : Maybe Ptr ! { Process | e } =
+  Ffi.withBuffer 8 (\found ->
+    if call sys 15 [Arg.Int q, Arg.Int entity, Arg.Ptr found] % 256 == 0 then None
+    else Just (pointerAt found 0))
+
 -- ---------------------------------------------------------------------------------------
 -- The order of systems (while loading)
 
