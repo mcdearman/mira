@@ -52,7 +52,7 @@ jobs:
         # say: that path is made Xcode's SDK too.
         ls -l /Library/Developer/CommandLineTools/SDKs/
         sudo ln -sfn "$sdk" /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
-    # Haskell is the default plugin language; its bindings are tested by building and
+    # Haskell is mira's other scripting language; its bindings are tested by building and
     # hot-reloading real plugins.
     - uses: haskell-actions/setup@v2
       with:
@@ -66,7 +66,7 @@ jobs:
       if: runner.os == 'Linux'
       with:
         version: '3.10'
-    # Meadow is the scripting language to be. Its scripts are built with MeadowBoot, from
+    # Meadow is mira's scripting language. Its scripts are built with MeadowBoot, from
     # Meadow's prerelease, and their tests must run here, not skip; it has no macOS build yet.
     - name: MeadowBoot
       if: runner.os == 'Linux'

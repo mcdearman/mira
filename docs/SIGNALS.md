@@ -146,7 +146,21 @@ cargo run --bin mira-debug -- signal_rename name=blue.calm to=blue.quiet
 ## From a plugin
 
 A plugin gives the graph its own facts by setting signals from a system, builds rules on them
-as data, and reads any signal by name:
+as data, and reads any signal by name. In Meadow:
+
+```
+let u1 = M.setSignal sys "blue.contesting" contesting in      -- a fact, from the plugin's own queries
+let u2 = M.defineSignal sys "red.clock.running" M.signalAnd ["red.holds_all", "blue.calm"] in
+let u3 = M.defineSignal sys "red.clock" M.signalTimer ["red.clock.running", "red.clock.reset"] in
+let u4 = M.defineSignal sys "red.wins" M.signalGreaterOrEqual ["red.clock", "win_after"] in
+if M.signalIsTrue sys "red.wins" then announce sys else ()
+```
+
+Each rule is one node: `M.defineSignal` takes how it is worked out (`M.signalAnd`,
+`M.signalOr`, `M.signalNot`, `M.signalTimer`, the comparisons, …) and its inputs by name;
+`M.defineHeldFor` is the one with a number of seconds.
+
+In Haskell:
 
 ```haskell
 addSystem_ app "rules" Update $ \sys -> do
@@ -159,7 +173,7 @@ addSystem_ app "rules" Update $ \sys -> do
   when won (announce sys)
 ```
 
-In Haskell a rule is an expression: `sig` names a signal, `.&&.`, `.||.`, `notS` and the
+In Haskell a rule can also be an expression: `sig` names a signal, `.&&.`, `.||.`, `notS` and the
 comparisons (`.<.`, `.>=.`, …) combine them, `+` adds, and `timer`, `timerReset`, `heldFor`,
 `countS` and `selectS` are the rest. `defineRule` turns the expression into nodes, naming its
 parts after the rule (`red.clock#1`, …), so the whole of it shows in the graph and can be
@@ -168,9 +182,11 @@ rewired there. `defineSignal` defines one node at a time, as the other languages
 What a plugin sets with `setSignal` is a fact: a source, as a function the game gives the
 graph is, told what it is each time the plugin works it out. It is not among the rules that
 are kept or written as text. A setting, which is the game's to begin with and anyone's to
-change after, is defined as a rule with no inputs: `defineSignal sys "win_after" (SignalNumber 60) []`
-(`SignalTruth` for a truth; `MIRA_SIGNAL_NUMBER` and `MIRA_SIGNAL_TRUTH` in C). The sacred
-sites are written this way: [`examples/sacred_sites/Sites.hs`](../examples/sacred_sites/Sites.hs).
+change after, is defined as a rule with no inputs: `M.defineNumber sys "win_after" 60.0` in
+Meadow (`M.defineTruth` for a truth), `defineSignal sys "win_after" (SignalNumber 60) []` in
+Haskell (`SignalTruth`), `MIRA_SIGNAL_NUMBER` and `MIRA_SIGNAL_TRUTH` in C. The sacred
+sites are written this way: [`examples/sacred_sites/Sites.mw`](../examples/sacred_sites/Sites.mw),
+and in Haskell [`examples/haskell/sacred_sites/Sites.hs`](../examples/haskell/sacred_sites/Sites.hs).
 
 In C these are `signal_set`, `signal_get` and `signal_define` in `include/mira.h`; in Rust,
 `System::set_signal`, `signal`, `define_signal`. What a plugin sets in one frame the graph has

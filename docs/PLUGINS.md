@@ -207,8 +207,9 @@ and the engine cannot prevent that. Only load plugins you trust.
 
 ## In Meadow
 
-[Meadow](https://github.com/meadow-lang/meadow) is to be mira's scripting language. A Meadow
-script is a `.mw` file in a game's folder, built by the engine as a Haskell one is (see
+[Meadow](https://github.com/meadow-lang/meadow) is mira's scripting language, the one its
+examples and documentation lead with; Haskell is beside it (below). A Meadow script is a
+`.mw` file in a game's folder, built by the engine as a Haskell one is (see
 "A game that is a folder of scripts" below), with mira's bindings:
 [`bindings/meadow`](../bindings/meadow), a package named `Mira`.
 
@@ -236,8 +237,9 @@ nought, say) is told of as any failing system is, and the game goes on. Each sys
 exported function of its own, `(s : Int) (user : Int) : () ! Process`, named when it is
 added; `M.system s user` gives what the calls take. What a plugin's systems need
 from its setting up (the components it registered, a state block) it keeps with `M.keep`
-and reads with `M.kept`. The examples are [`examples/meadow`](../examples/meadow): the sound
-example, and the sacred sites and the voxel world, the same games as their Haskell scripts.
+and reads with `M.kept`. The examples are Meadow scripts: [`examples/sound`](../examples/sound),
+[`examples/sacred_sites`](../examples/sacred_sites) and [`examples/voxel_world`](../examples/voxel_world),
+each also in Haskell under [`examples/haskell`](../examples/haskell).
 A system with more than one query adds it with `M.addSystemWith` and goes through each with
 `M.forEachIn` or `M.foldIn`, by number; a fold is how a system works something out from
 its entities, as the sacred sites' facts are.
@@ -247,7 +249,8 @@ To build Meadow scripts the engine needs MeadowBoot: `MIRA_MEADOWBOOT` saying wh
 ([meadowboot-v0.1.0-pre.2](https://github.com/meadow-lang/meadow/releases/tag/meadowboot-v0.1.0-pre.2),
 for Windows and Linux on x86-64), unpacked anywhere: it finds the `meadow` and `lib/Std`
 beside it. CI tests the Meadow scripts on Linux and Windows with it, and fails if it cannot
-run them; there is no macOS build of it yet. For now the examples are in Haskell as well.
+run them; there is no macOS build of it yet, so on a Mac the Haskell examples are the ones to
+play, and the editor's tests and the hosted game use the Haskell sacred sites everywhere.
 
 The bindings cover the whole of `mira.h`: components (and describing them), state, systems
 with any number of queries and their order, events (the engine's contacts among them),
@@ -260,9 +263,10 @@ image, a model and a prefab, finds one entity by itself, and plays and stops sou
 
 ## In Haskell
 
-Haskell is the language mira's plugin examples and documentation lead with: plugin code is
-type-checked against the components it uses, and the bindings give it no pointers to misuse.
-(The long-term intent is for Meadow to take this place once it is ready.)
+Haskell is mira's other scripting language: plugin code is type-checked against the
+components it uses, and the bindings give it no pointers to misuse. Every example game is
+written in it too ([`examples/haskell`](../examples/haskell)), and the plugins under
+[`plugins`](../plugins) are Haskell, Rust and C.
 
 A plugin is one module that exports its setup function to C as `mira_hs_main`. See
 [`plugins/swirl`](../plugins/swirl/Swirl.hs).
@@ -314,7 +318,8 @@ are set with `setSignal` and rules written as expressions with `defineRule`.
 
 ### A game that is a folder of scripts
 
-A game need be nothing but scripts. Put its Haskell files in a folder and play it:
+A game need be nothing but scripts. Put its scripts in a folder, Meadow's `.mw` files or
+Haskell's `.hs` (or both), and play it:
 
 ```
 cargo run --bin mira-play -- plugins/chase     # the game, in a window
@@ -322,15 +327,15 @@ cargo run --bin mira-play -- examples/sacred_sites --headless   # a game with no
 cargo run -- plugins/chase                     # the game, in the engine app with its tools
 ```
 
-The engine builds each script itself (it needs GHC on the path, and nothing else: the
-bindings are carried inside the engine, and no shell is run), keeps what it builds in
+The engine builds each script itself (it needs MeadowBoot for Meadow and GHC for Haskell,
+and nothing else: the bindings are carried inside the engine, and no shell is run), keeps what it builds in
 `.mira/build` inside the folder, and loads each as a plugin named after its file. Save a
 script while the game runs and it is built again behind the game, which goes on with the
 new one as soon as it is ready, keeping its data. A script saved with a mistake in it
 changes nothing: what the compiler said is logged, and the game carries on with the last
 that built.
 
-From Rust it is `app.load_scripts("folder")`, or `app.load_script("One.hs")`;
+From Rust it is `app.load_scripts("folder")`, or `app.load_script("One.mw")`;
 `app.script_problems()` gives the scripts that do not build as they stand.
 
 ### Built by hand

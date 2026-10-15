@@ -80,8 +80,21 @@ in a test as it does out loud.
 
 ## From a script
 
-The example is a script ([`examples/sound/Sound.hs`](../examples/sound/Sound.hs)), and
-everything above can be done from one:
+The example is a script ([`examples/sound/Sound.mw`](../examples/sound/Sound.mw), and in
+Haskell [`examples/haskell/sound/Sound.hs`](../examples/haskell/sound/Sound.hs)), and
+everything above can be done from one. In Meadow:
+
+```
+let hum = M.soundTone sys 110.0 2.0 in               -- or: M.soundLoad sys "sounds/hum.ogg"
+let u1 = M.setSoundSource sys ball hum 0.6 12.0 True in  -- from where the ball is, within 12 metres
+let u2 = M.setListener sys eye in                    -- the camera is the ears
+let voice = M.playSound sys (M.soundTone sys 440.0 0.22) 0.5 in   -- at once, not from anywhere
+let still = M.soundPlaying sys voice in
+let u3 = M.stopSound sys voice in
+M.setMasterVolume sys 0.5
+```
+
+In Haskell:
 
 ```haskell
 hum <- soundTone sys 110 2                     -- or: loadSound sys "sounds/hum.ogg"

@@ -1,9 +1,9 @@
 -- Sound, in Meadow: a rising scale, a note at a time, and a ball that hums as it goes round you.
 --
---   cargo run --bin mira-play -- examples/meadow/sound
+--   cargo run --bin mira-play -- examples/sound
 --
 -- The whole example is this file: the engine builds it with MeadowBoot, and builds it again
--- when it is saved. The same game in Haskell is examples/sound/Sound.hs.
+-- when it is saved. The same game in Haskell is examples/haskell/sound/Sound.hs.
 
 use Mira as M
 use Std.Num.Float as F

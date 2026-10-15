@@ -1910,7 +1910,7 @@ fn the_meadow_sound_example_plays_from_its_script() {
         return;
     }
     let workspace = Workspace::new("meadow-sound");
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/meadow/sound/Sound.mw");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sound/Sound.mw");
     std::fs::copy(script, workspace.dir.join("Sound.mw")).unwrap();
     let mut app = app();
     app.add_plugins(SilentAudioPlugin).init_resource::<Assets<Mesh>>();
@@ -2011,7 +2011,7 @@ fn the_sound_example_plays_from_its_script() {
         return;
     }
     let workspace = Workspace::new("sound-example");
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sound/Sound.hs");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/haskell/sound/Sound.hs");
     std::fs::copy(script, workspace.dir.join("Sound.hs")).unwrap();
 
     let mut app = app();
@@ -2042,7 +2042,7 @@ fn the_sound_example_plays_from_its_script() {
 #[test]
 fn the_sacred_sites_play_from_their_script() {
     if have_ghc() {
-        play_the_sacred_sites("examples/sacred_sites/Sites.hs", "sites-example");
+        play_the_sacred_sites("examples/haskell/sacred_sites/Sites.hs", "sites-example");
     }
 }
 
@@ -2050,7 +2050,7 @@ fn the_sacred_sites_play_from_their_script() {
 #[test]
 fn the_sacred_sites_play_from_their_meadow_script() {
     if have_meadowboot() {
-        play_the_sacred_sites("examples/meadow/sacred_sites/Sites.mw", "meadow-sites-example");
+        play_the_sacred_sites("examples/sacred_sites/Sites.mw", "meadow-sites-example");
     }
 }
 
@@ -2105,7 +2105,7 @@ fn play_the_sacred_sites(script: &str, workspace: &str) {
 #[test]
 fn the_voxel_world_plays_from_its_script() {
     if have_ghc() {
-        play_the_voxel_world("examples/voxel_world/World.hs", "voxel-example");
+        play_the_voxel_world("examples/haskell/voxel_world/World.hs", "voxel-example");
     }
 }
 
@@ -2113,7 +2113,7 @@ fn the_voxel_world_plays_from_its_script() {
 #[test]
 fn the_voxel_world_plays_from_its_meadow_script() {
     if have_meadowboot() {
-        play_the_voxel_world("examples/meadow/voxel_world/World.mw", "meadow-voxel-example");
+        play_the_voxel_world("examples/voxel_world/World.mw", "meadow-voxel-example");
     }
 }
 

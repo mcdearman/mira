@@ -1,8 +1,8 @@
 -- A world of blocks to fly about in, break and build: the voxel terrain, made and streamed
--- around you, with a ring of spinning cubes above it and balls to throw at it. The same game
--- as examples/voxel_world, in Meadow.
+-- around you, with a ring of spinning cubes above it and balls to throw at it. The same game in
+-- Haskell is examples/haskell/voxel_world.
 --
--- > cargo run --bin mira-play -- examples/meadow/voxel_world
+-- > cargo run --bin mira-play -- examples/voxel_world
 --
 -- Click to take the mouse, and look about with it. WASD to fly, Space and Shift to rise and
 -- fall, Control to go faster. Left click breaks the block you look at, right click puts one

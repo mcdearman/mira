@@ -3,11 +3,11 @@
 -- | The sacred sites of Age of Empires 4, as signals: a small game seen from above through an
 -- orthographic camera, to watch from outside while it runs.
 --
--- > cargo run --bin mira-play -- examples/sacred_sites              # the game
--- > cargo run --bin mira-play -- examples/sacred_sites --headless   # the same with no window
+-- > cargo run --bin mira-play -- examples/haskell/sacred_sites              # the game
+-- > cargo run --bin mira-play -- examples/haskell/sacred_sites --headless   # the same with no window
 -- > cargo run --bin mira-debug -- watch           # in another terminal: the signal graph, live
 -- > cargo run --bin mira-debug -- signal_set name=win_after value=20
--- > cargo run --bin mira-play -- examples/sacred_sites --rules sites.rules   # the rules kept as text
+-- > cargo run --bin mira-play -- examples/haskell/sacred_sites --rules sites.rules   # the rules kept as text
 --
 -- Red holds both sites, and wins when its clock reaches @win_after@. The clock stops while a
 -- blue unit stands on any site red holds. Two blue scouts wander on and off the sites; no

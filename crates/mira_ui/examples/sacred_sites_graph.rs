@@ -22,8 +22,8 @@ use mira_ui::{
 };
 
 /// The game itself is a script, built and loaded as the game begins: see
-/// `examples/sacred_sites/Sites.hs`.
-const GAME: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/sacred_sites");
+/// `examples/haskell/sacred_sites/Sites.hs`.
+const GAME: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/haskell/sacred_sites");
 
 /// The round's controls. What it shows is copied in from the game every frame; what the
 /// player does with it is kept as requests for the game to carry out.
