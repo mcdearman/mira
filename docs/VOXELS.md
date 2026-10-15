@@ -71,7 +71,19 @@ exactly 32,768 blocks. A chunk of a single block is one run.
 ## From a script
 
 A game of scripts asks for voxels as it loads, and then reads and changes the world by
-place, as [`examples/voxel_world/World.hs`](../examples/voxel_world/World.hs) does:
+place, as [`examples/voxel_world/World.mw`](../examples/voxel_world/World.mw) does. In Meadow:
+
+```
+let u = M.require p "voxels" in                     -- in mira_plugin_load
+let u1 = M.setChunkViewer sys eye in                -- the world is made around this entity
+let stone = M.voxelBlock sys "stone" in             -- Just a kind, by name: air, grass, dirt, stone, sand
+let hit = M.voxelRaycast sys eyeAt looking 8.0 in   -- Just (VoxelHit block face distance kind)
+let u2 = M.setVoxel sys (x, y, z) M.air in          -- or a kind, to put one there
+let solid = M.voxelSolid sys (x, y, z) in
+let kind = M.voxel sys (x, y, z) in                 -- None where the world is not made yet
+```
+
+In Haskell ([`examples/haskell/voxel_world/World.hs`](../examples/haskell/voxel_world/World.hs)):
 
 ```haskell
 require app "voxels"                            -- in the plugin's setup, the first time it loads

@@ -90,12 +90,14 @@ prints the same.
 
 The counter passes in Meadow too, written by hand over `Std.Ffi` and again with mira's
 Meadow bindings ([`bindings/meadow`](../bindings/meadow)): the second is about forty lines,
-and the games in [`examples/meadow`](../examples/meadow) are written with the same bindings.
+and the example games ([`examples/sound`](../examples/sound),
+[`examples/sacred_sites`](../examples/sacred_sites), [`examples/voxel_world`](../examples/voxel_world))
+are written with the same bindings.
 
 The rest of the table follows the same patterns. [`Mira.hs`](../bindings/haskell/Mira.hs)
 is a whole binding, for Haskell, written over the C glue in
 [`cbits/mira_hs.c`](../bindings/haskell/cbits/mira_hs.c); its examples are
-[`examples/sound`](../examples/sound) and [`examples/sacred_sites`](../examples/sacred_sites).
+[`examples/haskell`](../examples/haskell), the same games.
 For the engine to build a language's scripts itself, as it does Haskell's
 (`App::load_scripts`), it needs one command that turns a source file into a library at a
 path it names, with a non-zero exit and readable errors when it cannot.

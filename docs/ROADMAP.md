@@ -562,10 +562,13 @@ depends on resolution rather than scene size.
 - [x] Meadow scripts: mira's bindings for Meadow (`bindings/meadow`), `.mw` files built by
       the engine with MeadowBoot, and the sound example in Meadow (`examples/meadow/sound`)
 - [x] Meadow: a system that fails is reported and the game goes on; the sacred sites and
-      the voxel world in Meadow (`examples/meadow`), played by the same tests as in Haskell
+      the voxel world in Meadow, played by the same tests as in Haskell
 - [x] Meadow scripts with the whole interface (physics, events, images, models, system
       order), and MeadowBoot installed in CI (Meadow's prerelease, on Linux and Windows)
-- [ ] Meadow the language the examples and the docs lead with, Haskell beside it
+- [x] Meadow the language the examples and the docs lead with, Haskell beside it: the games
+      are Meadow scripts (`examples/sound`, `sacred_sites`, `voxel_world`), each also in
+      Haskell (`examples/haskell`), which the editor's tests and the hosted game use, as macOS
+      has no MeadowBoot yet
 - [x] Scripts built by the engine itself, so that no shell is needed on any system: a game
       is a folder of scripts, built, loaded, and built again when one is saved
       (`mira-play <folder>`; see [PLUGINS.md](PLUGINS.md))

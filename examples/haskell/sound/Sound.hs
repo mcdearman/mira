@@ -2,8 +2,8 @@
 
 -- | Sound: a rising scale, a note at a time, and a ball that hums as it goes round you.
 --
--- > cargo run --bin mira-play -- examples/sound
--- > MIRA_AUDIO=0 cargo run --bin mira-play -- examples/sound    # the same, with no sound out
+-- > cargo run --bin mira-play -- examples/haskell/sound
+-- > MIRA_AUDIO=0 cargo run --bin mira-play -- examples/haskell/sound    # the same, with no sound out
 --
 -- The whole example is this file: the engine builds it, and builds it again when it is
 -- saved. Change a pitch below while it plays and the hum changes.

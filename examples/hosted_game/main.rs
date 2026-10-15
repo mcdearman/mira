@@ -13,7 +13,7 @@
 use mira::{prelude::*, render::Screenshot};
 
 /// The game that is hosted: the sacred sites, which are a folder of scripts.
-const GAME: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/sacred_sites");
+const GAME: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/haskell/sacred_sites");
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();

@@ -19,19 +19,21 @@ cargo run -- chase scoreboard     # the app, on a game made of plugins
 
 The game is in one panel; around it are its entities as a tree, an inspector that edits the
 chosen one, its signals, and a conversation with an agent. See [docs/EDITOR.md](docs/EDITOR.md).
-Everything else here is an example. Most are games written as scripts, played with the
-player, which builds them (it needs GHC):
+Everything else here is an example. Most are games written as scripts in Meadow, mira's
+scripting language, played with the player, which builds them. It needs MeadowBoot, from
+Meadow's [prerelease](https://github.com/meadow-lang/meadow/releases/tag/meadowboot-v0.1.0-pre.2)
+for Windows and Linux, and clang (see [docs/PLUGINS.md](docs/PLUGINS.md)):
 
 ```
 cargo run --release --bin mira-play -- examples/voxel_world
 ```
 
+Each game is also written in Haskell, under `examples/haskell`, played the same way with GHC
+(`mira-play -- examples/haskell/voxel_world`).
+
 In the voxel world, click to capture the mouse, then: WASD / Space / Shift to fly (Ctrl to go fast), left click to
 break a block, right click to place one (1-4 picks which), F to throw a ball, Esc to release
-the mouse and again to quit. The whole game is [`examples/voxel_world/World.hs`](examples/voxel_world/World.hs),
-and the same game in Meadow, mira's scripting language to be, is
-[`examples/meadow/voxel_world/World.mw`](examples/meadow/voxel_world/World.mw) (it needs
-MeadowBoot; see [docs/PLUGINS.md](docs/PLUGINS.md)).
+the mouse and again to quit. The whole game is [`examples/voxel_world/World.mw`](examples/voxel_world/World.mw).
 
 ## Demos
 
@@ -85,7 +87,7 @@ plugins/swirl/build.sh && cargo build -p wave && plugins/pulse/build.sh
 cargo run --example plugins
 ```
 
-Then edit `plugins/swirl/Swirl.hs` (Haskell, the default plugin language), `plugins/wave/src/lib.rs`
+Then edit `plugins/swirl/Swirl.hs` (Haskell), `plugins/wave/src/lib.rs`
 (Rust) or `plugins/pulse/pulse.c` (C) and rebuild it. Each plugin is optional.
 
 A plugin can be the whole game. `plugins/chase` is a small one in Haskell (WASD to steer,
