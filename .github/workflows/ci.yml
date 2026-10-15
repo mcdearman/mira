@@ -35,6 +35,15 @@ jobs:
       if: runner.os == 'Linux'
       run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev
     - uses: Swatinem/rust-cache@v2
+    # The runner's Command Line Tools have a linker that cannot read their own SDK (macOS 27's
+    # lists an architecture it does not know), so GHC cannot link a plugin with them. Xcode's
+    # tools are a matched set: everything here is built with the newest Xcode instead.
+    - name: Xcode
+      if: runner.os == 'macOS'
+      run: |
+        xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)
+        echo "Building with $xcode"
+        echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
     # Haskell is the default plugin language; its bindings are tested by building and
     # hot-reloading real plugins.
     - uses: haskell-actions/setup@v2
