@@ -1,0 +1,202 @@
+-- The sacred sites of Age of Empires 4, as signals: a small game seen from above through an
+-- orthographic camera, to watch from outside while it runs. The same game as
+-- examples/sacred_sites, in Meadow.
+--
+-- > cargo run --bin mira-play -- examples/meadow/sacred_sites              # the game
+-- > cargo run --bin mira-play -- examples/meadow/sacred_sites --headless   # with no window
+-- > cargo run --bin mira-debug -- watch           # in another terminal: the signal graph, live
+-- > cargo run --bin mira-debug -- signal_set name=win_after value=20
+--
+-- Red holds both sites, and wins when its clock reaches `win_after`. The clock stops while a
+-- blue unit stands on any site red holds. Two blue scouts wander on and off the sites; no
+-- code ever sets the clock or a paused flag. See docs/SIGNALS.md.
+--
+-- On screen: the sites are slabs, red while red's clock runs and amber while a scout is on
+-- one; the bar along the bottom is the clock, filling toward `win_after`. All of it is drawn
+-- from the signals, so what you force or rewire from outside shows at once.
+
+use Mira as M
+use Mira (System)
+use Std.Num.Float as F
+
+-- Which side a unit is on, or holds a site (`sites.Team`, and `sites.Site`'s holder).
+def nobody : Int = 0
+def red : Int = 1
+def blue : Int = 2
+
+def siteRadius : Float = 2.0
+def barLength : Float = 24.0
+
+-- What the systems are kept, by place: the components, and where `sites.announced` is.
+def transformAt : Int = 0
+def teamAt : Int = 1
+def siteAt : Int = 2
+def scoutAt : Int = 3
+def barAt : Int = 4
+def announcedAt : Int = 5
+
+@export
+fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
+  M.load api app (\p ->
+    let transform = M.lookupComponent p "mira.Transform" in
+    let team = M.registerComponent p "sites.Team" 4 4 in
+    let site = M.registerComponent p "sites.Site" 4 4 in
+    -- Walks between the sites' neighbourhood and the middle of the map: the seconds one trip
+    -- out and back takes, and where it turns round.
+    let scout = M.registerComponent p "sites.Scout" 8 4 in
+    -- Marks the bar that shows red's clock.
+    let bar = M.registerComponent p "sites.ClockBar" 4 4 in
+    let d1 = M.describeComponent p team [("team", M.fieldI32, 1, 0)] in
+    let d2 = M.describeComponent p site [("holder", M.fieldI32, 1, 0)] in
+    let d3 = M.describeComponent p scout [("period", M.fieldF32, 1, 0), ("reach", M.fieldF32, 1, 4)] in
+    -- Whether red's win has been said already, so that it is said once.
+    let announced = M.state p "sites.announced" 4 4 in
+    let u = M.keep p [transform, team, site, scout, bar, M.address announced] in
+    let added =
+      [
+        M.addSystem p "setup" M.startup "sites_setup" [],
+        M.addSystemWith p "facts" M.update "sites_facts" [[M.reads team, M.reads transform], [M.reads site, M.reads transform]],
+        M.addSystem p "wander" M.update "sites_wander" [M.reads scout, M.writes transform],
+        M.addSystem p "announce" M.update "sites_announce" [],
+        -- The two reach different things: a site is never the bar.
+        M.addSystemWith p "show" M.update "sites_show" [[M.reads site, M.writes transform], [M.writes transform, M.having bar, M.lacking site]]
+      ]
+    in if added == [0, 0, 0, 0, 0] then 0 else 0 - 3)
+
+@export
+fun sites_setup (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let transform = M.kept sys transformAt in
+  let team = M.kept sys teamAt in
+  let cube = M.meshCube sys 1.0 in
+  let ball = M.meshSphere sys 0.6 in
+  let ground = M.meshPlane sys 60.0 in
+
+  -- Two sites, both red's. A site is a flat slab; `sites_show` sizes and colours it.
+  let w = placeSite sys cube (neg 10.0) in
+  let e = placeSite sys cube 10.0 in
+  -- One scout visits the east site, the other both.
+  let east = placeUnit sys ball (0.0, 0.0, 0.0) blue in
+  let u1 = M.insertFloats sys east (M.kept sys scoutAt) [16.0, 10.5] in
+  let both = placeUnit sys ball (0.0, 0.0, 0.0) blue in
+  let u2 = M.insertFloats sys both (M.kept sys scoutAt) [23.0, neg 9.0] in
+  let guard = placeUnit sys ball (neg 10.0, 0.0, 0.0) red in
+
+  let field = put sys (0.0, neg 0.05, 0.0) in
+  let u3 = M.setMesh sys field ground in
+  let u4 = M.setColor sys field (0.25, 0.4, 0.22) in
+
+  let clock = put sys (neg (barLength *. 0.5), 0.3, 9.0) in
+  let u5 = M.insertInt32 sys clock (M.kept sys barAt) 1 in
+  let u6 = M.setMesh sys clock cube in
+  let u7 = M.setColor sys clock (0.9, 0.85, 0.3) in
+
+  let eye = M.spawn sys in
+  let u8 = M.insertTransform sys eye transform (0.0, 30.0, 26.0) (M.lookingAt (0.0, 30.0, 26.0) (0.0, 0.0, 0.0)) (1.0, 1.0, 1.0) in
+  let u9 = M.setCameraOrthographic sys eye 26.0 0.1 1000.0 in
+  let sun = M.spawn sys in
+  let u10 = M.insertTransform sys sun transform (0.0, 0.0, 0.0) (M.lookingAt (0.0, 0.0, 0.0) (neg 0.4, neg 1.0, neg 0.3)) (1.0, 1.0, 1.0) in
+  let u11 = M.setLight sys sun 3.0 in
+
+  -- The rules. Each is a signal worked out from others; nothing below ever sets the clock.
+  let r1 = M.defineSignal sys "blue.calm" M.signalNot ["blue.contesting"] in
+  let r2 = M.defineSignal sys "red.clock.running" M.signalAnd ["red.holds_all", "blue.calm"] in
+  let r3 = M.defineSignal sys "red.lost_a_site" M.signalNot ["red.holds_all"] in
+  -- A lost site sets the clock back; so does asking for a new round.
+  let r4 = M.defineTruth sys "restart" False in
+  let r5 = M.defineSignal sys "red.clock.reset" M.signalOr ["red.lost_a_site", "restart"] in
+  let r6 = M.defineSignal sys "red.clock" M.signalTimer ["red.clock.running", "red.clock.reset"] in
+  let r7 = M.defineNumber sys "win_after" 60.0 in
+  M.defineSignal sys "red.wins" M.signalGreaterOrEqual ["red.clock", "win_after"]
+
+-- An entity at a place.
+fun put (sys : System) (at : (Float, Float, Float)) : Int ! Process =
+  let entity = M.spawn sys in
+  let u = M.insertAt sys entity (M.kept sys transformAt) at in
+  entity
+
+-- A site at `x` along the middle, red's.
+fun placeSite (sys : System) (cube : Int) (x : Float) : Int ! Process =
+  let entity = put sys (x, 0.0, 0.0) in
+  let u1 = M.insertInt32 sys entity (M.kept sys siteAt) red in
+  let u2 = M.setMesh sys entity cube in
+  let u3 = M.setColor sys entity (0.7, 0.1, 0.1) in
+  entity
+
+-- A unit of a side, a ball of its colour.
+fun placeUnit (sys : System) (ball : Int) (at : (Float, Float, Float)) (side : Int) : Int ! Process =
+  let entity = put sys at in
+  let u1 = M.insertInt32 sys entity (M.kept sys teamAt) side in
+  let u2 = M.setMesh sys entity ball in
+  let u3 = M.setColor sys entity (if side == red then (0.85, 0.15, 0.15) else (0.15, 0.3, 0.9)) in
+  entity
+
+-- The facts the rules stand on, said afresh every frame from where things are: whether red
+-- holds every site, and whether a blue unit stands on one it holds.
+@export
+fun sites_facts (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let (holdsAll, contesting) =
+    M.foldIn2 sys 1 (True, False) (\so site holder centre ->
+      let (held, contested) = so in
+      if M.readInt32 holder != red then (False, contested)
+      else (held, contested or onSite sys (M.translation centre)))
+  in
+  let u = M.setSignal sys "blue.contesting" contesting in
+  M.setSignal sys "red.holds_all" holdsAll
+
+-- Whether a blue unit stands within a site's reach of `centre`.
+fun onSite (sys : System) (centre : (Float, Float, Float)) : Bool ! Process =
+  M.foldIn2 sys 0 False (\found unit side place ->
+    found or (M.readInt32 side == blue and M.distance (M.translation place) centre <. siteRadius))
+
+@export
+fun sites_wander (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let now = M.elapsedSeconds sys in
+  M.forEach2 sys (\entity scout place ->
+    let period = M.readFloat32 scout 0 in
+    let reach = M.readFloat32 scout 1 in
+    let (x, y, z) = M.translation place in
+    M.setTranslation place (reach *. F.sin (now /. period *. F.tau), y, z))
+
+@export
+fun sites_announce (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let announced = M.pointer (M.kept sys announcedAt) in
+  let won = M.signalIsTrue sys "red.wins" in
+  let clock = F.round (M.signal sys "red.clock") in
+  let u = (if won and M.readInt32 announced == 0 then M.logInfo sys "red wins, ${clock} seconds on the clock" else ()) in
+  M.writeInt32 announced (if won then 1 else 0)
+
+-- Draws the state of the rules: nothing here is kept, it is all read from the signals.
+@export
+fun sites_show (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let contested = M.signalIsTrue sys "blue.contesting" in
+  let u1 =
+    M.forEachIn2 sys 0 (\entity holder place ->
+      let u = M.setScale place (siteRadius *. 2.0, 0.1, siteRadius *. 2.0) in
+      M.setColor sys entity (siteColor (M.readInt32 holder) contested))
+  in
+  let clock = M.signal sys "red.clock" in
+  let winAfter = M.signal sys "win_after" in
+  let filled = if winAfter >. 0.0 then within 0.0 1.0 (clock /. winAfter) else 0.0 in
+  let u2 =
+    M.forEachIn1 sys 1 (\entity place ->
+      let (x, y, z) = M.translation place in
+      let u = M.setScale place (if barLength *. filled >. 0.01 then barLength *. filled else 0.01, 0.4, 0.6) in
+      M.setTranslation place (neg (barLength *. 0.5) +. barLength *. filled *. 0.5, y, z))
+  in
+  let won = M.signalIsTrue sys "red.wins" in
+  let state = if won then "red wins" else if contested then "clock stopped: a scout is on a site" else "clock running" in
+  M.setWindowTitle sys "sacred sites: ${F.round clock} of ${F.round winAfter} s, ${state}"
+
+fun siteColor (holder : Int) (contested : Bool) : (Float, Float, Float) =
+  if holder == red then (if contested then (0.9, 0.6, 0.1) else (0.7, 0.1, 0.1))
+  else if holder == blue then (0.1, 0.2, 0.7)
+  else (0.5, 0.5, 0.5)
+
+fun within (low : Float) (high : Float) (x : Float) : Float = if x <. low then low else if x >. high then high else x
+
+fun neg (x : Float) : Float = 0.0 -. x

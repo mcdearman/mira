@@ -28,7 +28,10 @@ cargo run --release --bin mira-play -- examples/voxel_world
 
 In the voxel world, click to capture the mouse, then: WASD / Space / Shift to fly (Ctrl to go fast), left click to
 break a block, right click to place one (1-4 picks which), F to throw a ball, Esc to release
-the mouse and again to quit. The whole game is [`examples/voxel_world/World.hs`](examples/voxel_world/World.hs).
+the mouse and again to quit. The whole game is [`examples/voxel_world/World.hs`](examples/voxel_world/World.hs),
+and the same game in Meadow, mira's scripting language to be, is
+[`examples/meadow/voxel_world/World.mw`](examples/meadow/voxel_world/World.mw) (it needs
+MeadowBoot; see [docs/PLUGINS.md](docs/PLUGINS.md)).
 
 ## Demos
 
