@@ -76,16 +76,19 @@ jobs:
       with:
         ghc-version: '9.12.2'
         enable-stack: false
+    # The archive's paths are written with backslashes, which Git's unzip refuses.
     - name: MeadowBoot
-      shell: bash
+      shell: pwsh
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        into="$(cygpath -u "$RUNNER_TEMP")/meadowboot"
-        gh release download "$MEADOWBOOT_RELEASE" -R meadow-lang/meadow -p '*windows-msvc*' -D "$into"
-        unzip -q "$into"/*.zip -d "$into"
-        echo "MIRA_MEADOWBOOT=$(cygpath -w "$(find "$into" -name MeadowBoot.exe | head -n 1)")" >> "$GITHUB_ENV"
-        echo "MIRA_REQUIRE_MEADOWBOOT=1" >> "$GITHUB_ENV"
+        $into = Join-Path $env:RUNNER_TEMP meadowboot
+        gh release download $env:MEADOWBOOT_RELEASE -R meadow-lang/meadow -p '*windows-msvc*' -D $into
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+        Expand-Archive (Get-ChildItem $into -Filter *.zip).FullName -DestinationPath $into
+        $boot = (Get-ChildItem $into -Recurse -Filter MeadowBoot.exe | Select-Object -First 1).FullName
+        "MIRA_MEADOWBOOT=$boot" >> $env:GITHUB_ENV
+        "MIRA_REQUIRE_MEADOWBOOT=1" >> $env:GITHUB_ENV
     - name: Build
       run: cargo build --workspace --all-targets
     - name: Test
