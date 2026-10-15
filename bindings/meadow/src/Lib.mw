@@ -9,6 +9,9 @@
 --   fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
 --     M.load api app (\p -> ...)
 --
+--   @export
+--   fun mira_meadow_run (s : Int) (user : Int) : () ! Process = M.run s user
+--
 -- and one exported function for each of its systems, `(s : Int) (user : Int) : () ! Process`,
 -- named when the system is added. Inside a system, `M.system s user` gives what the calls
 -- here take. Everything happens on the one thread mira calls a plugin on.
@@ -147,6 +150,10 @@ fun ownFunction (name : String) =
 
 -- Adds a system: its name, its stage, the name of the exported function that runs it, and
 -- the entities it visits. Answers 0, or why not as another number.
+--
+-- The engine calls the system through `mira_meadow_run`, below, which calls the function
+-- named here: if it fails (an `error`, a division by nought), the engine is told, as it is
+-- of any system that fails, and the game goes on.
 @pub fun addSystem (p : Plugin) (name : String) (stage : Int) (run : String) (terms : [(Int, Int)]) : Int ! { Process | e } =
   match p with
   | Plugin api app mine ->
@@ -159,11 +166,36 @@ fun ownFunction (name : String) =
         let u2 = Ffi.writeInt (Ffi.field d desc 1) Usize n in
         let u3 = Ffi.writeInt (Ffi.field d desc 2) U32 stage in
         let u4 = Ffi.writeInt (Ffi.field d desc 3) U32 0 in
-        let u5 = Ffi.writePtr (Ffi.field d desc 4) (ownFunction run) in
-        let u6 = Ffi.writePtr (Ffi.field d desc 5) mine in
+        let one = Ffi.alloc (Ffi.sizeOf (StructOf running)) in
+        let v1 = Ffi.writePtr (Ffi.field one running 0) mine in
+        let v2 = Ffi.writePtr (Ffi.field one running 1) (ownFunction run) in
+        let u5 = Ffi.writePtr (Ffi.field d desc 4) (ownFunction "mira_meadow_run") in
+        let u6 = Ffi.writePtr (Ffi.field d desc 5) one in
         let u7 = Ffi.writePtr (Ffi.field d desc 6) (if len terms == 0 then Ffi.null else listed) in
         let u8 = Ffi.writeInt (Ffi.field d desc 7) Usize (len terms) in
         ok (Ffi.callInt (slot api 4) [Arg.Int app, Arg.Ptr d]))
+
+-- What the engine hands the runner for one system: the plugin's block, and the function
+-- that is the system.
+def running = [Pointer, Pointer]
+
+-- Runs one system for the engine: calls the function that is the system, with the plugin's
+-- block as its `user`, and if that call failed tells the engine why, with `system_fail`.
+-- A plugin exports it under the name the bindings give the engine, as Meadow exports only a
+-- package's own functions:
+--
+--   @export
+--   fun mira_meadow_run (s : Int) (user : Int) : () ! Process = M.run s user
+@pub fun run (s : Int) (user : Int) : () ! Process =
+  let one = Ptr user in
+  let mine = okPtr (Ffi.readPtr (Ffi.field one running 0)) in
+  let body = Ffi.functionAt (okPtr (Ffi.readPtr (Ffi.field one running 1))) in
+  let r = Ffi.callUnit body [Arg.Int s, Arg.Int (Ffi.address mine)] in
+  match Ffi.failure () with
+  | Just why ->
+      let api = okPtr (Ffi.readPtr (Ffi.field mine block 0)) in
+      Ffi.withText why (\t n -> let f = Ffi.callUnit (slot api 47) [Arg.Int s, Arg.Ptr t, Arg.Int n, Arg.Ptr Ffi.null, Arg.Int 0] in ())
+  | None -> ()
 
 -- ---------------------------------------------------------------------------------------
 -- Inside a system: time, entities and queries
@@ -333,17 +365,3 @@ fun visit sys e found body =
 
 -- Makes an entity the ears sources are heard by.
 @pub fun setListener (sys : System) (entity : Int) : () ! { Process | e } = callUnit sys 59 [Arg.Int entity]
-
--- ---------------------------------------------------------------------------------------
--- Turning: sine and cosine, until Meadow's standard library has its own. A series about the
--- nearest whole turn, good to a hundred-thousandth: enough to move things by.
-
-@pub def pi : Float = 3.141592653589793
-
-@pub fun sin (x : Float) : Float =
-  let turns = toFloat (floor ((x +. pi) /. (2.0 *. pi))) in
-  let r = x -. turns *. 2.0 *. pi in
-  let r2 = r *. r in
-  r *. (1.0 -. r2 /. 6.0 *. (1.0 -. r2 /. 20.0 *. (1.0 -. r2 /. 42.0 *. (1.0 -. r2 /. 72.0 *. (1.0 -. r2 /. 110.0 *. (1.0 -. r2 /. 156.0 *. (1.0 -. r2 /. 210.0)))))))
-
-@pub fun cos (x : Float) : Float = sin (x +. pi /. 2.0)

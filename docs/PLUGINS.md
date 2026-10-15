@@ -219,6 +219,9 @@ use Mira as M
 fun mira_plugin_abi_version () : UInt32 = M.abiVersion ()
 
 @export
+fun mira_meadow_run (s : Int) (user : Int) : () ! Process = M.run s user
+
+@export
 fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
   M.load api app (\p ->
     let transform = M.lookupComponent p "mira.Transform" in
@@ -233,8 +236,10 @@ fun drift (s : Int) (user : Int) : () ! Process =
     M.setTranslation t (x +. M.deltaSeconds sys, y, z))
 ```
 
-Each system is an exported function of its own, `(s : Int) (user : Int) : () ! Process`, named
-when it is added; `M.system s user` gives what the calls take. What a plugin's systems need
+Every Meadow plugin exports `mira_meadow_run` as above, one line: the engine calls each of
+its systems through it, so that a system that fails (a division by nought, say) is told of
+as any failing system is, and the game goes on. Each system is an exported function of its
+own, `(s : Int) (user : Int) : () ! Process`, named when it is added; `M.system s user` gives what the calls take. What a plugin's systems need
 from its setting up (the components it registered, a state block) it keeps with `M.keep`
 and reads with `M.kept`. The example is [`examples/meadow/sound`](../examples/meadow/sound).
 
@@ -244,8 +249,7 @@ as Meadow's own build asks. MeadowBoot has no released build yet: it is built fr
 repository. So for now the examples are in Haskell as well, and CI tests the Meadow ones only
 where MeadowBoot is.
 
-What is not here yet, in Meadow: a runtime error in a script ends the game (Meadow is to
-hand it back, for the binding to report as the Haskell ones do); and the bindings cover what
+What is not here yet, in Meadow: the bindings cover what
 the sound example uses (components, systems, queries, transforms, meshes, a plain colour, a
 camera, a sun, signals, sound), not yet the whole interface.
 

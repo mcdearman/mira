@@ -6,6 +6,7 @@
 -- when it is saved. The same game in Haskell is examples/sound/Sound.hs.
 
 use Mira as M
+use Std.Num.Float as F
 
 -- The notes of the scale, in hertz, one every quarter of a second from half a second in.
 def scale : [Float] = [261.63, 293.66, 329.63, 349.23, 392.0, 440.0, 493.88, 523.25]
@@ -17,6 +18,9 @@ def circle : Float = 4.0
 
 @export
 fun mira_plugin_abi_version () : UInt32 = M.abiVersion ()
+
+@export
+fun mira_meadow_run (s : Int) (user : Int) : () ! Process = M.run s user
 
 @export
 fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
@@ -82,4 +86,4 @@ fun sound_circle (s : Int) (user : Int) : () ! Process =
   let now = M.elapsedSeconds sys in
   M.forEach2 sys (\e t h ->
     let speed = M.readFloat32 h 0 in
-    M.setTranslation t (M.cos (now *. speed) *. circle, 1.0, M.sin (now *. speed) *. circle))
+    M.setTranslation t (F.cos (now *. speed) *. circle, 1.0, F.sin (now *. speed) *. circle))
