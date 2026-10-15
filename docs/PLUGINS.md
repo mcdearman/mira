@@ -243,10 +243,11 @@ A system with more than one query adds it with `M.addSystemWith` and goes throug
 its entities, as the sacred sites' facts are.
 
 To build Meadow scripts the engine needs MeadowBoot: `MIRA_MEADOWBOOT` saying where it is
-(or `meadowboot` on the path), with `MEADOW` and `MEADOWBOOT_STD` set and clang on the path,
-as Meadow's own build asks. MeadowBoot has no released build yet: it is built from Meadow's
-repository. So for now the examples are in Haskell as well, and CI tests the Meadow ones only
-where MeadowBoot is.
+(or `meadowboot` on the path), and clang on the path. It comes from Meadow's prerelease
+([meadowboot-v0.1.0-pre.1](https://github.com/meadow-lang/meadow/releases/tag/meadowboot-v0.1.0-pre.1),
+for Windows and Linux on x86-64), unpacked anywhere: it finds the `meadow` and `lib/Std`
+beside it. CI tests the Meadow scripts on Linux and Windows with it, and fails if it cannot
+run them; there is no macOS build of it yet. For now the examples are in Haskell as well.
 
 What is not here yet, in Meadow: the bindings cover components (and describing them), state,
 systems with any number of queries, transforms and the vectors and rotations to work them

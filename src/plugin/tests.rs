@@ -1588,6 +1588,10 @@ fn have_meadowboot() -> bool {
     if Command::new(boot).arg("--version").output().is_ok() {
         return true;
     }
+    assert!(
+        std::env::var("MIRA_REQUIRE_MEADOWBOOT").as_deref() != Ok("1"),
+        "MeadowBoot is required (MIRA_REQUIRE_MEADOWBOOT=1) but could not be run"
+    );
     eprintln!("skipped: MeadowBoot is not here (MIRA_MEADOWBOOT, or meadowboot on the path), so the Meadow scripts were not tested");
     false
 }
