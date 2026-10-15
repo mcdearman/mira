@@ -44,7 +44,12 @@ jobs:
         xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)
         echo "Building with $xcode"
         echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
-        echo "SDKROOT=$xcode/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk" >> "$GITHUB_ENV"
+        sdk="$xcode/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+        echo "SDKROOT=$sdk" >> "$GITHUB_ENV"
+        # GHC's own packages name the Command Line Tools' SDK by its path, whatever the above
+        # say: that path is made Xcode's SDK too.
+        ls -l /Library/Developer/CommandLineTools/SDKs/
+        sudo ln -sfn "$sdk" /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
     # Haskell is the default plugin language; its bindings are tested by building and
     # hot-reloading real plugins.
     - uses: haskell-actions/setup@v2
