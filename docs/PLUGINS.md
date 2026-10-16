@@ -246,7 +246,7 @@ its entities, as the sacred sites' facts are.
 
 To build Meadow scripts the engine needs MeadowBoot: `MIRA_MEADOWBOOT` saying where it is
 (or `meadowboot` on the path), and clang on the path. It comes from Meadow's prerelease
-([meadowboot-v0.1.0-pre.3](https://github.com/meadow-lang/meadow/releases/tag/meadowboot-v0.1.0-pre.3):
+([meadowboot-v0.1.0-pre.4](https://github.com/meadow-lang/meadow/releases/tag/meadowboot-v0.1.0-pre.4):
 Windows on x86-64, Linux and macOS on x86-64 and ARM), unpacked anywhere: it finds the
 `meadow` and `lib/Std` beside it. CI tests the Meadow scripts on Linux, macOS and Windows
 with it, and fails if it cannot run them. The editor's tests and the hosted game still use

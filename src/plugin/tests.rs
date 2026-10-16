@@ -1652,7 +1652,6 @@ fn a_plugin_makes_sounds_plays_them_and_puts_them_in_the_world() {
 /// What it found it says as signals.
 const MEADOW_FILES: &str = r#"
 use Mira as M
-use Mira (System)
 
 -- What is kept: the transform, then where the model and the note are kept.
 @export
@@ -1666,7 +1665,7 @@ fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
     let added = [M.addSystem p "setup" M.startup "files_setup" [], M.addSystemWith p "later" M.update "files_later" [[], [M.reads transform]]] in
     if added == [0, 0] then 0 else 0 - 4)
 
-fun say (sys : System) (name : String) (so : Bool) : () ! Process = M.setSignalNumber sys name (if so then 1.0 else 0.0)
+fun say (sys : M.System) (name : String) (so : Bool) : () ! Process = M.setSignalNumber sys name (if so then 1.0 else 0.0)
 
 @export
 fun files_setup (s : Int) (user : Int) : () ! Process =

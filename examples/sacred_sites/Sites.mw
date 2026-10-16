@@ -17,7 +17,6 @@
 -- from the signals, so what you force or rewire from outside shows at once.
 
 use Mira as M
-use Mira (System)
 use Std.Num.Float as F
 
 -- Which side a unit is on, or holds a site (`sites.Team`, and `sites.Site`'s holder).
@@ -111,13 +110,13 @@ fun sites_setup (s : Int) (user : Int) : () ! Process =
   M.defineSignal sys "red.wins" M.signalGreaterOrEqual ["red.clock", "win_after"]
 
 -- An entity at a place.
-fun put (sys : System) (at : (Float, Float, Float)) : Int ! Process =
+fun put (sys : M.System) (at : (Float, Float, Float)) : Int ! Process =
   let entity = M.spawn sys in
   let u = M.insertAt sys entity (M.kept sys transformAt) at in
   entity
 
 -- A site at `x` along the middle, red's.
-fun placeSite (sys : System) (cube : Int) (x : Float) : Int ! Process =
+fun placeSite (sys : M.System) (cube : Int) (x : Float) : Int ! Process =
   let entity = put sys (x, 0.0, 0.0) in
   let u1 = M.insertInt32 sys entity (M.kept sys siteAt) red in
   let u2 = M.setMesh sys entity cube in
@@ -125,7 +124,7 @@ fun placeSite (sys : System) (cube : Int) (x : Float) : Int ! Process =
   entity
 
 -- A unit of a side, a ball of its colour.
-fun placeUnit (sys : System) (ball : Int) (at : (Float, Float, Float)) (side : Int) : Int ! Process =
+fun placeUnit (sys : M.System) (ball : Int) (at : (Float, Float, Float)) (side : Int) : Int ! Process =
   let entity = put sys at in
   let u1 = M.insertInt32 sys entity (M.kept sys teamAt) side in
   let u2 = M.setMesh sys entity ball in
@@ -147,7 +146,7 @@ fun sites_facts (s : Int) (user : Int) : () ! Process =
   M.setSignal sys "red.holds_all" holdsAll
 
 -- Whether a blue unit stands within a site's reach of `centre`.
-fun onSite (sys : System) (centre : (Float, Float, Float)) : Bool ! Process =
+fun onSite (sys : M.System) (centre : (Float, Float, Float)) : Bool ! Process =
   M.foldIn2 sys 0 False (\found unit side place ->
     found or (M.readInt32 side == blue and M.distance (M.translation place) centre <. siteRadius))
 
