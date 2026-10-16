@@ -10,7 +10,7 @@
 -- mouse go, and a second Escape ends the game.
 
 use Mira as M
-use Mira (System, VoxelHit)
+use Mira (VoxelHit)
 use Std.Ffi (Ptr)
 use Std.Num.Float as F
 use Std.Collections.Vector as V
@@ -61,7 +61,7 @@ fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
     in if voxels == 0 and added == [0, 0, 0, 0, 0] then 0 else 0 - 3)
 
 -- A state block, by its place in what is kept.
-fun keptPtr (sys : System) (at : Int) = M.pointer (M.kept sys at)
+fun keptPtr (sys : M.System) (at : Int) = M.pointer (M.kept sys at)
 
 @export
 fun world_setup (s : Int) (user : Int) : () ! Process =
@@ -91,7 +91,7 @@ fun world_setup (s : Int) (user : Int) : () ! Process =
   M.setChunkViewer sys eye
 
 -- One cube of the ring, `angle` round it.
-fun piece (sys : System) (cube : Int) (pivot : Int) (angle : Float) : () ! Process =
+fun piece (sys : M.System) (cube : Int) (pivot : Int) (angle : Float) : () ! Process =
   let entity = M.spawn sys in
   let u1 = M.insertAt sys entity (M.kept sys transformAt) (F.cos angle *. 10.0, 0.0, F.sin angle *. 10.0) in
   let (ax, ay, az) = M.unit (F.cos angle, 1.0, F.sin angle) in
@@ -116,7 +116,7 @@ fun world_fly (s : Int) (user : Int) : () ! Process =
   let u2 = (if not grabbed and M.mousePressed sys M.mouseLeft then M.setCursorGrabbed sys True else ()) in
   M.forEach2 sys (\entity me place -> fly sys grabbed me place)
 
-fun fly (sys : System) (grabbed : Bool) (me : Ptr) (place : Ptr) : () ! Process =
+fun fly (sys : M.System) (grabbed : Bool) (me : Ptr) (place : Ptr) : () ! Process =
   -- Turning with the mouse, while it is held.
   let speed = M.readFloat32 me 0 in
   let turning = M.readFloat32 me 1 in
@@ -146,7 +146,7 @@ fun fly (sys : System) (grabbed : Bool) (me : Ptr) (place : Ptr) : () ! Process 
   if M.keyPressed sys M.keyF then throw sys (M.plus moved forward) forward else ()
 
 -- Breaks the block looked at, or puts the chosen one against the face looked at.
-fun build (sys : System) (from : (Float, Float, Float)) (forward : (Float, Float, Float)) (breaking : Bool) : () ! Process =
+fun build (sys : M.System) (from : (Float, Float, Float)) (forward : (Float, Float, Float)) (breaking : Bool) : () ! Process =
   match M.voxelRaycast sys from forward reach with
   | Just (VoxelHit block face d kind) ->
       if breaking then M.setVoxel sys block M.air
@@ -155,7 +155,7 @@ fun build (sys : System) (from : (Float, Float, Float)) (forward : (Float, Float
   | None -> ()
 
 -- Chooses a block, if its key was pressed.
-fun choose (sys : System) (choice : (Int, String)) : () ! Process =
+fun choose (sys : M.System) (choice : (Int, String)) : () ! Process =
   let (key, name) = choice in
   if M.keyPressed sys key then
     (match M.voxelBlock sys name with
@@ -164,7 +164,7 @@ fun choose (sys : System) (choice : (Int, String)) : () ! Process =
   else ()
 
 -- A ball, thrown from `at` the way of `forward`.
-fun throw (sys : System) (at : (Float, Float, Float)) (forward : (Float, Float, Float)) : () ! Process =
+fun throw (sys : M.System) (at : (Float, Float, Float)) (forward : (Float, Float, Float)) : () ! Process =
   let thrown = M.spawn sys in
   let u1 = M.insertTransform sys thrown (M.kept sys transformAt) at M.unturned (0.6, 0.6, 0.6) in
   let (vx, vy, vz) = M.scaled 30.0 forward in
@@ -194,7 +194,7 @@ fun world_bounce (s : Int) (user : Int) : () ! Process =
       M.setTranslation place there)
 
 -- One axis of a ball's move: where it gets to, and how it is moving after.
-fun step (sys : System) (dt : Float) (size : Float) (keep : Float) (so : ((Float, Float, Float), (Float, Float, Float))) (axis : Int) : ((Float, Float, Float), (Float, Float, Float)) ! Process =
+fun step (sys : M.System) (dt : Float) (size : Float) (keep : Float) (so : ((Float, Float, Float), (Float, Float, Float))) (axis : Int) : ((Float, Float, Float), (Float, Float, Float)) ! Process =
   let (position, velocity) = so in
   let moving = component axis velocity *. dt in
   let probe = setComponent axis (component axis position +. moving +. size *. sign moving) position in
@@ -229,7 +229,7 @@ fun world_title (s : Int) (user : Int) : () ! Process =
     M.writeFloat32 since 0 0.0
 
 -- Whether the block of that name is this kind.
-fun isBlock (sys : System) (name : String) (kind : Int) : Bool ! Process =
+fun isBlock (sys : M.System) (name : String) (kind : Int) : Bool ! Process =
   match M.voxelBlock sys name with
   | Just b -> b == kind
   | None -> False
