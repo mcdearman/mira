@@ -25,7 +25,7 @@ use neo::App as _;
 use neo::{Event, Key, Point, PointerButton, Size};
 
 /// The game the app is opened on: the sacred sites, a folder of scripts.
-const GAME: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/haskell/sacred_sites");
+const GAME: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/sacred_sites");
 
 const TICK: Duration = Duration::from_millis(16);
 

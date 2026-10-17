@@ -249,8 +249,8 @@ To build Meadow scripts the engine needs MeadowBoot: `MIRA_MEADOWBOOT` saying wh
 ([v0.3.0](https://github.com/meadow-lang/meadow/releases/tag/v0.3.0), the `meadowboot-` archives:
 Windows on x86-64, Linux and macOS on x86-64 and ARM), unpacked anywhere: it finds the
 `meadow` and `lib/Std` beside it. CI tests the Meadow scripts on Linux, macOS and Windows
-with it, and fails if it cannot run them. The editor's tests and the hosted game still use
-the Haskell sacred sites, so that they need nothing but GHC.
+with it, and fails if it cannot run them. The editor's tests, the hosted game and the signal
+graph example play the Meadow sacred sites too.
 
 The bindings cover the whole of `mira.h`: components (and describing them), state, systems
 with any number of queries and their order, events (the engine's contacts among them),
