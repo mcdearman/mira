@@ -85,4 +85,5 @@ Tried so on Windows, with Vulkan. Sound is held where it is while the app is awa
 - More phones tried than two, and anything but Tail Lights tried on one.
 - Assets: a desktop game reads `res/` beside the program; in a package they are inside it.
 - The editor and the interface crate, which need a clipboard a phone does not give.
-- iOS.
+
+iOS is in [IOS.md](IOS.md).
