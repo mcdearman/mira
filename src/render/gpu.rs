@@ -181,7 +181,10 @@ impl Gpu {
                     } else {
                         0
                     },
-                    ..Default::default()
+                    // The rest as WebGPU's defaults, but no more than the device has: the
+                    // iPhone simulator, for one, falls short of a few (it passes 15 values
+                    // between shader stages, not 16).
+                    ..wgpu::Limits::default().or_worse_values_from(&available)
                 },
                 // Ray queries are among the features wgpu calls experimental, and gives
                 // only to a device that was opened saying it accepts them as they are.
