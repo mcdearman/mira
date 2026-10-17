@@ -567,8 +567,9 @@ depends on resolution rather than scene size.
       order), and MeadowBoot installed in CI (Meadow's prerelease, on Linux and Windows)
 - [x] Meadow the language the examples and the docs lead with, Haskell beside it: the games
       are Meadow scripts (`examples/sound`, `sacred_sites`, `voxel_world`), each also in
-      Haskell (`examples/haskell`), which the editor's tests and the hosted game use; CI runs
-      the Meadow scripts on Linux, macOS and Windows (MeadowBoot from Meadow v0.3.0)
+      Haskell (`examples/haskell`); the editor's tests, the hosted game and the signal graph
+      example play the Meadow sacred sites; CI runs the Meadow scripts on Linux, macOS and
+      Windows (MeadowBoot from Meadow v0.3.0)
 - [x] Scripts built by the engine itself, so that no shell is needed on any system: a game
       is a folder of scripts, built, loaded, and built again when one is saved
       (`mira-play <folder>`; see [PLUGINS.md](PLUGINS.md))
