@@ -18,7 +18,7 @@ env:
   # The Haskell plugin tests must run here, not skip.
   MIRA_REQUIRE_GHC: 1
   # The MeadowBoot the Meadow scripts are built with (see the jobs).
-  MEADOWBOOT_RELEASE: meadowboot-v0.1.0-pre.4
+  MEADOWBOOT_RELEASE: v0.3.0
 
 jobs:
   check:
@@ -67,7 +67,7 @@ jobs:
       with:
         version: '3.10'
     # Meadow is mira's scripting language. Its scripts are built with MeadowBoot, from
-    # Meadow's prerelease (the archive for this runner's system), and their tests must run
+    # Meadow's release (the archive for this runner's system), and their tests must run
     # here, not skip.
     - name: MeadowBoot
       env:
