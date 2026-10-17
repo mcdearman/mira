@@ -1,0 +1,68 @@
+name: iOS app
+
+# Builds Tail Lights for an iPhone and for the iPhone simulator, and tries it on the
+# simulator. Run by hand, or when what it is built from changes in a pull request. Nothing
+# here is signed for a phone yet: that needs an Apple developer account (see docs/IOS.md).
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'ios/**'
+      - 'examples/tail_lights/**'
+      - '.github/workflows/ios.yml'
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    runs-on: macos-latest
+    timeout-minutes: 50
+    env:
+      IPHONEOS_DEPLOYMENT_TARGET: '16.0'
+      # A debug build made fast, as for Android, with no names kept.
+      CARGO_PROFILE_DEV_OPT_LEVEL: 3
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_DEV_STRIP: symbols
+    steps:
+    - uses: actions/checkout@v4
+    - name: Rust
+      run: rustup update stable && rustup default stable && rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+    - uses: Swatinem/rust-cache@v2
+    # The iPhone's own tools and SDKs are Xcode's.
+    - name: Xcode
+      run: |
+        xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)
+        echo "Building with $xcode"
+        echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
+    - name: Build for a phone
+      run: cargo build --example tail_lights --target aarch64-apple-ios
+    - name: Build for the simulator
+      run: cargo build --example tail_lights --target aarch64-apple-ios-sim
+    - name: Package
+      run: |
+        sh ios/package.sh target/aarch64-apple-ios/debug/examples/tail_lights iPhoneOS packages/phone
+        sh ios/package.sh target/aarch64-apple-ios-sim/debug/examples/tail_lights iPhoneSimulator packages/simulator
+        (cd packages/simulator && zip -qry ../tail-lights-simulator.zip "Tail Lights.app")
+    - uses: actions/upload-artifact@v4
+      with:
+        name: tail-lights-simulator-app
+        path: packages/tail-lights-simulator.zip
+        if-no-files-found: error
+    - name: Try it on the simulator
+      timeout-minutes: 10
+      continue-on-error: true
+      env:
+        SIMCTL_CHILD_RUST_LOG: info
+        SIMCTL_CHILD_RUST_BACKTRACE: '1'
+      run: sh ios/try-on-simulator.sh "packages/simulator/Tail Lights.app"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: tried-on-the-simulator
+        path: |
+          tried-screen.png
+          tried-log.txt
+          tried-alive.txt
+        if-no-files-found: warn

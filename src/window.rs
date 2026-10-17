@@ -22,6 +22,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct WindowSettings {
     pub title: String,
+    /// The window's size in points, on a desktop. On a phone the window is the screen.
     pub width: u32,
     pub height: u32,
     pub vsync: bool,
@@ -262,10 +263,12 @@ impl ApplicationHandler for Runner {
             .unwrap_or_default();
         let hidden =
             !settings.visible || std::env::var("MIRA_HIDDEN").is_ok_and(|hidden| hidden != "0");
-        let attributes = winit::window::Window::default_attributes()
-            .with_title(&settings.title)
-            .with_inner_size(LogicalSize::new(settings.width, settings.height))
-            .with_visible(!hidden);
+        let mut attributes = winit::window::Window::default_attributes().with_title(&settings.title).with_visible(!hidden);
+        // On a phone the window is the screen. iOS takes a size asked for at its word, and a
+        // window bigger than the screen shows only its corner.
+        if !cfg!(any(target_os = "android", target_os = "ios")) {
+            attributes = attributes.with_inner_size(LogicalSize::new(settings.width, settings.height));
+        }
         self.hidden = hidden;
         if hidden {
             log::info!("the window is hidden; rendering off screen");

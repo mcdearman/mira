@@ -96,6 +96,7 @@ impl Gpu {
     /// and quietly falls back to ordinary rendering where there isn't one.
     pub async fn new(window: Arc<winit::window::Window>, vsync: bool, ray_tracing: bool) -> anyhow::Result<Self> {
         let size = window.inner_size();
+        log::info!("window {}x{} pixels at {} pixels a point", size.width, size.height, window.scale_factor());
         // Ray queries, and an array of every texture so reflections can show what they hit.
         let rt_features = wgpu::Features::EXPERIMENTAL_RAY_QUERY
             | wgpu::Features::TEXTURE_BINDING_ARRAY
@@ -181,7 +182,10 @@ impl Gpu {
                     } else {
                         0
                     },
-                    ..Default::default()
+                    // The rest as WebGPU's defaults, but no more than the device has: the
+                    // iPhone simulator, for one, falls short of a few (it passes 15 values
+                    // between shader stages, not 16).
+                    ..wgpu::Limits::default().or_worse_values_from(&available)
                 },
                 // Ray queries are among the features wgpu calls experimental, and gives
                 // only to a device that was opened saying it accepts them as they are.
@@ -270,6 +274,9 @@ impl Gpu {
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
+        }
+        if (width, height) != (self.config.width, self.config.height) {
+            log::info!("window now {width}x{height} pixels");
         }
         self.config.width = width;
         self.config.height = height;

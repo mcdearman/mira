@@ -584,7 +584,9 @@ depends on resolution rather than scene size.
       (see [ANDROID.md](ANDROID.md#on-real-phones))
 - [ ] What is seen decided on the graphics card on phones too: on a Galaxy S26 it drew
       nothing, so phones decide it on the processor for now
-- [ ] Mobile, so that a game can be made for phones and tablets: builds and packaging for iOS; the app's life on
+- [x] Tail Lights built for iOS and tried on the iPhone simulator in CI (see [IOS.md](IOS.md));
+      not yet signed for or run on a real iPhone, which needs an Apple developer account
+- [ ] Mobile, so that a game can be made for phones and tablets: signing and TestFlight for iOS; the app's life on
       a phone (put away, brought back, the screen turned,
       the surface lost and made again); touch as input, through the same actions as keys;
       an interface that fits a small screen and its cut-outs; sound and saved games in the
