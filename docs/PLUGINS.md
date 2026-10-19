@@ -468,6 +468,16 @@ app.run()
 `App::reload_native_plugins()` reloads changed plugins immediately, and
 `app.native_plugins().hot_reload = false` turns the file watching off for a shipped game.
 
+A plugin that is part of the app, as on a phone, is loaded where it is and never reloaded:
+
+- `app.load_bundled_plugin(path)` opens a library in place, without the copy that reloading
+  needs. On Android a library's file name alone (`libgame.so`) finds it among the app's
+  own, in its package.
+- `app.load_linked_plugin(name, LinkedPlugin { abi_version, load, flags })` starts a plugin
+  whose entry points are linked into the program: a static library, which is how a plugin
+  goes into an iOS app, where no library may be opened. The host declares the plugin's
+  `mira_plugin_abi_version` and `mira_plugin_load` (`extern "C"`) and hands them over.
+
 ## Parts of the engine a game asks for
 
 Some of the engine is not in every game. A plugin asks for such a part while it loads, and

@@ -2670,3 +2670,57 @@ fn two_haskell_plugins_can_load_at_the_same_moment() {
         }
     });
 }
+
+/// A plugin linked into the program, as a static library is in an iOS app: written here in
+/// Rust against the raw table, as any language's static library would present itself.
+mod linked {
+    use mira_plugin::sys::{self, MiraApi, MiraApp};
+
+    pub unsafe extern "C" fn abi_version() -> u32 {
+        sys::MIRA_ABI_VERSION
+    }
+
+    pub unsafe extern "C" fn too_new() -> u32 {
+        sys::MIRA_ABI_VERSION + 1
+    }
+
+    /// Defines a component of its own, which the engine then knows by name.
+    pub unsafe extern "C" fn load(api: *const MiraApi, app: *mut MiraApp) -> i32 {
+        let api = &*api;
+        let name = "linked.Marker";
+        let marker = (api.component_register)(app, name.as_ptr(), name.len(), 4, 4, None);
+        if marker == 0 { -1 } else { 0 }
+    }
+}
+
+#[test]
+fn a_plugin_linked_into_the_program_is_loaded_and_never_reloaded() {
+    use crate::plugin::LinkedPlugin;
+    let entry = LinkedPlugin { abi_version: linked::abi_version, load: linked::load, flags: None };
+    let mut app = app();
+    app.load_linked_plugin("linked", entry).unwrap();
+    assert_eq!(app.native_plugins().loaded().collect::<Vec<_>>(), [("linked", 1)]);
+    assert!(app.world.named_component_id("linked.Marker").is_some(), "its load ran");
+    // One of a name; nothing to reload it from; a plugin for another interface is refused.
+    assert!(app.load_linked_plugin("linked", entry).is_err());
+    assert_eq!(app.reload_native_plugins(), 0);
+    app.update();
+    assert!(app.load_linked_plugin("newer", LinkedPlugin { abi_version: linked::too_new, ..entry }).is_err());
+    assert_eq!(app.native_plugins().loaded().count(), 1);
+}
+
+#[test]
+fn a_bundled_plugin_is_opened_where_it_is_and_never_reloaded() {
+    let workspace = Workspace::new("bundled");
+    let library = workspace.compile("bundled", COUNTER, &["ABI=MIRA_ABI_VERSION", "STEP=1.0f"]);
+    let mut app = app();
+    let entity = app.world.spawn(Transform::IDENTITY);
+    app.load_bundled_plugin(&library).unwrap();
+    assert_eq!(app.native_plugins().loaded().collect::<Vec<_>>(), [("bundled", 1)]);
+    app.update();
+    assert_eq!(position(&app, entity).x, 1.0, "its systems run");
+    // Opened where it is, not from a copy (Windows would not let it be written now), and
+    // part of the app: nothing is reloaded.
+    assert_eq!(app.reload_native_plugins(), 0);
+    assert!(app.load_bundled_plugin(workspace.dir.join("no-such-plugin.dll")).is_err());
+}
