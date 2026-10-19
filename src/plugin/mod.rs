@@ -29,6 +29,7 @@ pub mod scripts;
 mod system;
 
 pub use events::PluginEvents;
+pub use mira_plugin::sys::{MiraApi, MiraApp};
 
 #[cfg(test)]
 mod tests;
@@ -45,7 +46,7 @@ use std::{
 
 use anyhow::{bail, Context as _};
 use libloading::Library;
-use mira_plugin::sys::{self, MiraApi, MiraApp};
+use mira_plugin::sys;
 
 use self::api::{Registrar, StateBlock};
 use crate::{
@@ -65,6 +66,23 @@ const STAGES: [Stage; 7] = [
 ];
 
 type LoadFn = unsafe extern "C" fn(*const MiraApi, *mut MiraApp) -> i32;
+
+/// One plugin loads at a time, in the whole process. A plugin's load may start a language
+/// runtime that every plugin in that language shares (GHC's, for one), and such a runtime
+/// can't be started from two threads at once: the second caller is told it is already
+/// running while the first is still starting it. Apps load their plugins one after another
+/// anyway; this is for several apps in one process, as in the tests.
+static LOADING: Mutex<()> = Mutex::new(());
+
+/// The entry points of a plugin linked into the program (`App::load_linked_plugin`), as the
+/// plugin names them: `mira_plugin_abi_version`, `mira_plugin_load` and, if it has it,
+/// `mira_plugin_flags`.
+#[derive(Clone, Copy)]
+pub struct LinkedPlugin {
+    pub abi_version: unsafe extern "C" fn() -> u32,
+    pub load: unsafe extern "C" fn(*const MiraApi, *mut MiraApp) -> i32,
+    pub flags: Option<unsafe extern "C" fn() -> u32>,
+}
 
 /// A file's modification time and size: enough to tell that it was rebuilt.
 type Stamp = (SystemTime, u64);
@@ -147,6 +165,8 @@ struct Loaded {
     generation: u32,
     /// The plugin asked never to be unmapped (`MIRA_PLUGIN_KEEP_LOADED`).
     keep_loaded: bool,
+    /// Its entry points are linked into the program: there is no library, and nothing to reload.
+    linked: bool,
 }
 
 impl Loaded {
@@ -201,7 +221,7 @@ impl NativePlugins {
     pub fn loaded(&self) -> impl Iterator<Item = (&str, u32)> {
         self.plugins
             .iter()
-            .filter(|p| p.library.is_some())
+            .filter(|p| p.library.is_some() || p.linked)
             .map(|p| (p.name.as_str(), p.generation))
     }
 }
@@ -232,8 +252,73 @@ impl App {
             components: Vec::new(),
             generation: 0,
             keep_loaded: false,
+            linked: false,
         };
         install(self, &mut plugin)?;
+        self.native.plugins.push(plugin);
+        Ok(self)
+    }
+
+    /// Loads a plugin that comes with the app, opened where it is and never reloaded: a
+    /// phone's way, where the library is part of the app. On Android its file name alone,
+    /// `lib<name>.so`, finds it among the app's own libraries.
+    pub fn load_bundled_plugin(&mut self, path: impl AsRef<Path>) -> anyhow::Result<&mut Self> {
+        let path = path.as_ref();
+        let file = path.display().to_string();
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.strip_prefix(std::env::consts::DLL_PREFIX).unwrap_or(s))
+            .context("plugin path has no file name")?
+            .to_owned();
+        // SAFETY: as for any plugin: opening it runs its initializers, and calling it its code.
+        let (library, load, flags) = unsafe {
+            let library = Library::new(path).with_context(|| format!("can't open the plugin {file}"))?;
+            let abi = (*library.get::<unsafe extern "C" fn() -> u32>(b"mira_plugin_abi_version\0").context("it doesn't export `mira_plugin_abi_version`")?)();
+            let load = *library.get::<LoadFn>(b"mira_plugin_load\0").context("it doesn't export `mira_plugin_load`")?;
+            let flags = library.get::<unsafe extern "C" fn() -> u32>(b"mira_plugin_flags\0").map_or(0, |flags| flags());
+            if abi != sys::MIRA_ABI_VERSION {
+                bail!("{file} was built for plugin interface version {abi}, and this engine speaks version {}", sys::MIRA_ABI_VERSION);
+            }
+            (library, load, flags)
+        };
+        self.start_fixed_plugin(&name, Some(library), load, flags)
+    }
+
+    /// Loads a plugin whose entry points are linked into the program, as a static library is:
+    /// how a plugin goes into an iOS app, where no library may be opened. It is not reloaded.
+    pub fn load_linked_plugin(&mut self, name: &str, entry: LinkedPlugin) -> anyhow::Result<&mut Self> {
+        // SAFETY: the entry points are the plugin's own, linked in; calling them is as safe
+        // as the plugin is.
+        let (abi, flags) = unsafe { ((entry.abi_version)(), entry.flags.map_or(0, |flags| flags())) };
+        if abi != sys::MIRA_ABI_VERSION {
+            bail!("the plugin `{name}` was built for plugin interface version {abi}, and this engine speaks version {}", sys::MIRA_ABI_VERSION);
+        }
+        self.start_fixed_plugin(name, None, entry.load, flags)
+    }
+
+    /// Starts a plugin that is never reloaded: one bundled with the app, or linked into it.
+    fn start_fixed_plugin(&mut self, name: &str, library: Option<Library>, load: LoadFn, flags: u32) -> anyhow::Result<&mut Self> {
+        if self.native.plugins.iter().any(|p| p.name == name) {
+            bail!("a plugin named `{name}` is already loaded");
+        }
+        let mut plugin = Loaded {
+            owner: self.native.plugins.len() as SystemOwner + 1,
+            name: name.to_owned(),
+            // No file to watch: nothing to reload it from.
+            source: PathBuf::new(),
+            library: None,
+            copy: None,
+            current: None,
+            settling: None,
+            rejected: None,
+            components: Vec::new(),
+            generation: 0,
+            keep_loaded: false,
+            linked: false,
+        };
+        let _loading = LOADING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        start(self, &mut plugin, library, load, flags, None)?;
         self.native.plugins.push(plugin);
         Ok(self)
     }
@@ -334,12 +419,6 @@ fn install(app: &mut App, plugin: &mut Loaded) -> anyhow::Result<()> {
     std::fs::copy(&plugin.source, &copy)?;
     let copy = TempCopy(Some(copy));
 
-    // One plugin loads at a time, in the whole process. A plugin's load may start a language
-    // runtime that every plugin in that language shares (GHC's, for one), and such a runtime
-    // can't be started from two threads at once: the second caller is told it is already
-    // running while the first is still starting it. Apps load their plugins one after another
-    // anyway; this is for several apps in one process, as in the tests.
-    static LOADING: Mutex<()> = Mutex::new(());
     let _loading = LOADING
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -368,13 +447,21 @@ fn install(app: &mut App, plugin: &mut Loaded) -> anyhow::Result<()> {
             .map_or(0, |flags| flags());
         (library, load, flags)
     };
+    start(app, plugin, Some(library), load, flags, Some(version))?;
+    plugin.copy = Some(copy.keep());
+    Ok(())
+}
 
+/// Starts a plugin from its load function, replacing whatever version of it was running:
+/// from `library`, or from the program itself where its entry points are linked in. On an
+/// error the plugin's systems are gone and nothing calls into it again.
+fn start(app: &mut App, plugin: &mut Loaded, library: Option<Library>, load: LoadFn, flags: u32, version: Option<Stamp>) -> anyhow::Result<()> {
     // From here on the old version is being replaced.
     let first_load = plugin.generation == 0;
     retire(app, plugin);
     plugin.keep_loaded = flags & sys::MIRA_PLUGIN_KEEP_LOADED != 0;
     plugin.generation += 1;
-    plugin.current = Some(version);
+    plugin.current = version;
     plugin.rejected = None;
 
     let mut registrar = Registrar {
@@ -405,7 +492,7 @@ fn install(app: &mut App, plugin: &mut Loaded) -> anyhow::Result<()> {
             app.schedule_mut(stage)
                 .replace_owned(plugin.owner, Vec::new());
         }
-        if plugin.keep_loaded {
+        if let Some(library) = library.filter(|_| plugin.keep_loaded) {
             std::mem::forget(library);
         }
         bail!("its load function failed (returned {status})");
@@ -456,8 +543,8 @@ fn install(app: &mut App, plugin: &mut Loaded) -> anyhow::Result<()> {
         }
     }
     plugin.components = components;
-    plugin.library = Some(library);
-    plugin.copy = Some(copy.keep());
+    plugin.linked = library.is_none();
+    plugin.library = library;
     Ok(())
 }
 
