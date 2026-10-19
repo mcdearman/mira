@@ -24,13 +24,16 @@ use crate::{
     audio::{Audio, AudioListener, AudioSource, Playback, Sound, VoiceId},
     voxel::{BlockId, BlockRegistry, ChunkViewer, VoxelWorld},
     ecs::{DropFn, Entity, System, World},
+    actions::{Actions, Binding},
     input::{ButtonInput, KeyCode, Mouse, MouseButton},
     physics::{Collider, PhysicsWorld, RigidBody},
     reflect::{blob_component_type, BlobField, FieldKind, TypeRegistry},
     render::{
-        AmbientLight, Camera, Color, DirectionalLight, Image, Material, Mesh, Mesh3d, Vertex,
+        AmbientLight, Camera, Color, DirectionalLight, Image, Material, Mesh, Mesh3d, Multisampling,
+        PostProcess, RayTracingSettings, Vertex, ViewMode,
     },
     signal::{Compare, Op, Signal, Signals},
+    touch::Touches,
     transform::{Parent, Transform},
     window::Window,
 };
@@ -153,6 +156,16 @@ pub(crate) static API: MiraApi = MiraApi {
     set_cursor_grabbed,
     cursor_grabbed,
     quit,
+    image_create,
+    set_alpha_cutoff,
+    sound_create,
+    setting,
+    action_bind,
+    action_bind_axis,
+    action_state,
+    action_value,
+    file_write,
+    file_read,
 };
 
 /// Runs `body`, turning a panic into `fallback` so it never unwinds into the plugin.
@@ -1740,5 +1753,299 @@ unsafe extern "C" fn quit(system: *mut MiraSystem) {
                 events.send(crate::app::AppExit);
             }
         });
+    })
+}
+
+unsafe extern "C" fn image_create(
+    system: *mut MiraSystem,
+    name: *const u8,
+    len: usize,
+    width: u32,
+    height: u32,
+    rgba: *const u8,
+    flags: u32,
+) -> sys::MiraImage {
+    guard("image_create", 0, || {
+        let (Some(context), Some(name)) = (context(system), text(name, len)) else {
+            return 0;
+        };
+        let size = (width as usize).checked_mul(height as usize).and_then(|pixels| pixels.checked_mul(4));
+        let Some(size) = size.filter(|size| *size > 0 && !rgba.is_null()) else {
+            log::error!(target: "plugin", "image_create: `{name}` is {width}x{height} with no pixels");
+            return 0;
+        };
+        let pixels = std::slice::from_raw_parts(rgba, size).to_vec();
+        let mut image = Image::from_rgba(width, height, pixels, flags & sys::MIRA_IMAGE_LINEAR == 0);
+        if flags & sys::MIRA_IMAGE_PIXELATED != 0 {
+            image = image.pixelated();
+        }
+        context.made_image(name, image).map_or(0, |id| id + 1)
+    })
+}
+
+unsafe extern "C" fn set_alpha_cutoff(system: *mut MiraSystem, entity: MiraEntity, cutoff: f32) {
+    guard("set_alpha_cutoff", (), || {
+        let Some(context) = context(system) else {
+            return;
+        };
+        let entity = Entity::from_bits(entity);
+        context.queue.push(move |world| {
+            let mut material = world.get::<Material>(entity).copied().unwrap_or_default();
+            material.alpha_cutoff = (cutoff >= 0.0).then_some(cutoff);
+            world.insert(entity, material);
+        });
+    })
+}
+
+unsafe extern "C" fn sound_create(
+    system: *mut MiraSystem,
+    name: *const u8,
+    len: usize,
+    rate: u32,
+    channels: u32,
+    samples: *const f32,
+    count: usize,
+) -> sys::MiraSound {
+    guard("sound_create", 0, || {
+        let (Some(context), Some(name)) = (context(system), text(name, len)) else {
+            return 0;
+        };
+        if rate == 0 || !(1..=2).contains(&channels) || samples.is_null() || count == 0 {
+            log::error!(target: "plugin", "sound_create: `{name}` needs samples, a rate, and one or two channels");
+            return 0;
+        }
+        let samples = std::slice::from_raw_parts(samples, count).to_vec();
+        context.sound(name, || Ok(Sound::new(rate, channels as u16, samples))).map_or(0, |id| id + 1)
+    })
+}
+
+/// The names `setting` knows.
+const SETTINGS: [&str; 14] = [
+    "view_mode",
+    "ray_tracing",
+    "multisampling",
+    "taa",
+    "bloom",
+    "vignette",
+    "grain",
+    "sharpen",
+    "exposure",
+    "contrast",
+    "saturation",
+    "render_scale",
+    "mouse_as_finger",
+    "swipe_distance",
+];
+
+unsafe extern "C" fn setting(app: *mut MiraApp, name: *const u8, len: usize, value: f64) -> i32 {
+    guard("setting", -1, || {
+        let (Some(registrar), Some(name)) = (app.cast::<Registrar>().as_mut(), text(name, len)) else {
+            return -1;
+        };
+        let world = &mut *registrar.world;
+        let (on, amount) = (value != 0.0, value as f32);
+        // Post-processing as the app has it, or as it would be by default.
+        let mut post = |change: &dyn Fn(&mut PostProcess)| {
+            if !world.contains_resource::<PostProcess>() {
+                world.insert_resource(PostProcess::default());
+            }
+            change(world.resource_mut::<PostProcess>());
+        };
+        match name {
+            "view_mode" => {
+                let Some(mode) = ViewMode::ALL.get(value as usize).filter(|_| value >= 0.0) else {
+                    log::error!(target: "plugin", "setting: there is no view mode {value}");
+                    return -1;
+                };
+                world.insert_resource(*mode);
+            }
+            "ray_tracing" => match world.get_resource_mut::<RayTracingSettings>() {
+                Some(settings) => settings.enabled = on,
+                None => world.insert_resource(RayTracingSettings { enabled: on, ..Default::default() }),
+            },
+            "multisampling" => world.insert_resource(Multisampling(on)),
+            "taa" => post(&|post| post.taa = on),
+            "bloom" => post(&|post| post.bloom = amount),
+            "vignette" => post(&|post| post.vignette = amount),
+            "grain" => post(&|post| post.grain = amount),
+            "sharpen" => post(&|post| post.sharpen = amount),
+            "exposure" => post(&|post| post.exposure = amount),
+            "contrast" => post(&|post| post.contrast = amount),
+            "saturation" => post(&|post| post.saturation = amount),
+            "render_scale" => post(&|post| post.render_scale = amount),
+            "mouse_as_finger" | "swipe_distance" => {
+                let Some(touches) = world.get_resource_mut::<Touches>() else {
+                    log::error!(target: "plugin", "setting: `{name}` needs input, which this app has not");
+                    return -1;
+                };
+                if name == "mouse_as_finger" {
+                    touches.mouse_too = on;
+                } else {
+                    touches.swipe_distance = amount;
+                }
+            }
+            _ => {
+                log::error!(target: "plugin", "setting: there is no setting called `{name}`; there are {}", SETTINGS.join(", "));
+                return -1;
+            }
+        }
+        0
+    })
+}
+
+/// Binds with the bindings named, at load: what `action_bind` and `action_bind_axis` share.
+fn binding_named(call: &str, name: &str) -> Option<Binding> {
+    let binding = Binding::named(name);
+    if binding.is_none() {
+        log::error!(target: "plugin", "{call}: no key, button or gesture is called `{name}`");
+    }
+    binding
+}
+
+unsafe extern "C" fn action_bind(
+    app: *mut MiraApp,
+    action: *const u8,
+    action_len: usize,
+    binding: *const u8,
+    binding_len: usize,
+) -> i32 {
+    guard("action_bind", -1, || {
+        let (Some(registrar), Some(action), Some(binding)) =
+            (app.cast::<Registrar>().as_mut(), text(action, action_len), text(binding, binding_len))
+        else {
+            return -1;
+        };
+        let Some(binding) = binding_named("action_bind", binding) else {
+            return -1;
+        };
+        let Some(actions) = registrar.world.get_resource_mut::<Actions>() else {
+            log::error!(target: "plugin", "action_bind: this app has no input");
+            return -1;
+        };
+        actions.bind(action, binding);
+        0
+    })
+}
+
+unsafe extern "C" fn action_bind_axis(
+    app: *mut MiraApp,
+    axis: *const u8,
+    axis_len: usize,
+    less: *const u8,
+    less_len: usize,
+    more: *const u8,
+    more_len: usize,
+) -> i32 {
+    guard("action_bind_axis", -1, || {
+        let (Some(registrar), Some(axis), Some(less), Some(more)) =
+            (app.cast::<Registrar>().as_mut(), text(axis, axis_len), text(less, less_len), text(more, more_len))
+        else {
+            return -1;
+        };
+        let (Some(less), Some(more)) = (binding_named("action_bind_axis", less), binding_named("action_bind_axis", more)) else {
+            return -1;
+        };
+        let Some(actions) = registrar.world.get_resource_mut::<Actions>() else {
+            log::error!(target: "plugin", "action_bind_axis: this app has no input");
+            return -1;
+        };
+        actions.bind_axis(axis, less, more);
+        0
+    })
+}
+
+unsafe extern "C" fn action_state(system: *mut MiraSystem, action: *const u8, len: usize) -> u32 {
+    guard("action_state", 0, || {
+        let (Some(context), Some(action)) = (context(system), text(action, len)) else {
+            return 0;
+        };
+        let Some(actions) = context.world().get_resource::<Actions>() else {
+            return 0;
+        };
+        let bit = |on: bool, bit: u32| if on { bit } else { 0 };
+        bit(actions.pressed(action), sys::MIRA_ACTION_DOWN)
+            | bit(actions.just_pressed(action), sys::MIRA_ACTION_PRESSED)
+            | bit(actions.just_released(action), sys::MIRA_ACTION_RELEASED)
+    })
+}
+
+unsafe extern "C" fn action_value(system: *mut MiraSystem, axis: *const u8, len: usize) -> f32 {
+    guard("action_value", 0.0, || {
+        let (Some(context), Some(axis)) = (context(system), text(axis, len)) else {
+            return 0.0;
+        };
+        context.world().get_resource::<Actions>().map_or(0.0, |actions| actions.value(axis))
+    })
+}
+
+/// Where a game's own file is kept: in its saved games' folder, by a name with no folders in
+/// it, so that a plugin cannot write anywhere else.
+unsafe fn game_file(call: &str, game: *const u8, game_len: usize, name: *const u8, name_len: usize) -> Option<std::path::PathBuf> {
+    let (game, name) = (text(game, game_len)?, text(name, name_len)?);
+    let plain = |part: &str| !part.is_empty() && part != "." && part != ".." && !part.contains(['/', '\\', ':']);
+    if !plain(game) || !plain(name) {
+        log::error!(target: "plugin", "{call}: `{game}` and `{name}` must be plain names, with no folders in them");
+        return None;
+    }
+    Some(crate::save::SaveGames::for_game(game).folder().join(name))
+}
+
+unsafe extern "C" fn file_write(
+    _system: *mut MiraSystem,
+    game: *const u8,
+    game_len: usize,
+    name: *const u8,
+    name_len: usize,
+    data: *const u8,
+    len: usize,
+) -> i32 {
+    guard("file_write", -1, || {
+        let Some(path) = game_file("file_write", game, game_len, name, name_len) else {
+            return -1;
+        };
+        if data.is_null() && len > 0 {
+            return -1;
+        }
+        let bytes = if len == 0 { &[][..] } else { std::slice::from_raw_parts(data, len) };
+        // Written beside, then put in place whole, so that a file is never half written.
+        let written = (|| -> std::io::Result<()> {
+            if let Some(folder) = path.parent() {
+                std::fs::create_dir_all(folder)?;
+            }
+            let beside = path.with_extension("writing");
+            std::fs::write(&beside, bytes)?;
+            std::fs::rename(&beside, &path)
+        })();
+        match written {
+            Ok(()) => 0,
+            Err(err) => {
+                log::error!(target: "plugin", "file_write: {}: {err}", path.display());
+                -1
+            }
+        }
+    })
+}
+
+unsafe extern "C" fn file_read(
+    _system: *mut MiraSystem,
+    game: *const u8,
+    game_len: usize,
+    name: *const u8,
+    name_len: usize,
+    out: *mut u8,
+    capacity: usize,
+) -> i64 {
+    guard("file_read", -1, || {
+        let Some(path) = game_file("file_read", game, game_len, name, name_len) else {
+            return -1;
+        };
+        let Ok(bytes) = std::fs::read(&path) else {
+            return -1;
+        };
+        if !out.is_null() {
+            let fits = bytes.len().min(capacity);
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, fits);
+        }
+        bytes.len() as i64
     })
 }
