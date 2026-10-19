@@ -126,6 +126,46 @@ undescribed component works as before and is simply invisible to scenes and tool
 
 Names are relative to the app's asset folder. The same name always gives the same asset.
 
+## Made from code
+
+A game whose pictures and sounds are worked out rather than drawn and recorded (pixel art
+from code, a tune from notes) makes them itself:
+
+- `image_create` makes an image from RGBA pixels, `MIRA_IMAGE_PIXELATED` for pixel art kept
+  crisp however far it is enlarged; `set_alpha_cutoff` then draws an entity only where its
+  picture is solid, as a sprite cut out of its background.
+- `sound_create` makes a sound from samples, one channel or two, at any rate.
+
+Each is kept under a name the plugin gives it, as files are: asking again for a name gives
+the same image or sound, so a reloaded plugin has what it had. An image's pixels are made
+anew each time it is asked for; a sound is made the first time only.
+
+## Settings
+
+`setting` sets the engine's settings by name as the plugin loads, before the game runs:
+how it looks (`view_mode` with `MIRA_VIEW_UNLIT` for a flat game, `ray_tracing`,
+`multisampling`, and the post-processing: `taa`, `bloom`, `vignette`, `grain`, `sharpen`,
+`exposure`, `contrast`, `saturation`, `render_scale`) and how it is played
+(`mouse_as_finger`, so that a game made for a phone can be tried with a mouse;
+`swipe_distance`). A name it does not know is refused, and the plugin is told.
+
+## Input actions
+
+A game is better played by what each input is for than by which key it is: see
+`src/actions.rs`. `action_bind` binds an action, as the plugin loads, to anything by its
+name: a key (`KeyW`, `Space`, `ArrowUp`), a mouse button (`MouseLeft`), a finger (`SwipeUp`,
+`SwipeDown`, `SwipeLeft`, `SwipeRight`, `Tap`) or a controller's button (`PadSouth`).
+`action_bind_axis` binds an axis to a pair. In a system, `action_state` says whether an
+action is held, was pressed this frame or was let go, and `action_value` where an axis is.
+So one game is played with keys at a desk and with swipes on a phone, and does not know which.
+
+## The game's own files
+
+`file_write` and `file_read` keep small files, a best score or the player's choices, in
+the folder the system keeps a program's own files in for the person playing: the game's
+saved games' folder, which on a phone is among the app's own files. A file is named
+plainly, with no folders in it, and written whole, so it is never found half written.
+
 ## Hierarchy
 
 `set_parent` makes one entity a child of another, so its transform is relative to the
@@ -441,8 +481,7 @@ mouse, `cursorGrabbed` says whether it is held, and `quit` ends the game after t
 
 ## What the interface does not cover yet
 
-Plugins cannot yet play a model's animations, draw text or UI, play sound,
-use joints or character controllers, edit voxel terrain, or see any engine component other
-than `mira.Transform`. Point and spot lights don't exist in the engine yet. Queries have no
+Plugins cannot yet play a model's animations, draw text or UI, use joints or character
+controllers, or see any engine component other than `mira.Transform`. Point and spot lights don't exist in the engine yet. Queries have no
 optional terms or change filters. A plugin cannot be removed while the app runs. The table of functions is
 versioned and carries its own size, so these can be added without breaking existing plugins.

@@ -999,3 +999,107 @@ fun withVector (v : (Float, Float, Float)) body =
   Ffi.withBuffer 12 (\p ->
     let u = Ffi.writeFloats p 4 [x, y, z] in
     body p)
+
+-- ---------------------------------------------------------------------------------------
+-- Settings and input actions (while loading)
+
+-- A 32-bit answer from the table, with its sign.
+fun signed32 (x : Int) : Int = let u = x % 4294967296 in if u >= 2147483648 then u - 4294967296 else u
+
+-- Sets one of the engine's settings by name, as the plugin loads: "view_mode" (the view
+-- values below), "ray_tracing", "multisampling", "taa", "bloom", "vignette", "grain",
+-- "sharpen", "exposure", "contrast", "saturation", "render_scale", "mouse_as_finger",
+-- "swipe_distance". Answers 0, or -1 for no such setting.
+@pub fun setting (p : Plugin) (name : String) (value : Float) : Int ! { Process | e } =
+  match p with
+  | Plugin api app _ -> Ffi.withText name (\t n -> signed32 (ok (Ffi.callInt (slot api 74) [Arg.Int app, Arg.Ptr t, Arg.Int n, Arg.Float value])))
+
+-- How the scene is drawn, for the setting "view_mode": unlit is each surface in its own
+-- colour, with no light or shadow on it, as a flat game is.
+@pub def viewLit : Float = 0.0
+@pub def viewUnlit : Float = 1.0
+@pub def viewLightingOnly : Float = 2.0
+@pub def viewNormals : Float = 3.0
+@pub def viewWireframe : Float = 4.0
+
+-- Binds an action to a key, a mouse button, a swipe, a tap or a controller's button by its
+-- name ("KeyW", "MouseLeft", "SwipeUp", "Tap", "PadSouth"), besides what it is bound to
+-- already. Answers 0, or -1 for no such binding.
+@pub fun bindAction (p : Plugin) (action : String) (binding : String) : Int ! { Process | e } =
+  match p with
+  | Plugin api app _ ->
+      Ffi.withText action (\a an -> Ffi.withText binding (\b bn ->
+        signed32 (ok (Ffi.callInt (slot api 75) [Arg.Int app, Arg.Ptr a, Arg.Int an, Arg.Ptr b, Arg.Int bn]))))
+
+-- Binds an axis to a pair: the first pulls it toward -1, the second toward 1.
+@pub fun bindAxis (p : Plugin) (axis : String) (less : String) (more : String) : Int ! { Process | e } =
+  match p with
+  | Plugin api app _ ->
+      Ffi.withText axis (\a an -> Ffi.withText less (\l ln -> Ffi.withText more (\m mn ->
+        signed32 (ok (Ffi.callInt (slot api 76) [Arg.Int app, Arg.Ptr a, Arg.Int an, Arg.Ptr l, Arg.Int ln, Arg.Ptr m, Arg.Int mn])))))
+
+-- ---------------------------------------------------------------------------------------
+-- Input actions (inside a system)
+
+fun actionBits (sys : System) (action : String) : Int ! { Process | e } =
+  Ffi.withText action (\t n -> call sys 77 [Arg.Ptr t, Arg.Int n] % 8)
+
+-- Whether an action is held now, was pressed this frame, was let go this frame. A swipe or a
+-- tap is held for the frame it happens in.
+@pub fun actionHeld (sys : System) (action : String) : Bool ! { Process | e } = actionBits sys action % 2 == 1
+@pub fun actionPressed (sys : System) (action : String) : Bool ! { Process | e } = (actionBits sys action / 2) % 2 == 1
+@pub fun actionReleased (sys : System) (action : String) : Bool ! { Process | e } = (actionBits sys action / 4) % 2 == 1
+
+-- Where an axis is, from -1 to 1.
+@pub fun actionValue (sys : System) (axis : String) : Float ! { Process | e } =
+  Ffi.withText axis (\t n -> okFloat (Ffi.callFloat32 (slot (apiOf sys) 78) [runOf sys, Arg.Ptr t, Arg.Int n]))
+
+-- ---------------------------------------------------------------------------------------
+-- Pictures and sounds made from code
+
+-- Flags for `createImage`, added: each pixel a crisp square however far it is enlarged (pixel
+-- art), and read as plain numbers rather than colour (data such as normals).
+@pub def imagePixelated : Int = 1
+@pub def imageLinear : Int = 2
+
+-- An image made from `width` x `height` pixels, four numbers each from 0 to 255 (red,
+-- green, blue, alpha), row by row from the top, kept under `name`: the same name gives the
+-- same image, its pixels made anew. Answers the image, or 0.
+@pub fun createImage (sys : System) (name : String) (width : Int) (height : Int) (rgba : [Int]) (flags : Int) : Int ! { Process | e } =
+  if len rgba < width * height * 4 then 0
+  else
+    Ffi.withBuffer (width * height * 4) (\pixels ->
+      let u = Ffi.writeInts pixels 1 rgba in
+      Ffi.withText name (\t n -> call sys 71 [Arg.Ptr t, Arg.Int n, Arg.Int width, Arg.Int height, Arg.Ptr pixels, Arg.Int flags] % 4294967296))
+
+-- Draws the entity only where its picture's alpha reaches `cutoff` (0 to 1), as a sprite cut
+-- out of its background; a cutoff below 0 draws it all. When the system returns.
+@pub fun setAlphaCutoff (sys : System) (entity : Int) (cutoff : Float) : () ! { Process | e } =
+  callUnit sys 72 [Arg.Int entity, Arg.Float32 cutoff]
+
+-- A sound made from samples from -1 to 1, `channels` (1 or 2) to a frame, `rate` frames a
+-- second, kept under `name`: the first time it is made, and the same sound after. Answers
+-- the sound, or 0.
+@pub fun createSound (sys : System) (name : String) (rate : Int) (channels : Int) (samples : [Float]) : Int ! { Process | e } =
+  Ffi.withBuffer (4 * max 1 (len samples)) (\values ->
+    let u = Ffi.writeFloats values 4 samples in
+    Ffi.withText name (\t n -> call sys 73 [Arg.Ptr t, Arg.Int n, Arg.Int rate, Arg.Int channels, Arg.Ptr values, Arg.Int (len samples)] % 4294967296))
+
+-- ---------------------------------------------------------------------------------------
+-- The game's own files: a small file in the folder the game's own files are kept in for the
+-- person playing (on a phone too), by the game's name and the file's, with no folders in it.
+
+-- Writes text to such a file, at once and whole. Answers whether it was written.
+@pub fun writeGameText (sys : System) (game : String) (name : String) (text : String) : Bool ! { Process | e } =
+  Ffi.withText game (\g gn -> Ffi.withText name (\f fn -> Ffi.withText text (\d dn ->
+    signed32 (call sys 79 [Arg.Ptr g, Arg.Int gn, Arg.Ptr f, Arg.Int fn, Arg.Ptr d, Arg.Int dn]) == 0)))
+
+-- The text in such a file, if there is one.
+@pub fun readGameText (sys : System) (game : String) (name : String) : Maybe String ! { Process | e } =
+  Ffi.withText game (\g gn -> Ffi.withText name (\f fn ->
+    let size = call sys 80 [Arg.Ptr g, Arg.Int gn, Arg.Ptr f, Arg.Int fn, Arg.Ptr Ffi.null, Arg.Int 0] in
+    if size < 0 then None
+    else
+      Ffi.withBuffer (max 1 size) (\out ->
+        let got = call sys 80 [Arg.Ptr g, Arg.Int gn, Arg.Ptr f, Arg.Int fn, Arg.Ptr out, Arg.Int size] in
+        Just (Ffi.readText out (if got < size then got else size)))))

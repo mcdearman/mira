@@ -404,3 +404,50 @@ void mira_hs_set_cursor_grabbed(MiraSystem *system, uint32_t grabbed) {
 uint32_t mira_hs_cursor_grabbed(MiraSystem *system) { return api->cursor_grabbed(system); }
 
 void mira_hs_quit(MiraSystem *system) { api->quit(system); }
+
+/* Pictures and sounds made by the plugin, settings, input actions, and the game's files. */
+uint32_t mira_hs_image_create(MiraSystem *system, const char *name, size_t len, uint32_t width,
+                              uint32_t height, const uint8_t *rgba, uint32_t flags) {
+    return api->image_create(system, name, len, width, height, rgba, flags);
+}
+
+void mira_hs_set_alpha_cutoff(MiraSystem *system, MiraEntity entity, float cutoff) {
+    api->set_alpha_cutoff(system, entity, cutoff);
+}
+
+uint32_t mira_hs_sound_create(MiraSystem *system, const char *name, size_t len, uint32_t rate,
+                              uint32_t channels, const float *samples, size_t count) {
+    return api->sound_create(system, name, len, rate, channels, samples, count);
+}
+
+int32_t mira_hs_setting(MiraApp *app, const char *name, size_t len, double value) {
+    return api->setting(app, name, len, value);
+}
+
+int32_t mira_hs_action_bind(MiraApp *app, const char *action, size_t action_len,
+                            const char *binding, size_t binding_len) {
+    return api->action_bind(app, action, action_len, binding, binding_len);
+}
+
+int32_t mira_hs_action_bind_axis(MiraApp *app, const char *axis, size_t axis_len, const char *less,
+                                 size_t less_len, const char *more, size_t more_len) {
+    return api->action_bind_axis(app, axis, axis_len, less, less_len, more, more_len);
+}
+
+uint32_t mira_hs_action_state(MiraSystem *system, const char *action, size_t len) {
+    return api->action_state(system, action, len);
+}
+
+float mira_hs_action_value(MiraSystem *system, const char *axis, size_t len) {
+    return api->action_value(system, axis, len);
+}
+
+int32_t mira_hs_file_write(MiraSystem *system, const char *game, size_t game_len, const char *name,
+                           size_t name_len, const uint8_t *data, size_t len) {
+    return api->file_write(system, game, game_len, name, name_len, data, len);
+}
+
+int64_t mira_hs_file_read(MiraSystem *system, const char *game, size_t game_len, const char *name,
+                          size_t name_len, uint8_t *out, size_t capacity) {
+    return api->file_read(system, game, game_len, name, name_len, out, capacity);
+}

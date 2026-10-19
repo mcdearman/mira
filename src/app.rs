@@ -98,6 +98,7 @@ impl App {
         };
         app.add_event::<AppExit>();
         app.init_resource::<PluginEvents>();
+        app.init_resource::<crate::plugin::ImageNames>();
         app.init_resource::<TypeRegistry>();
         app.init_resource::<Live>();
         app.init_resource::<crate::live::FrameStats>();

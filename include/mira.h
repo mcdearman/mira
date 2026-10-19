@@ -126,6 +126,22 @@ enum {
 /* For `system_order`. */
 enum { MIRA_BEFORE = 0, MIRA_AFTER = 1 };
 
+/* For `image_create`: drawn with each pixel a crisp square however far it is enlarged (for
+ * pixel art), and read as plain numbers rather than sRGB colour (for data, such as normals). */
+enum { MIRA_IMAGE_PIXELATED = 1, MIRA_IMAGE_LINEAR = 2 };
+
+/* For `setting` iew_mode. */
+enum {
+    MIRA_VIEW_LIT = 0,
+    MIRA_VIEW_UNLIT = 1, /* each surface in its own colour, with no light or shadow on it */
+    MIRA_VIEW_LIGHTING_ONLY = 2,
+    MIRA_VIEW_NORMALS = 3,
+    MIRA_VIEW_WIREFRAME = 4
+};
+
+/* What `action_state` says of an action. */
+enum { MIRA_ACTION_DOWN = 1, MIRA_ACTION_PRESSED = 2, MIRA_ACTION_RELEASED = 4 };
+
 /* How a signal is worked out from its inputs, for `signal_define`. */
 enum {
     MIRA_SIGNAL_AND = 0,
@@ -590,6 +606,78 @@ typedef struct MiraApi {
     uint32_t (*cursor_grabbed)(MiraSystem *system);
     /* Ends the game after this frame. */
     void (*quit)(MiraSystem *system);
+
+    /* ---- pictures and sounds made by the plugin (inside a system) ---- */
+
+    /* An image made from width x height pixels, four bytes each (red, green, blue,
+     * alpha), row by row from the top. lags is MIRA_IMAGE_ values. It is kept under 
+ame:
+     * the same name gives the same image every time, its pixels made anew from these, so a
+     * reloaded plugin has the images it had. Returns 0 if it cannot be made. */
+    MiraImage (*image_create)(MiraSystem *system, const char *name, size_t len, uint32_t width,
+                              uint32_t height, const uint8_t *rgba, uint32_t flags);
+    /* Draws the entity's surface only where its picture's alpha reaches cutoff (0 to 1),
+     * and not at all elsewhere, as for a sprite cut out of its background; a cutoff below 0
+     * draws it all. When the system returns; the entity is given a material if it has none. */
+    void (*set_alpha_cutoff)(MiraSystem *system, MiraEntity entity, float cutoff);
+    /* A sound made from count samples, each from -1 to 1, channels to a frame (1 or 2,
+     * interleaved), ate frames a second. Kept under 
+ame as images are: the first time a
+     * name is asked for it is made, and every time after it is the same sound. Returns 0 if
+     * it cannot be made. */
+    MiraSound (*sound_create)(MiraSystem *system, const char *name, size_t len, uint32_t rate,
+                              uint32_t channels, const float *samples, size_t count);
+
+    /* ---- settings (inside mira_plugin_load) ---- */
+
+    /* Sets one of the engine's settings by name, before the game runs: how it looks, and how
+     * it is played. Returns 0, or -1 if there is no such setting or the app has none.
+     *   view_mode       MIRA_VIEW_ values: lit, or each surface in its own colour, unlit
+     *   ray_tracing     0 or 1: whether light is traced, where the graphics can
+     *   multisampling   0 or 1: whether edges are smoothed
+     *   taa             0 or 1: whether frames are blended over time
+     *   bloom, vignette, grain, sharpen, exposure, contrast, saturation, render_scale:
+     *                   as the post-processing has them (0 turns the first four off)
+     *   mouse_as_finger 0 or 1: whether the left mouse button stands for a finger
+     *   swipe_distance  how far a finger goes to have swiped, in pixels
+     * The graphics are opened with what the first three say: set them while loading. */
+    int32_t (*setting)(MiraApp *app, const char *name, size_t len, double value);
+
+    /* ---- input actions ---- */
+
+    /* During load: binds an action, by name, to a key, a mouse button, a swipe, a tap or a
+     * controller's button, besides what it is bound to already. The binding is named as the
+     * engine writes bindings down: `KeyW`, `Space`, `ArrowUp`, `MouseLeft`, `SwipeUp`,
+     * `SwipeDown`, `SwipeLeft`, `SwipeRight`, `Tap`, `PadSouth`. Returns 0, or -1 for a
+     * binding with no such name or an app without actions. */
+    int32_t (*action_bind)(MiraApp *app, const char *action, size_t action_len,
+                           const char *binding, size_t binding_len);
+    /* During load: binds an axis to a pair, the first pulling it toward -1 and the second
+     * toward 1. Returns 0, or -1 as action_bind does. */
+    int32_t (*action_bind_axis)(MiraApp *app, const char *axis, size_t axis_len,
+                                const char *less, size_t less_len, const char *more,
+                                size_t more_len);
+    /* Inside a system: an action's state, as MIRA_ACTION_ bits: held, pressed this frame, let
+     * go this frame. A swipe or a tap is held for the frame it happens. */
+    uint32_t (*action_state)(MiraSystem *system, const char *action, size_t len);
+    /* Inside a system: where an axis is, from -1 to 1. */
+    float (*action_value)(MiraSystem *system, const char *axis, size_t len);
+
+    /* ---- the game's own files ---- */
+
+    /* Writes a small file, 
+ame, into the folder the system keeps the game's own files in
+     * for the person playing (its saved games' folder: see SaveGames::for_game), at once and
+     * whole. game names the game; 
+ame is a file's name, with no folders in it. Returns 0,
+     * or -1 if it could not be written. */
+    int32_t (*file_write)(MiraSystem *system, const char *game, size_t game_len,
+                          const char *name, size_t name_len, const uint8_t *data, size_t len);
+    /* Reads such a file into out, up to capacity bytes. Returns the file's whole length
+     * (more than capacity if it did not all fit; ask again with room for it), or -1 if
+     * there is no such file. */
+    int64_t (*file_read)(MiraSystem *system, const char *game, size_t game_len, const char *name,
+                         size_t name_len, uint8_t *out, size_t capacity);
 } MiraApi;
 
 /* ---- conveniences for C and C++ ---- */

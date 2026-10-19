@@ -29,6 +29,7 @@ pub mod scripts;
 mod system;
 
 pub use events::PluginEvents;
+pub(crate) use system::ImageNames;
 
 #[cfg(test)]
 mod tests;

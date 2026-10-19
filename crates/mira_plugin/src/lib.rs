@@ -209,6 +209,17 @@ pub struct Image(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sound(pub u32);
 
+/// What `System::action` says of an action.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ActionState {
+    /// Held down now.
+    pub held: bool,
+    /// Pressed this frame.
+    pub pressed: bool,
+    /// Let go this frame.
+    pub released: bool,
+}
+
 /// A sound that is playing, from [`System::play_sound`].
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -411,6 +422,33 @@ impl App {
         // SAFETY: called during load with the engine's pointer; the engine copies the name.
         let status = unsafe { (api().require)(self.raw, part.as_ptr(), part.len()) };
         if status == 0 { Ok(()) } else { Err(Error(format!("there is no part of the engine called `{part}`"))) }
+    }
+
+    /// Sets one of the engine's settings, before the game runs: `view_mode` (`sys::MIRA_VIEW_`),
+    /// `ray_tracing`, `multisampling`, `taa`, `bloom`, `vignette`, `grain`, `sharpen`,
+    /// `exposure`, `contrast`, `saturation`, `render_scale`, `mouse_as_finger`,
+    /// `swipe_distance`. See `setting` in `include/mira.h`.
+    pub fn setting(&mut self, name: &str, value: f64) -> Result<(), Error> {
+        // SAFETY: called during load with the engine's pointer; the engine copies the name.
+        let status = unsafe { (api().setting)(self.raw, name.as_ptr(), name.len(), value) };
+        if status == 0 { Ok(()) } else { Err(Error(format!("the setting `{name}` can't be {value}"))) }
+    }
+
+    /// Binds an action to a key, button or gesture by its name (`KeyW`, `MouseLeft`,
+    /// `SwipeUp`, `Tap`, `PadSouth`), besides what it is bound to already.
+    pub fn bind_action(&mut self, action: &str, binding: &str) -> Result<(), Error> {
+        // SAFETY: as above.
+        let status = unsafe { (api().action_bind)(self.raw, action.as_ptr(), action.len(), binding.as_ptr(), binding.len()) };
+        if status == 0 { Ok(()) } else { Err(Error(format!("`{action}` can't be bound to `{binding}`"))) }
+    }
+
+    /// Binds an axis to a pair: `less` pulls it toward -1, `more` toward 1.
+    pub fn bind_axis(&mut self, axis: &str, less: &str, more: &str) -> Result<(), Error> {
+        // SAFETY: as above.
+        let status = unsafe {
+            (api().action_bind_axis)(self.raw, axis.as_ptr(), axis.len(), less.as_ptr(), less.len(), more.as_ptr(), more.len())
+        };
+        if status == 0 { Ok(()) } else { Err(Error(format!("`{axis}` can't be bound to `{less}` and `{more}`"))) }
     }
 
     /// Defines a component stored as the bytes of `T`, or finds it if this plugin defined it
@@ -784,6 +822,79 @@ impl System {
     pub fn quit(&mut self) {
         // SAFETY: called inside the system.
         unsafe { (api().quit)(self.raw) }
+    }
+
+    /// An image made from `width` x `height` RGBA pixels, row by row from the top, kept
+    /// under `name`: the same name gives the same image, its pixels made anew. `flags` is
+    /// `sys::MIRA_IMAGE_PIXELATED` and `sys::MIRA_IMAGE_LINEAR`. None if it can't be made.
+    pub fn create_image(&mut self, name: &str, width: u32, height: u32, rgba: &[u8], flags: u32) -> Option<Image> {
+        if rgba.len() < width as usize * height as usize * 4 {
+            return None;
+        }
+        // SAFETY: called inside the system; the engine copies the name and the pixels, and
+        // reads no more than the length checked above.
+        let image = unsafe { (api().image_create)(self.raw, name.as_ptr(), name.len(), width, height, rgba.as_ptr(), flags) };
+        (image != 0).then_some(Image(image))
+    }
+
+    /// Draws the entity only where its picture's alpha reaches `cutoff`, as a sprite cut out
+    /// of its background; None draws it all. When this system returns.
+    pub fn set_alpha_cutoff(&mut self, entity: Entity, cutoff: Option<f32>) {
+        // SAFETY: called inside the system.
+        unsafe { (api().set_alpha_cutoff)(self.raw, entity.0, cutoff.unwrap_or(-1.0)) }
+    }
+
+    /// A sound made from samples from -1 to 1, `channels` (1 or 2) to a frame, `rate` frames
+    /// a second, kept under `name`: the first time it is made, and the same sound after.
+    pub fn create_sound(&mut self, name: &str, rate: u32, channels: u32, samples: &[f32]) -> Option<Sound> {
+        // SAFETY: called inside the system; the engine copies the name and the samples.
+        let sound = unsafe {
+            (api().sound_create)(self.raw, name.as_ptr(), name.len(), rate, channels, samples.as_ptr(), samples.len())
+        };
+        (sound != 0).then_some(Sound(sound))
+    }
+
+    /// An action's state: held, pressed this frame, let go this frame.
+    pub fn action(&self, action: &str) -> ActionState {
+        // SAFETY: called inside the system; the engine copies the name.
+        let bits = unsafe { (api().action_state)(self.raw, action.as_ptr(), action.len()) };
+        ActionState {
+            held: bits & sys::MIRA_ACTION_DOWN != 0,
+            pressed: bits & sys::MIRA_ACTION_PRESSED != 0,
+            released: bits & sys::MIRA_ACTION_RELEASED != 0,
+        }
+    }
+
+    /// Where an axis is, from -1 to 1.
+    pub fn axis(&self, axis: &str) -> f32 {
+        // SAFETY: as above.
+        unsafe { (api().action_value)(self.raw, axis.as_ptr(), axis.len()) }
+    }
+
+    /// Writes a small file into the folder the game's own files are kept in for the person
+    /// playing, at once and whole. `name` has no folders in it.
+    pub fn write_file(&mut self, game: &str, name: &str, data: &[u8]) -> Result<(), Error> {
+        // SAFETY: called inside the system; the engine reads `data` and copies nothing else.
+        let status = unsafe {
+            (api().file_write)(self.raw, game.as_ptr(), game.len(), name.as_ptr(), name.len(), data.as_ptr(), data.len())
+        };
+        if status == 0 { Ok(()) } else { Err(Error(format!("`{name}` could not be written"))) }
+    }
+
+    /// Reads such a file whole, if there is one.
+    pub fn read_file(&mut self, game: &str, name: &str) -> Option<Vec<u8>> {
+        let read = |out: &mut [u8]| {
+            // SAFETY: called inside the system; the engine writes no more than `out`'s length.
+            unsafe {
+                (api().file_read)(self.raw, game.as_ptr(), game.len(), name.as_ptr(), name.len(), out.as_mut_ptr(), out.len())
+            }
+        };
+        let length = usize::try_from(read(&mut [])).ok()?;
+        let mut out = vec![0; length];
+        // Read again into room for it all: a file that grew in between is cut at what was asked.
+        let read_now = usize::try_from(read(&mut out)).ok()?;
+        out.truncate(read_now.min(length));
+        Some(out)
     }
 
     /// Seconds since the last frame (or the fixed timestep, in `FixedUpdate`).
