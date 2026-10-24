@@ -35,6 +35,16 @@ In the voxel world, click to capture the mouse, then: WASD / Space / Shift to fl
 break a block, right click to place one (1-4 picks which), F to throw a ball, Esc to release
 the mouse and again to quit. The whole game is [`examples/voxel_world/World.mw`](examples/voxel_world/World.mw).
 
+```
+cargo run --release --bin mira-play -- examples/retro_dunk
+```
+
+RetroDunk is pixel-art basketball, three on three on half a court, in the spirit of Retro
+Bowl: you play your possessions and theirs are played out for you; first to 21, with your
+record kept. WASD to move, hold Space and let go at the top of the meter to shoot, E to
+pass. Everything in it, the court, the players and the sounds, is made in its script,
+[`examples/retro_dunk/Dunk.mw`](examples/retro_dunk/Dunk.mw).
+
 ## Demos
 
 ```sh

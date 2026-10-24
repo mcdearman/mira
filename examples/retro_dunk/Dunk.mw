@@ -1,0 +1,825 @@
+-- RetroDunk: pixel-art basketball, three on three on half a court, seen from above. You
+-- play every one of your team's possessions; the other team's are played out for you and
+-- told, as Retro Bowl does with its defence. First to 21 wins, and your record is kept.
+--
+-- > cargo run --bin mira-play -- examples/retro_dunk
+--
+-- WASD or the arrows move whoever has the ball. Hold Space (or the left mouse button) to
+-- rise for a shot and let go at the top of the meter: green is the sweet spot. E (or the
+-- right mouse button) passes to the most open teammate, and you play on as them. Inside
+-- the arc a basket is 2, beyond it 3; close in, it is a dunk. The shot clock is 14
+-- seconds, and a defender left at your side long enough takes the ball.
+--
+-- Everything seen and heard is made here, from code: the court, the players, the ball and
+-- the letters are pictures worked out pixel by pixel, and the sounds sample by sample.
+
+use Mira as M
+use Std.Num.Float as F
+use Std.Collections.Vector as V
+use Std.String as S
+use Std.Char as C
+use Std.Ffi (Ptr)
+
+-- ---------------------------------------------------------------------------------------
+-- The court, in metres: x across, z from the baseline (top of the screen) to half court.
+
+def baseline : Float = 0.0 -. 7.0
+def halfCourt : Float = 7.0
+def sideline : Float = 7.5
+def hoopZ : Float = 0.0 -. 5.4
+def arc : Float = 6.75
+def toWin : Int = 21
+def shotClockSeconds : Float = 14.0
+def runSpeed : Float = 5.2
+def guardSpeed : Float = 4.2
+def game : String = "RetroDunk"
+
+-- What the systems are kept, by place.
+def transformAt : Int = 0
+def playerAt : Int = 1
+def ballAt : Int = 2
+def textAt : Int = 3
+def intsAt : Int = 4
+def floatsAt : Int = 5
+def glyphsAt : Int = 6
+
+-- The game's numbers, in a block the engine keeps: whole numbers by place...
+def phaseI : Int = 0
+def oursI : Int = 1
+def theirsI : Int = 2
+def handlerI : Int = 3
+def seedI : Int = 4
+def winsI : Int = 5
+def lossesI : Int = 6
+def pointsI : Int = 7
+def madeI : Int = 8
+def passToI : Int = 9
+def messageI : Int = 10
+def shownI : Int = 11
+def afterI : Int = 12
+def bounceI : Int = 13
+def gamesI : Int = 14
+def startedI : Int = 15
+-- ...the pictures and sounds made at the start...
+def ourFrameI : Int = 20
+def theirFrameI : Int = 22
+def ballImageI : Int = 24
+def shadowImageI : Int = 25
+def markerImageI : Int = 26
+def tileI : Int = 27
+def dribbleI : Int = 30
+def swishI : Int = 31
+def clankI : Int = 32
+def buzzerI : Int = 33
+def cheerI : Int = 34
+-- ...and the fractional ones.
+def timerF : Int = 0
+def clockF : Int = 1
+def meterF : Int = 2
+def risingF : Int = 3
+def ballXF : Int = 4
+def ballZF : Int = 5
+def ballHF : Int = 6
+def fromXF : Int = 7
+def fromZF : Int = 8
+def flightF : Int = 9
+def lengthF : Int = 10
+def toXF : Int = 11
+def toZF : Int = 12
+def guardedF : Int = 13
+def nowF : Int = 14
+
+-- The phases of a possession.
+def ready : Int = 0
+def live : Int = 1
+def shooting : Int = 2
+def result : Int = 3
+def theirTurn : Int = 4
+def over : Int = 5
+def passing : Int = 6
+
+-- What is said in the middle of the court, by number.
+fun said (message : Int) : String =
+  if message == 1 then "SWISH!"
+  else if message == 2 then "THREE!"
+  else if message == 3 then "DUNK!"
+  else if message == 4 then "MISS"
+  else if message == 5 then "STOLEN!"
+  else if message == 6 then "SHOT CLOCK"
+  else if message == 7 then "THEY SCORE 2"
+  else if message == 8 then "THEY HIT A 3"
+  else if message == 9 then "STOP!"
+  else if message == 10 then "YOU WIN!"
+  else if message == 11 then "YOU LOSE"
+  else if message == 12 then "YOUR BALL"
+  else if message == 13 then "REBOUND!"
+  else if message == 14 then "PICKED OFF"
+  else ""
+
+-- ---------------------------------------------------------------------------------------
+-- Loading
+
+@export
+fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
+  M.load api app (\p ->
+    let transform = M.lookupComponent p "mira.Transform" in
+    -- A player: team (0 yours, 1 theirs), place in the team, and how far it has run.
+    let player = M.registerComponent p "dunk.Player" 16 4 in
+    -- The ball (0), its shadow (1), and the mark over whoever has it (2).
+    let ball = M.registerComponent p "dunk.Ball" 4 4 in
+    -- A letter: on the board (1), said in the middle (2), or the help (3).
+    let text = M.registerComponent p "dunk.Text" 4 4 in
+    let ints = M.state p "dunk.ints" 256 4 in
+    let floats = M.state p "dunk.floats" 128 4 in
+    let glyphs = M.state p "dunk.glyphs" 256 4 in
+    let u = M.keep p [transform, player, ball, text, M.address ints, M.address floats, M.address glyphs] in
+    -- A flat picture, every surface its own colour, nothing smoothed.
+    let looks = [
+        M.setting p "view_mode" M.viewUnlit,
+        M.setting p "ray_tracing" 0.0,
+        M.setting p "taa" 0.0,
+        M.setting p "bloom" 0.0,
+        M.setting p "vignette" 0.0,
+        M.setting p "grain" 0.0,
+        M.setting p "sharpen" 0.0
+      ]
+    in
+    let keys = [
+        M.bindAxis p "across" "KeyA" "KeyD",
+        M.bindAxis p "across" "ArrowLeft" "ArrowRight",
+        M.bindAxis p "along" "KeyW" "KeyS",
+        M.bindAxis p "along" "ArrowUp" "ArrowDown",
+        M.bindAction p "shoot" "Space",
+        M.bindAction p "shoot" "MouseLeft",
+        M.bindAction p "pass" "KeyE",
+        M.bindAction p "pass" "MouseRight"
+      ]
+    in
+    let added = [
+        M.addSystem p "setup" M.startup "dunk_setup" [],
+        M.addSystemWith p "play" M.update "dunk_play" [
+            [M.writes player, M.writes transform, M.lacking ball],
+            [M.reads ball, M.writes transform],
+            [M.reads text]
+          ]
+      ]
+    in
+    if V.all (\r -> r == 0) looks and V.all (\r -> r == 0) keys and added == [0, 0] then 0 else 0 - 1)
+
+-- The game's numbers.
+fun ints (sys : M.System) : Ptr ! Process = M.pointer (M.kept sys intsAt)
+fun floats (sys : M.System) : Ptr ! Process = M.pointer (M.kept sys floatsAt)
+fun geti (sys : M.System) (i : Int) : Int ! Process = M.readInt32At (ints sys) i
+fun seti (sys : M.System) (i : Int) (n : Int) : () ! Process = M.writeInt32At (ints sys) i n
+fun getf (sys : M.System) (i : Int) : Float ! Process = M.readFloat32 (floats sys) i
+fun setf (sys : M.System) (i : Int) (x : Float) : () ! Process = M.writeFloat32 (floats sys) i x
+
+-- A number from 0 to 1, from a generator kept with the game, so that a game can be played
+-- again the same way.
+fun random (sys : M.System) : Float ! Process =
+  let s = (geti sys seedI * 1103515245 + 12345) % 2147483648 in
+  let u = seti sys seedI s in
+  toFloat s /. 2147483648.0
+
+-- ---------------------------------------------------------------------------------------
+-- Pictures, worked out from code
+
+-- A picture's pixels, four numbers each, from what colour each place is.
+fun generated (w : Int) (h : Int) (colour : Int -> Int -> (Int, Int, Int, Int)) : [Int] =
+  concatMap (\i -> let (r, g, b, a) = colour (i % w) (i / w) in [r, g, b, a]) (range 0 (w * h))
+
+-- A picture drawn as rows of letters, each letter a colour of the palette.
+fun drawn (rows : [String]) (palette : String -> (Int, Int, Int, Int)) : [Int] =
+  concatMap (\row -> concatMap (\c -> let (r, g, b, a) = palette (C.toString c) in [r, g, b, a]) (S.chars row)) rows
+
+def clear : (Int, Int, Int, Int) = (0, 0, 0, 0)
+
+-- A player seen from above and a little in front: two strides, in a team's colours.
+def standing : [String] = [
+    "...hhhh...",
+    "..hhhhhh..",
+    "..hsssshh.",
+    "...ssss...",
+    ".jjjjjjjj.",
+    "sjjjnnjjjs",
+    "sjjjnnjjjs",
+    "sjjjjjjjjs",
+    ".JJJJJJJJ.",
+    "..dddddd..",
+    "..dd..dd..",
+    "..ss..ss..",
+    "..ss..ss..",
+    "..kk..kk.."
+  ]
+
+def striding : [String] = [
+    "...hhhh...",
+    "..hhhhhh..",
+    "..hsssshh.",
+    "...ssss...",
+    ".jjjjjjjj.",
+    "sjjjnnjjjs",
+    "sjjjnnjjj.",
+    ".jjjjjjjjs",
+    ".JJJJJJJJ.",
+    "..dddddd..",
+    ".dd....dd.",
+    ".ss....ss.",
+    "ss......ss",
+    "kk......kk"
+  ]
+
+-- A team's colours: the jersey, its shadow, and the shorts.
+fun kit (team : Int) (key : String) : (Int, Int, Int, Int) =
+  let (jersey, dark, shorts) =
+    if team == 0 then ((214, 52, 48), (150, 30, 34), (240, 236, 226))
+    else ((52, 104, 214), (30, 62, 150), (24, 30, 52))
+  in
+  let solid = \c -> let (r, g, b) = c in (r, g, b, 255) in
+  if key == "j" then solid jersey
+  else if key == "J" then solid dark
+  else if key == "d" then solid shorts
+  else if key == "n" then (if team == 0 then (250, 244, 224, 255) else (240, 200, 60, 255))
+  else if key == "s" then (if team == 0 then (198, 134, 92, 255) else (122, 78, 50, 255))
+  else if key == "h" then (if team == 0 then (46, 32, 24, 255) else (24, 20, 18, 255))
+  else if key == "k" then (250, 250, 250, 255)
+  else clear
+
+-- The ball: orange, with its seams, and a gleam.
+fun ballColour (x : Int) (y : Int) : (Int, Int, Int, Int) =
+  let dx = toFloat x -. 3.5 in
+  let dy = toFloat y -. 3.5 in
+  let d = F.sqrt (dx *. dx +. dy *. dy) in
+  if d >. 3.9 then clear
+  else if x == 2 and y == 2 then (255, 196, 140, 255)
+  else if x == 4 or y == 4 or (d >. 2.6 and d <. 3.2 and x < 3) then (90, 40, 20, 255)
+  else (232, 112, 36, 255)
+
+-- A shadow on the floor, and the mark over whoever has the ball.
+fun shadowColour (x : Int) (y : Int) : (Int, Int, Int, Int) =
+  let dx = (toFloat x -. 5.5) /. 6.0 in
+  let dy = (toFloat y -. 2.5) /. 3.0 in
+  if dx *. dx +. dy *. dy >. 1.0 then clear else (70, 46, 30, 255)
+
+def marker : [String] = [
+    "yyyyyyy",
+    ".yyyyy.",
+    "..yyy..",
+    "...y..."
+  ]
+
+-- The court, an eighth of a metre a pixel: planks of maple, the paint, and the lines.
+def courtWide : Int = 120
+def courtDeep : Int = 112
+
+fun courtColour (px : Int) (py : Int) : (Int, Int, Int, Int) =
+  let x = (0.0 -. sideline) +. (toFloat px +. 0.5) *. 0.125 in
+  let z = baseline +. (toFloat py +. 0.5) *. 0.125 in
+  let near = \a b -> F.abs (a -. b) <. 0.07 in
+  let fromHoop = F.sqrt (x *. x +. (z -. hoopZ) *. (z -. hoopZ)) in
+  let corner = F.abs x >. 6.6 in
+  let threeLine = (near fromHoop arc and not corner and z >. 0.0 -. 4.0) or (near (F.abs x) 6.6 and z <. 0.0 -. 3.98) in
+  let paint = F.abs x <. 2.45 and z <. 0.0 -. 1.2 in
+  let paintLine = (near (F.abs x) 2.45 and z <. 0.0 -. 1.2) or (near z (0.0 -. 1.2) and F.abs x <. 2.45) in
+  let freeThrow = near (F.sqrt (x *. x +. (z +. 1.2) *. (z +. 1.2))) 1.8 and z >. 0.0 -. 1.2 in
+  let centre = near (F.sqrt (x *. x +. (z -. halfCourt) *. (z -. halfCourt))) 1.8 in
+  let edge = px == 0 or py == 0 or px == courtWide - 1 or py == courtDeep - 1 in
+  if edge or threeLine or paintLine or freeThrow or centre then (246, 240, 226, 255)
+  else
+    -- Planks run along the court, each its own shade, with a darker seam between.
+    let plank = px / 5 in
+    let shade = ((plank * 37 + (py + plank * 13) / 23 * 11) % 7) * 4 in
+    let seam = px % 5 == 0 in
+    if paint then (if seam then (128, 40, 36, 255) else (166 + shade / 2, 56, 46, 255))
+    else if seam then (176, 120, 66, 255)
+    else (212 + shade / 2, 154 + shade / 2, 92 + shade / 3, 255)
+
+-- The rim and its net, seen from above.
+fun rimColour (x : Int) (y : Int) : (Int, Int, Int, Int) =
+  let dx = toFloat x -. 7.5 in
+  let dy = toFloat y -. 7.5 in
+  let d = F.sqrt (dx *. dx +. dy *. dy) in
+  if d >. 7.6 then clear
+  else if d >. 6.2 then (236, 92, 30, 255)
+  else if (x + y) % 3 == 0 then (250, 250, 250, 255)
+  else clear
+
+fun backboardColour (x : Int) (y : Int) : (Int, Int, Int, Int) =
+  if y == 0 or y == 3 or x == 0 or x == 29 then (60, 64, 80, 255)
+  else if x > 11 and x < 18 then (220, 60, 50, 255)
+  else (236, 240, 246, 255)
+
+-- The letters, three pixels by five.
+fun letterRows (c : String) : [String] =
+  if c == "A" then [".w.", "w.w", "www", "w.w", "w.w"]
+  else if c == "B" then ["ww.", "w.w", "ww.", "w.w", "ww."]
+  else if c == "C" then [".ww", "w..", "w..", "w..", ".ww"]
+  else if c == "D" then ["ww.", "w.w", "w.w", "w.w", "ww."]
+  else if c == "E" then ["www", "w..", "ww.", "w..", "www"]
+  else if c == "F" then ["www", "w..", "ww.", "w..", "w.."]
+  else if c == "G" then [".ww", "w..", "w.w", "w.w", ".ww"]
+  else if c == "H" then ["w.w", "w.w", "www", "w.w", "w.w"]
+  else if c == "I" then ["www", ".w.", ".w.", ".w.", "www"]
+  else if c == "J" then ["..w", "..w", "..w", "w.w", ".w."]
+  else if c == "K" then ["w.w", "w.w", "ww.", "w.w", "w.w"]
+  else if c == "L" then ["w..", "w..", "w..", "w..", "www"]
+  else if c == "M" then ["w.w", "www", "www", "w.w", "w.w"]
+  else if c == "N" then ["ww.", "w.w", "w.w", "w.w", "w.w"]
+  else if c == "O" or c == "0" then ["www", "w.w", "w.w", "w.w", "www"]
+  else if c == "P" then ["ww.", "w.w", "ww.", "w..", "w.."]
+  else if c == "Q" then [".w.", "w.w", "w.w", "ww.", ".ww"]
+  else if c == "R" then ["ww.", "w.w", "ww.", "w.w", "w.w"]
+  else if c == "S" then [".ww", "w..", ".w.", "..w", "ww."]
+  else if c == "T" then ["www", ".w.", ".w.", ".w.", ".w."]
+  else if c == "U" then ["w.w", "w.w", "w.w", "w.w", "www"]
+  else if c == "V" then ["w.w", "w.w", "w.w", "w.w", ".w."]
+  else if c == "W" then ["w.w", "w.w", "www", "www", "w.w"]
+  else if c == "X" then ["w.w", "w.w", ".w.", "w.w", "w.w"]
+  else if c == "Y" then ["w.w", "w.w", ".w.", ".w.", ".w."]
+  else if c == "Z" then ["www", "..w", ".w.", "w..", "www"]
+  else if c == "1" then [".w.", "ww.", ".w.", ".w.", "www"]
+  else if c == "2" then ["www", "..w", "www", "w..", "www"]
+  else if c == "3" then ["www", "..w", "www", "..w", "www"]
+  else if c == "4" then ["w.w", "w.w", "www", "..w", "..w"]
+  else if c == "5" then ["www", "w..", "www", "..w", "www"]
+  else if c == "6" then ["www", "w..", "www", "w.w", "www"]
+  else if c == "7" then ["www", "..w", ".w.", ".w.", ".w."]
+  else if c == "8" then ["www", "w.w", "www", "w.w", "www"]
+  else if c == "9" then ["www", "w.w", "www", "..w", "www"]
+  else if c == "-" then ["...", "...", "www", "...", "..."]
+  else if c == "!" then [".w.", ".w.", ".w.", "...", ".w."]
+  else if c == ":" then ["...", ".w.", "...", ".w.", "..."]
+  else if c == "." then ["...", "...", "...", "...", ".w."]
+  else []
+
+def alphabet : String = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-!:."
+
+fun ink (key : String) : (Int, Int, Int, Int) = if key == "w" then (250, 244, 224, 255) else clear
+
+-- ---------------------------------------------------------------------------------------
+-- Sounds, worked out from code
+
+def rate : Int = 22050
+
+-- So many seconds of sound, sample by sample.
+fun made (seconds : Float) (wave : Float -> Int -> Float) : [Float] =
+  map (\i -> let v = wave (toFloat i /. toFloat rate) i in if v >. 1.0 then 1.0 else if v <. 0.0 -. 1.0 then 0.0 -. 1.0 else v) (range 0 (floor (seconds *. toFloat rate)))
+
+-- A rough noise, from the sample's number.
+fun noise (i : Int) : Float = toFloat ((i * 1103515245 + 12345) / 65536 % 32768) /. 16384.0 -. 1.0
+
+fun tau () : Float = F.tau
+
+-- ---------------------------------------------------------------------------------------
+-- The start
+
+@export
+fun dunk_setup (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let transform = M.kept sys transformAt in
+  let tile = M.meshPlane sys 1.0 in
+  let u0 = seti sys tileI tile in
+  let u1 = seti sys seedI 20261024 in
+  let u2 = seti sys handlerI 0 in
+  let u3 = seti sys shownI (0 - 1) in
+
+  -- Pictures.
+  let court = M.createImage sys "dunk.court" courtWide courtDeep (generated courtWide courtDeep courtColour) M.imagePixelated in
+  let rim = M.createImage sys "dunk.rim" 16 16 (generated 16 16 rimColour) M.imagePixelated in
+  let board = M.createImage sys "dunk.backboard" 30 4 (generated 30 4 backboardColour) M.imagePixelated in
+  let v1 = seti sys ourFrameI (M.createImage sys "dunk.ours.0" 10 14 (drawn standing (kit 0)) M.imagePixelated) in
+  let v2 = seti sys (ourFrameI + 1) (M.createImage sys "dunk.ours.1" 10 14 (drawn striding (kit 0)) M.imagePixelated) in
+  let v3 = seti sys theirFrameI (M.createImage sys "dunk.theirs.0" 10 14 (drawn standing (kit 1)) M.imagePixelated) in
+  let v4 = seti sys (theirFrameI + 1) (M.createImage sys "dunk.theirs.1" 10 14 (drawn striding (kit 1)) M.imagePixelated) in
+  let v5 = seti sys ballImageI (M.createImage sys "dunk.ball" 8 8 (generated 8 8 ballColour) M.imagePixelated) in
+  let v6 = seti sys shadowImageI (M.createImage sys "dunk.shadow" 12 6 (generated 12 6 shadowColour) M.imagePixelated) in
+  let v7 = seti sys markerImageI (M.createImage sys "dunk.marker" 7 4 (drawn marker (\k -> if k == "y" then (250, 220, 60, 255) else clear)) M.imagePixelated) in
+  let letters = M.pointer (M.kept sys glyphsAt) in
+  let v8 = V.forEach (\c -> let key = C.toString c in M.writeInt32At letters (C.code c - 32) (M.createImage sys ("dunk.letter." ++ key) 3 5 (drawn (letterRows key) ink) M.imagePixelated)) (S.chars alphabet) in
+
+  -- Sounds.
+  let w1 = seti sys dribbleI (M.createSound sys "dunk.dribble" rate 1 (made 0.1 (\t i -> F.sin (tau () *. 95.0 *. t) *. F.exp (0.0 -. t *. 40.0) *. 0.9))) in
+  let w2 = seti sys swishI (M.createSound sys "dunk.swish" rate 1 (made 0.35 (\t i -> noise i *. (1.0 -. t /. 0.35) *. (1.0 -. t /. 0.35) *. 0.45))) in
+  let w3 = seti sys clankI (M.createSound sys "dunk.clank" rate 1 (made 0.4 (\t i -> (F.sin (tau () *. 780.0 *. t) +. 0.6 *. F.sin (tau () *. 1170.0 *. t) +. 0.4 *. F.sin (tau () *. 1630.0 *. t)) *. F.exp (0.0 -. t *. 9.0) *. 0.3))) in
+  let w4 = seti sys buzzerI (M.createSound sys "dunk.buzzer" rate 1 (made 0.7 (\t i -> (if F.sin (tau () *. 196.0 *. t) >. 0.0 then 0.3 else 0.0 -. 0.3)))) in
+  let w5 = seti sys cheerI (M.createSound sys "dunk.cheer" rate 1 (made 1.2 (\t i -> noise i *. F.sin (F.pi *. t /. 1.2) *. 0.3))) in
+
+  -- The court, its hoop, and the floor around it.
+  let ground = flat sys transform court (0.0, 0.0, 0.0) (15.0, 14.0) in
+  let backboard = flat sys transform board (0.0, 0.05, 0.0 -. 6.25) (1.9, 0.26) in
+  let hoop = flat sys transform rim (0.0, 0.06, hoopZ) (0.55, 0.55) in
+
+  -- Three of yours on offence, three of theirs on them.
+  let ps = V.forEach (\slot ->
+      let team = slot / 3 in
+      let place = slot % 3 in
+      let image = if team == 0 then geti sys ourFrameI else geti sys theirFrameI in
+      let entity = flat sys transform image (formation team place) (0.9, 1.26) in
+      M.insertFloats sys entity (M.kept sys playerAt) [toFloat team, toFloat place, 0.0, 0.0]) (range 0 6) in
+
+  -- The ball, its shadow, and the mark over whoever has it.
+  let kinds = V.forEach (\kind ->
+      let image = if kind == 0 then geti sys ballImageI else if kind == 1 then geti sys shadowImageI else geti sys markerImageI in
+      let entity = flat sys transform image (0.0, 0.5, 0.0) (0.5, 0.5) in
+      M.insertFloats sys entity (M.kept sys ballAt) [toFloat kind]) (range 0 3) in
+
+  -- Seen from straight above, the baseline at the top.
+  let eye = M.spawn sys in
+  let e1 = M.insertTransform sys eye transform (0.0, 20.0, 0.0) (M.around (1.0, 0.0, 0.0) (0.0 -. F.pi /. 2.0)) (1.0, 1.0, 1.0) in
+  let e2 = M.setCameraOrthographic sys eye 16.5 0.1 100.0 in
+
+  -- The record so far, and what the keys do.
+  let saved = (match M.readGameText sys game "record.txt" with | Just text -> text | None -> "0 0") in
+  let numbers = map (\part -> match S.toInt part with | Just n -> n | None -> 0) (S.split saved " ") in
+  let r1 = seti sys winsI (V.getOr 0 numbers 0) in
+  let r2 = seti sys lossesI (V.getOr 0 numbers 1) in
+  let h = V.forEach (\line -> let (row, size, words) = line in write sys 3 (0.0 -. 14.4, toFloat row *. 0.9 -. 6.0) size words)
+      [(0, 0.18, "RETRODUNK"), (2, 0.1, "MOVE: WASD"), (3, 0.1, "SHOOT: HOLD SPACE"), (4, 0.1, "LET GO AT THE TOP"), (5, 0.1, "PASS: E"), (7, 0.1, "FIRST TO 21")] in
+  -- Whether the game plays itself, for trying it unwatched.
+  M.defineTruth sys "dunk.autoplay" False
+
+-- Where each player begins a possession: yours spread around the arc, theirs between them
+-- and the basket.
+fun formation (team : Int) (place : Int) : (Float, Float, Float) =
+  let (x, z) = if place == 0 then (0.0, 4.6) else if place == 1 then (0.0 -. 4.6, 0.0 -. 1.6) else (4.6, 0.0 -. 1.6) in
+  if team == 0 then (x, 0.3, z) else (x *. 0.8, 0.3, z -. 1.3)
+
+-- A picture lying flat, `wide` across and `deep` up the screen, its top toward the baseline.
+fun flat (sys : M.System) (transform : Int) (image : Int) (at : (Float, Float, Float)) (size : (Float, Float)) : Int ! Process =
+  let entity = M.spawn sys in
+  let (wide, deep) = size in
+  let u1 = M.insertTransform sys entity transform at (M.around (0.0, 1.0, 0.0) (F.pi /. 2.0)) (deep, 1.0, wide) in
+  let u2 = M.setMesh sys entity (geti sys tileI) in
+  let u3 = M.setTextures sys entity image 0 0 in
+  let u4 = M.setAlphaCutoff sys entity 0.5 in
+  entity
+
+-- Words in the pixel letters, from `at` rightward, `pixel` metres a pixel, marked `tag`.
+fun write (sys : M.System) (tag : Int) (at : (Float, Float)) (pixel : Float) (words : String) : () ! Process =
+  let (x0, z0) = at in
+  let letters = M.pointer (M.kept sys glyphsAt) in
+  V.forEach (\i ->
+      let c = V.getOr (C.fromCode 32) (S.chars words) i in
+      let code = C.code c in
+      if code <= 32 or code >= 96 then ()
+      else
+        let image = M.readInt32At letters (code - 32) in
+        if image == 0 then ()
+        else
+          let x = x0 +. toFloat (i * 4) *. pixel +. 1.5 *. pixel in
+          let entity = flat sys (M.kept sys transformAt) image (x, 2.0, z0) (3.0 *. pixel, 5.0 *. pixel) in
+          M.insertFloats sys entity (M.kept sys textAt) [toFloat tag])
+    (range 0 (len (S.chars words)))
+
+-- Words centred on `x`.
+fun writeCentred (sys : M.System) (tag : Int) (x : Float) (z : Float) (pixel : Float) (words : String) : () ! Process =
+  let wide = toFloat (len (S.chars words) * 4 - 1) *. pixel in
+  write sys tag (x -. wide /. 2.0, z) pixel words
+
+-- ---------------------------------------------------------------------------------------
+-- Play
+
+-- A player as the play sees it: entity, team, place in the team, and where it is.
+fun teamOf (p : (Int, Int, Int, (Float, Float, Float))) : Int = let (e, team, place, at) = p in team
+fun placeOf (p : (Int, Int, Int, (Float, Float, Float))) : Int = let (e, team, place, at) = p in place
+fun spotOf (p : (Int, Int, Int, (Float, Float, Float))) : (Float, Float) = let (e, team, place, at) = p in let (x, y, z) = at in (x, z)
+
+fun whereIs (players : [(Int, Int, Int, (Float, Float, Float))]) (team : Int) (place : Int) : (Float, Float) =
+  match V.find (\p -> teamOf p == team and placeOf p == place) players with
+  | Just p -> spotOf p
+  | None -> (0.0, 0.0)
+
+fun apart (a : (Float, Float)) (b : (Float, Float)) : Float =
+  let (ax, az) = a in
+  let (bx, bz) = b in
+  F.sqrt ((ax -. bx) *. (ax -. bx) +. (az -. bz) *. (az -. bz))
+
+-- How far a defender is from someone, the nearest of the three.
+fun nearestDefender (players : [(Int, Int, Int, (Float, Float, Float))]) (at : (Float, Float)) : Float =
+  V.foldl (\best p -> if teamOf p == 1 then (let d = apart (spotOf p) at in if d <. best then d else best) else best) 99.0 players
+
+-- A step from `from` toward `to`, no longer than `reach`.
+fun toward (from : (Float, Float)) (to : (Float, Float)) (reach : Float) : (Float, Float) =
+  let (fx, fz) = from in
+  let (tx, tz) = to in
+  let d = apart from to in
+  if d <. reach or d == 0.0 then to else (fx +. (tx -. fx) /. d *. reach, fz +. (tz -. fz) /. d *. reach)
+
+fun onCourt (at : (Float, Float)) : (Float, Float) =
+  let (x, z) = at in
+  let within = \lo hi v -> if v <. lo then lo else if v >. hi then hi else v in
+  (within (0.0 -. 7.2) 7.2 x, within (0.0 -. 6.8) 6.8 z)
+
+-- How a shot from `at` goes in, before its timing and the defence: close in nearly always,
+-- from deep rarely.
+fun chance (at : (Float, Float)) : Float =
+  let d = apart at (0.0, hoopZ) in
+  if d <. 1.6 then 0.9 else if d <. 4.5 then 0.72 else if d <. arc then 0.58 else if d <. 8.5 then 0.46 else 0.18
+
+@export
+fun dunk_play (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let dt = M.deltaSeconds sys in
+  let now = getf sys nowF +. dt in
+  let u0 = setf sys nowF now in
+  let players = M.foldIn2 sys 0 [] (\acc e pl tr -> V.pushBack acc (e, F.round (M.readFloat32 pl 0), F.round (M.readFloat32 pl 1), M.translation tr)) in
+  let auto = M.signalIsTrue sys "dunk.autoplay" in
+  let phase = geti sys phaseI in
+  let timer = getf sys timerF -. dt in
+  let u1 = setf sys timerF timer in
+  let u2 =
+    if phase == ready then (if timer <. 0.0 then begin sys live 0.0 else ())
+    else if phase == live then playLive sys players dt auto
+    else if phase == shooting then flight sys dt
+    else if phase == passing then passFlight sys dt
+    else if phase == result then (if timer <. 0.0 then afterResult sys else ())
+    else if phase == theirTurn then (if timer <. 0.0 then afterTheirs sys else ())
+    else if phase == over then (if timer <. 0.0 then newGame sys else ())
+    else ()
+  in
+  let u3 = movePlayers sys players dt auto in
+  let u4 = moveBall sys in
+  let u5 = board sys in
+  let u6 = M.setSignalNumber sys "dunk.ours" (toFloat (geti sys oursI)) in
+  let u7 = M.setSignalNumber sys "dunk.theirs" (toFloat (geti sys theirsI)) in
+  let u8 = M.setSignalNumber sys "dunk.phase" (toFloat (geti sys phaseI)) in
+  let u9 = M.setSignalNumber sys "dunk.games" (toFloat (geti sys gamesI)) in
+  M.setSignalNumber sys "dunk.handler" (toFloat (geti sys handlerI))
+
+-- Moves on to a phase, for so many seconds.
+fun begin (sys : M.System) (phase : Int) (seconds : Float) : () ! Process =
+  let u1 = seti sys phaseI phase in
+  let u2 = setf sys timerF seconds in
+  if phase == live then setf sys clockF shotClockSeconds else ()
+
+-- Says something in the middle of the court.
+fun say (sys : M.System) (message : Int) : () ! Process = seti sys messageI message
+
+-- The ball is yours to play: who has it and where they are, what the keys ask.
+fun playLive (sys : M.System) (players : [(Int, Int, Int, (Float, Float, Float))]) (dt : Float) (auto : Bool) : () ! Process =
+  let handler = geti sys handlerI in
+  let at = whereIs players 0 handler in
+  let clock = getf sys clockF -. dt in
+  let u0 = setf sys clockF clock in
+  let close = nearestDefender players at in
+  let shootHeld = if auto then autoShooting sys at clock else M.actionHeld sys "shoot" in
+  let rising = getf sys risingF >. 0.5 in
+  if clock <. 0.0 then turnover sys 6
+  else if rising and not shootHeld then shoot sys players at
+  else if shootHeld then
+    (let u1 = setf sys risingF 1.0 in
+     setf sys meterF (getf sys meterF +. dt /. 0.8))
+  else if (not auto) and M.actionPressed sys "pass" then pass sys players
+  else
+    -- A defender left at the ball's side long enough takes it.
+    let guarded = if close <. 0.75 then getf sys guardedF +. dt else 0.0 in
+    let u2 = setf sys guardedF guarded in
+    if guarded >. 0.6 and random sys <. dt *. 0.9 then turnover sys 5 else ()
+
+-- When the game plays itself: drive at the basket, and rise once close or the clock is low,
+-- letting go at the sweet spot.
+fun autoShooting (sys : M.System) (at : (Float, Float)) (clock : Float) : Bool ! Process =
+  let rising = getf sys risingF >. 0.5 in
+  if rising then getf sys meterF <. 0.85
+  else apart at (0.0, hoopZ) <. 2.6 or clock <. 3.0
+
+-- Lets the shot go: whether it goes in is settled now, by where it is taken, the timing,
+-- and how close a defender is; the ball flies for a second either way.
+fun shoot (sys : M.System) (players : [(Int, Int, Int, (Float, Float, Float))]) (at : (Float, Float)) : () ! Process =
+  let meter = getf sys meterF in
+  let timing = 1.0 -. F.abs (meter -. 0.85) /. 0.45 in
+  let timing2 = if timing <. 0.0 then 0.0 else timing in
+  let close = nearestDefender players at in
+  let contest = if close <. 1.0 then 0.55 else if close <. 1.8 then 0.8 else 1.0 in
+  let p = chance at *. (0.35 +. 0.65 *. timing2) *. contest in
+  let (x, z) = at in
+  let d = apart at (0.0, hoopZ) in
+  let u1 = seti sys pointsI (if d >. arc then 3 else 2) in
+  let u2 = seti sys madeI (if random sys <. p then 1 else 0) in
+  let u3 = setf sys meterF 0.0 in
+  let u4 = setf sys risingF 0.0 in
+  let u5 = fly sys (x, z) (0.0, hoopZ) (if d <. 1.6 then 0.45 else 1.0) in
+  begin sys shooting 9.0
+
+-- Starts the ball flying from one place to another.
+fun fly (sys : M.System) (from : (Float, Float)) (to : (Float, Float)) (seconds : Float) : () ! Process =
+  let (fx, fz) = from in
+  let (tx, tz) = to in
+  let u1 = setf sys fromXF fx in
+  let u2 = setf sys fromZF fz in
+  let u3 = setf sys toXF tx in
+  let u4 = setf sys toZF tz in
+  let u5 = setf sys flightF 0.0 in
+  setf sys lengthF seconds
+
+fun flight (sys : M.System) (dt : Float) : () ! Process =
+  let t = getf sys flightF +. dt /. getf sys lengthF in
+  let u = setf sys flightF t in
+  if t <. 1.0 then () else landed sys
+
+-- The shot arrives: in, or off the rim to a rebound.
+fun landed (sys : M.System) : () ! Process =
+  if geti sys madeI == 1 then
+    let points = geti sys pointsI in
+    let u1 = seti sys oursI (geti sys oursI + points) in
+    let u2 = M.playSoundWith sys (geti sys swishI) 0.8 0.0 1.0 False in
+    let u3 = M.playSoundWith sys (geti sys cheerI) 0.5 0.0 1.0 False in
+    let dunk = getf sys lengthF <. 0.6 in
+    let u4 = say sys (if dunk then 3 else if points == 3 then 2 else 1) in
+    let u5 = seti sys afterI 0 in
+    begin sys result 1.3
+  else
+    let u1 = M.playSoundWith sys (geti sys clankI) 0.7 0.0 1.0 False in
+    let ours = random sys <. 0.33 in
+    let landing = (random sys *. 6.0 -. 3.0, hoopZ +. 1.0 +. random sys *. 3.0) in
+    let u2 = fly sys (0.0, hoopZ) landing 0.5 in
+    let u3 = say sys (if ours then 13 else 4) in
+    let u4 = seti sys afterI (if ours then 1 else 0) in
+    begin sys result 1.1
+
+-- The ball to the most open teammate: the one furthest from a defender.
+fun pass (sys : M.System) (players : [(Int, Int, Int, (Float, Float, Float))]) : () ! Process =
+  let handler = geti sys handlerI in
+  let mates = V.filter (\p -> teamOf p == 0 and placeOf p != handler) players in
+  let open = V.foldl (\best p -> let room = nearestDefender players (spotOf p) in let (b, broom) = best in if room >. broom then (placeOf p, room) else best) (handler, 0.0 -. 1.0) mates in
+  let (to, room) = open in
+  if to == handler then ()
+  else
+    let u1 = seti sys passToI to in
+    let u2 = seti sys madeI (if room <. 1.0 and random sys <. 0.35 then 0 else 1) in
+    let u3 = fly sys (whereIs players 0 handler) (whereIs players 0 to) 0.35 in
+    let u4 = seti sys handlerI (0 - 1) in
+    begin sys passing 9.0
+
+fun passFlight (sys : M.System) (dt : Float) : () ! Process =
+  let t = getf sys flightF +. dt /. getf sys lengthF in
+  let u = setf sys flightF t in
+  if t <. 1.0 then ()
+  else if geti sys madeI == 1 then
+    (let u1 = seti sys handlerI (geti sys passToI) in
+     let clock = getf sys clockF in
+     let u2 = begin sys live 0.0 in
+     setf sys clockF clock)
+  else turnover sys 14
+
+-- The ball is lost: said, and over to them.
+fun turnover (sys : M.System) (message : Int) : () ! Process =
+  let u1 = say sys message in
+  let u2 = seti sys afterI 0 in
+  let u3 = setf sys risingF 0.0 in
+  let u4 = setf sys meterF 0.0 in
+  let u5 = if message == 6 then M.playSoundWith sys (geti sys buzzerI) 0.6 0.0 1.0 False else 0 in
+  begin sys result 1.2
+
+-- After a basket, a miss or a turnover: on with the ball after an offensive rebound, else
+-- their possession, unless the game is won.
+fun afterResult (sys : M.System) : () ! Process =
+  if geti sys oursI >= toWin then finish sys True
+  else if geti sys afterI == 1 then
+    (let u = seti sys handlerI 0 in
+     let v = say sys 0 in
+     begin sys live 0.0)
+  else
+    -- Their possession, played out for you.
+    let r = random sys in
+    let (points, message) = if r <. 0.4 then (2, 7) else if r <. 0.54 then (3, 8) else (0, 9) in
+    let u1 = seti sys theirsI (geti sys theirsI + points) in
+    let u2 = say sys message in
+    let u3 = seti sys handlerI 0 in
+    begin sys theirTurn 1.8
+
+fun afterTheirs (sys : M.System) : () ! Process =
+  if geti sys theirsI >= toWin then finish sys False
+  else
+    let u = say sys 12 in
+    begin sys ready 1.0
+
+-- The game is over: told, and the record kept.
+fun finish (sys : M.System) (won : Bool) : () ! Process =
+  let u1 = if won then seti sys winsI (geti sys winsI + 1) else seti sys lossesI (geti sys lossesI + 1) in
+  let u2 = seti sys gamesI (geti sys gamesI + 1) in
+  let u3 = M.writeGameText sys game "record.txt" "${geti sys winsI} ${geti sys lossesI}" in
+  let u4 = M.playSoundWith sys (geti sys buzzerI) 0.6 0.0 1.0 False in
+  let u5 = say sys (if won then 10 else 11) in
+  begin sys over 4.0
+
+fun newGame (sys : M.System) : () ! Process =
+  let u1 = seti sys oursI 0 in
+  let u2 = seti sys theirsI 0 in
+  let u3 = say sys 12 in
+  begin sys ready 1.0
+
+-- Everyone moves: whoever has the ball by the keys (or the play itself), teammates to open
+-- places, defenders between their man and the basket. At the start of a possession all go
+-- back to where they begin.
+fun movePlayers (sys : M.System) (players : [(Int, Int, Int, (Float, Float, Float))]) (dt : Float) (auto : Bool) : () ! Process =
+  let phase = geti sys phaseI in
+  let handler = geti sys handlerI in
+  let now = getf sys nowF in
+  let rising = getf sys risingF >. 0.5 in
+  let steer = if auto then (0.0, 0.0 -. 1.0) else (M.actionValue sys "across", M.actionValue sys "along") in
+  M.forEachIn2 sys 0 (\entity pl tr ->
+    let team = F.round (M.readFloat32 pl 0) in
+    let place = F.round (M.readFloat32 pl 1) in
+    let (x, y, z) = M.translation tr in
+    let here = (x, z) in
+    let next =
+      if phase == ready or phase == theirTurn or phase == over then
+        (let (fx, fy, fz) = formation team place in toward here (fx, fz) (runSpeed *. 1.6 *. dt))
+      else if team == 0 and place == handler and phase == live then
+        (if rising then here
+         else
+           let (sx, sz) = steer in
+           let length = F.sqrt (sx *. sx +. sz *. sz) in
+           let toHoop = if auto then toward here (0.0, hoopZ +. 1.0) (runSpeed *. dt) else here in
+           if auto then toHoop
+           else if length <. 0.1 then here
+           else (x +. sx /. length *. runSpeed *. dt, z +. sz /. length *. runSpeed *. dt))
+      else if team == 0 then
+        (let (fx, fy, fz) = formation 0 place in
+         let sway = F.sin (now *. 0.7 +. toFloat place *. 2.0) *. 1.4 in
+         toward here (fx +. sway, fz +. F.cos (now *. 0.5 +. toFloat place) *. 0.8) (runSpeed *. 0.6 *. dt))
+      else
+        -- Between their man and the basket, closer to the man with the ball.
+        (let mark = whereIs players 0 place in
+         let (mx, mz) = mark in
+         let gap = if place == handler then 0.8 else 1.4 in
+         let d = apart mark (0.0, hoopZ) in
+         let goal = if d <. 0.01 then mark else (mx +. (0.0 -. mx) /. d *. gap, mz +. (hoopZ -. mz) /. d *. gap) in
+         toward here goal (guardSpeed *. dt))
+    in
+    let (nx, nz) = onCourt next in
+    let moved = apart here (nx, nz) in
+    let stride = M.readFloat32 pl 2 +. moved in
+    let u1 = M.writeFloat32 pl 2 stride in
+    let u2 = M.setTranslation tr (nx, 0.3 +. (nz +. 8.0) *. 0.01, nz) in
+    let frame = if moved >. 0.0001 then floor (stride /. 0.45) % 2 else 0 in
+    let first = if team == 0 then geti sys ourFrameI else geti sys theirFrameI in
+    M.setTextures sys entity (first + frame) 0 0)
+
+-- The ball where it is: dribbled, flying, or lying; its shadow under it, and the mark over
+-- whoever has it.
+fun moveBall (sys : M.System) : () ! Process =
+  let phase = geti sys phaseI in
+  let handler = geti sys handlerI in
+  let now = getf sys nowF in
+  let players = M.foldIn2 sys 0 [] (\acc e pl tr -> V.pushBack acc (e, F.round (M.readFloat32 pl 0), F.round (M.readFloat32 pl 1), M.translation tr)) in
+  let t = getf sys flightF in
+  let lerp = \a b -> a +. (b -. a) *. (if t >. 1.0 then 1.0 else t) in
+  let (bx, bz, bh) =
+    if phase == shooting then
+      (lerp (getf sys fromXF) (getf sys toXF), lerp (getf sys fromZF) (getf sys toZF), 1.6 +. 4.0 *. t *. (1.0 -. t) *. 3.2)
+    else if phase == passing or (phase == result and t <. 1.0) then
+      (lerp (getf sys fromXF) (getf sys toXF), lerp (getf sys fromZF) (getf sys toZF), 1.1)
+    else if phase == result then (getf sys toXF, getf sys toZF, 0.2)
+    else if handler >= 0 then
+      (let (hx, hz) = whereIs players 0 handler in
+       let bounce = F.abs (F.sin (now *. 9.0)) in
+       let count = floor (now *. 9.0 /. F.pi) in
+       let u = if count != geti sys bounceI and phase == live then (let v = seti sys bounceI count in M.playSoundWith sys (geti sys dribbleI) 0.35 0.0 1.0 False) else 0 in
+       (hx +. 0.38, hz +. 0.15, bounce *. 0.9))
+    else (getf sys ballXF, getf sys ballZF, 0.2)
+  in
+  let u1 = setf sys ballXF bx in
+  let u2 = setf sys ballZF bz in
+  let marked = if handler >= 0 and (phase == live or phase == ready) then whereIs players 0 handler else (0.0, 99.0) in
+  let (mx, mz) = marked in
+  M.forEachIn2 sys 1 (\entity kind tr ->
+    let k = F.round (M.readFloat32 kind 0) in
+    if k == 0 then
+      -- Higher is further up the screen and larger, as if seen from the stands.
+      (let size = 0.42 +. bh *. 0.05 in
+       let u = M.setTranslation tr (bx, 1.0 +. bh *. 0.1, bz -. bh *. 0.35) in
+       M.setScale tr (size, 1.0, size))
+    else if k == 1 then
+      (let u = M.setTranslation tr (bx, 0.2, bz) in
+       M.setScale tr (0.25, 1.0, 0.5))
+    else
+      (let u = M.setTranslation tr (mx, 1.5, mz -. 1.0) in
+       M.setScale tr (0.3, 1.0, 0.52)))
+
+-- The board beside the court, and what is said in the middle of it: made again when any of
+-- it changes.
+fun board (sys : M.System) : () ! Process =
+  let ours = geti sys oursI in
+  let theirs = geti sys theirsI in
+  let clock = F.ceil (getf sys clockF) in
+  let clock2 = if clock < 0 then 0 else clock in
+  let message = geti sys messageI in
+  let wins = geti sys winsI in
+  let losses = geti sys lossesI in
+  let showing = ((((ours * 64 + theirs) * 32 + clock2) * 32 + message) * 128 + wins) * 128 + losses in
+  if showing == geti sys shownI then ()
+  else
+    let u1 = seti sys shownI showing in
+    let gone = M.foldIn1 sys 2 [] (\acc entity tag -> if M.readFloat32 tag 0 <. 2.5 then V.pushBack acc entity else acc) in
+    let u2 = V.forEach (\entity -> M.despawn sys entity) gone in
+    let u3 = write sys 1 (8.8, 0.0 -. 5.6) 0.2 "YOU" in
+    let u4 = write sys 1 (11.6, 0.0 -. 5.8) 0.3 "${ours}" in
+    let u5 = write sys 1 (8.8, 0.0 -. 3.6) 0.2 "CPU" in
+    let u6 = write sys 1 (11.6, 0.0 -. 3.8) 0.3 "${theirs}" in
+    let u7 = write sys 1 (8.8, 0.0 -. 1.2) 0.2 "SHOT" in
+    let u8 = write sys 1 (12.4, 0.0 -. 1.4) 0.3 "${clock2}" in
+    let u9 = write sys 1 (8.8, 1.6) 0.18 "RECORD" in
+    let u10 = write sys 1 (8.8, 3.5) 0.3 "${wins}-${losses}" in
+    writeCentred sys 2 0.0 1.2 0.45 (said message)
