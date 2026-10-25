@@ -153,7 +153,7 @@ pub fn build_meadow(name: &str, source: &Path, out: &Path) -> Result<PathBuf, St
         .arg("build")
         .arg(&package)
         .output()
-        .map_err(|err| format!("MeadowBoot could not be run ({err}); a Meadow script needs it: `meadowboot` on the path, or MIRA_MEADOWBOOT saying where it is"))?;
+        .map_err(|err| format!("MeadowBoot could not be run ({err}); a Meadow script needs it: `meadowboot` on the path, or MIRA_MEADOWBOOT saying where it is. It comes in Meadow's releases, as a meadowboot-<system> archive to unpack anywhere: https://github.com/meadow-lang/meadow/releases (see docs/PLUGINS.md)"))?;
     if !output.status.success() {
         let said = [output.stdout, output.stderr].concat();
         return Err(String::from_utf8_lossy(&said).trim().to_owned());
