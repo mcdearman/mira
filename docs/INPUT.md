@@ -58,6 +58,23 @@ A swipe or a tap is over in the frame it happens, so it presses its action for t
 `just_pressed` is the question to ask. In a bindings file they are `SwipeUp`, `SwipeDown`,
 `SwipeLeft`, `SwipeRight` and `Tap`.
 
+A game that is steered rather than swiped has the screen's two halves. A finger held on the
+left half and drawn away from where it went down is a stick: `DragUp`, `DragDown`,
+`DragLeft` and `DragRight` are held while it is drawn that way past `drag_dead_zone` (24
+pixels), two at once on a slant, so that an axis bound to `DragLeft/DragRight` steers. A
+finger down on a half is a button held for as long as it is: `TouchLeft`, `TouchRight`, or
+`Touch` anywhere. A tap can be told by its half too: `TapLeft`, `TapRight`. So a thumb on
+the left runs and taps, and one on the right holds and lets go:
+
+```rust
+actions.bind_axis("across", Binding::named("DragLeft").unwrap(), Binding::named("DragRight").unwrap());
+actions.bind("shoot", Binding::named("TouchRight").unwrap());
+actions.bind("pass", Binding::named("TapLeft").unwrap());
+```
+
+The halves are known from the window's width; `touches.screen_width` says it, and is kept
+up to date for real fingers and for the mouse standing in for one.
+
 `touches.mouse_too = true` has the left mouse button stand for a finger, to try at a desk
 a game made for a phone. A test or an agent draws a finger across the screen with
 `InjectedInput::swipe(from, to, frames)`, or from outside the game with

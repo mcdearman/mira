@@ -364,7 +364,9 @@ impl ApplicationHandler for Runner {
             }
             WindowEvent::Touch(touch) => {
                 let at = Vec2::new(touch.location.x as f32, touch.location.y as f32);
+                let width = self.window.as_ref().map_or(0.0, |window| window.inner_size().width as f32);
                 if let Some(touches) = self.resource::<crate::touch::Touches>() {
+                    touches.screen_width = width;
                     match touch.phase {
                         winit::event::TouchPhase::Started => touches.began(touch.id, at),
                         winit::event::TouchPhase::Moved => touches.moved(touch.id, at),

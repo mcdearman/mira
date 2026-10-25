@@ -5,10 +5,11 @@
 -- > cargo run --bin mira-play -- examples/retro_dunk
 --
 -- WASD or the arrows move whoever has the ball. Hold Space (or the left mouse button) to
--- rise for a shot and let go at the top of the meter: green is the sweet spot. E (or the
--- right mouse button) passes to the most open teammate, and you play on as them. Inside
--- the arc a basket is 2, beyond it 3; close in, it is a dunk. The shot clock is 14
--- seconds, and a defender left at your side long enough takes the ball.
+-- rise for a shot and let go when the meter beside you is in the green. E (or the right
+-- mouse button) passes to the most open teammate, and you play on as them. On a phone, a
+-- thumb on the left of the screen runs, drawn the way to go, and taps to pass; one on the
+-- right holds to shoot. Inside the arc a basket is 2, beyond it 3; close in, it is a dunk.
+-- The shot clock is 14 seconds, and a defender left at your side long enough takes the ball.
 --
 -- Everything seen and heard is made here, from code: the court, the players, the ball and
 -- the letters are pictures worked out pixel by pixel, and the sounds sample by sample.
@@ -66,6 +67,8 @@ def theirFrameI : Int = 22
 def ballImageI : Int = 24
 def shadowImageI : Int = 25
 def markerImageI : Int = 26
+def meterImageI : Int = 28
+def fillImageI : Int = 29
 def tileI : Int = 27
 def dribbleI : Int = 30
 def swishI : Int = 31
@@ -125,7 +128,8 @@ fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
     let transform = M.lookupComponent p "mira.Transform" in
     -- A player: team (0 yours, 1 theirs), place in the team, and how far it has run.
     let player = M.registerComponent p "dunk.Player" 16 4 in
-    -- The ball (0), its shadow (1), and the mark over whoever has it (2).
+    -- The ball (0), its shadow (1), the mark over whoever has it (2), and the shot meter's
+    -- frame (3) and what fills it (4).
     let ball = M.registerComponent p "dunk.Ball" 4 4 in
     -- A letter: on the board (1), said in the middle (2), or the help (3).
     let text = M.registerComponent p "dunk.Text" 4 4 in
@@ -152,7 +156,12 @@ fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
         M.bindAction p "shoot" "Space",
         M.bindAction p "shoot" "MouseLeft",
         M.bindAction p "pass" "KeyE",
-        M.bindAction p "pass" "MouseRight"
+        M.bindAction p "pass" "MouseRight",
+        -- On a phone: a thumb on the left runs and taps to pass, one on the right holds to shoot.
+        M.bindAxis p "across" "DragLeft" "DragRight",
+        M.bindAxis p "along" "DragUp" "DragDown",
+        M.bindAction p "shoot" "TouchRight",
+        M.bindAction p "pass" "TapLeft"
       ]
     in
     let added = [
@@ -260,6 +269,12 @@ fun shadowColour (x : Int) (y : Int) : (Int, Int, Int, Int) =
   let dx = (toFloat x -. 5.5) /. 6.0 in
   let dy = (toFloat y -. 2.5) /. 3.0 in
   if dx *. dx +. dy *. dy >. 1.0 then clear else (70, 46, 30, 255)
+
+-- The shot meter's frame: dark, with the sweet spot green near its top.
+fun meterColour (x : Int) (y : Int) : (Int, Int, Int, Int) =
+  if x == 0 or x == 3 or y == 0 or y == 19 then (30, 30, 36, 255)
+  else if y >= 1 and y <= 5 then (60, 200, 90, 255)
+  else (70, 70, 84, 255)
 
 def marker : [String] = [
     "yyyyyyy",
@@ -393,6 +408,8 @@ fun dunk_setup (s : Int) (user : Int) : () ! Process =
   let v4 = seti sys (theirFrameI + 1) (M.createImage sys "dunk.theirs.1" 10 14 (drawn striding (kit 1)) M.imagePixelated) in
   let v5 = seti sys ballImageI (M.createImage sys "dunk.ball" 8 8 (generated 8 8 ballColour) M.imagePixelated) in
   let v6 = seti sys shadowImageI (M.createImage sys "dunk.shadow" 12 6 (generated 12 6 shadowColour) M.imagePixelated) in
+  let v9 = seti sys meterImageI (M.createImage sys "dunk.meter" 4 20 (generated 4 20 meterColour) M.imagePixelated) in
+  let v10 = seti sys fillImageI (M.createImage sys "dunk.fill" 2 2 [250, 220, 60, 255, 250, 220, 60, 255, 250, 220, 60, 255, 250, 220, 60, 255] M.imagePixelated) in
   let v7 = seti sys markerImageI (M.createImage sys "dunk.marker" 7 4 (drawn marker (\k -> if k == "y" then (250, 220, 60, 255) else clear)) M.imagePixelated) in
   let letters = M.pointer (M.kept sys glyphsAt) in
   let v8 = V.forEach (\c -> let key = C.toString c in M.writeInt32At letters (C.code c - 32) (M.createImage sys ("dunk.letter." ++ key) 3 5 (drawn (letterRows key) ink) M.imagePixelated)) (S.chars alphabet) in
@@ -419,9 +436,9 @@ fun dunk_setup (s : Int) (user : Int) : () ! Process =
 
   -- The ball, its shadow, and the mark over whoever has it.
   let kinds = V.forEach (\kind ->
-      let image = if kind == 0 then geti sys ballImageI else if kind == 1 then geti sys shadowImageI else geti sys markerImageI in
+      let image = if kind == 0 then geti sys ballImageI else if kind == 1 then geti sys shadowImageI else if kind == 2 then geti sys markerImageI else if kind == 3 then geti sys meterImageI else geti sys fillImageI in
       let entity = flat sys transform image (0.0, 0.5, 0.0) (0.5, 0.5) in
-      M.insertFloats sys entity (M.kept sys ballAt) [toFloat kind]) (range 0 3) in
+      M.insertFloats sys entity (M.kept sys ballAt) [toFloat kind]) (range 0 5) in
 
   -- Seen from straight above, the baseline at the top.
   let eye = M.spawn sys in
@@ -434,7 +451,7 @@ fun dunk_setup (s : Int) (user : Int) : () ! Process =
   let r1 = seti sys winsI (V.getOr 0 numbers 0) in
   let r2 = seti sys lossesI (V.getOr 0 numbers 1) in
   let h = V.forEach (\line -> let (row, size, words) = line in write sys 3 (0.0 -. 14.4, toFloat row *. 0.9 -. 6.0) size words)
-      [(0, 0.18, "RETRODUNK"), (2, 0.1, "MOVE: WASD"), (3, 0.1, "SHOOT: HOLD SPACE"), (4, 0.1, "LET GO AT THE TOP"), (5, 0.1, "PASS: E"), (7, 0.1, "FIRST TO 21")] in
+      [(0, 0.18, "RETRODUNK"), (2, 0.1, "MOVE: WASD"), (3, 0.1, "SHOOT: HOLD SPACE"), (4, 0.1, "RELEASE IN GREEN"), (5, 0.1, "PASS: E"), (7, 0.1, "FIRST TO 21")] in
   -- Whether the game plays itself, for trying it unwatched.
   M.defineTruth sys "dunk.autoplay" False
 
@@ -550,7 +567,8 @@ fun dunk_play (s : Int) (user : Int) : () ! Process =
 fun begin (sys : M.System) (phase : Int) (seconds : Float) : () ! Process =
   let u1 = seti sys phaseI phase in
   let u2 = setf sys timerF seconds in
-  if phase == live then setf sys clockF shotClockSeconds else ()
+  -- Play on: what was said is done with.
+  if phase == live then (let u = say sys 0 in setf sys clockF shotClockSeconds) else ()
 
 -- Says something in the middle of the court.
 fun say (sys : M.System) (message : Int) : () ! Process = seti sys messageI message
@@ -571,10 +589,10 @@ fun playLive (sys : M.System) (players : [(Int, Int, Int, (Float, Float, Float))
      setf sys meterF (getf sys meterF +. dt /. 0.8))
   else if (not auto) and M.actionPressed sys "pass" then pass sys players
   else
-    -- A defender left at the ball's side long enough takes it.
-    let guarded = if close <. 0.75 then getf sys guardedF +. dt else 0.0 in
+    -- A defender left right at the ball's side for a second may take it.
+    let guarded = if close <. 0.6 then getf sys guardedF +. dt else 0.0 in
     let u2 = setf sys guardedF guarded in
-    if guarded >. 0.6 and random sys <. dt *. 0.9 then turnover sys 5 else ()
+    if guarded >. 1.0 and random sys <. dt *. 0.6 then turnover sys 5 else ()
 
 -- When the game plays itself: drive at the basket, and rise once close or the clock is low,
 -- letting go at the sweet spot.
@@ -664,6 +682,9 @@ fun passFlight (sys : M.System) (dt : Float) : () ! Process =
 
 -- The ball is lost: said, and over to them.
 fun turnover (sys : M.System) (message : Int) : () ! Process =
+  -- The ball lies where it was lost.
+  let u0 = fly sys (getf sys ballXF, getf sys ballZF) (getf sys ballXF, getf sys ballZF) 0.1 in
+  let v0 = setf sys flightF 1.0 in
   let u1 = say sys message in
   let u2 = seti sys afterI 0 in
   let u3 = setf sys risingF 0.0 in
@@ -731,7 +752,9 @@ fun movePlayers (sys : M.System) (players : [(Int, Int, Int, (Float, Float, Floa
          else
            let (sx, sz) = steer in
            let length = F.sqrt (sx *. sx +. sz *. sz) in
-           let toHoop = if auto then toward here (0.0, hoopZ +. 1.0) (runSpeed *. dt) else here in
+           -- Playing itself, it drives down a lane beside the basket, not into its defender.
+           let lane = if x <. 0.0 then 0.0 -. 1.2 else 1.2 in
+           let toHoop = if auto then toward here (if z >. hoopZ +. 2.5 then (lane *. 2.5, hoopZ +. 2.0) else (lane *. 0.4, hoopZ +. 1.0)) (runSpeed *. dt) else here in
            if auto then toHoop
            else if length <. 0.1 then here
            else (x +. sx /. length *. runSpeed *. dt, z +. sz /. length *. runSpeed *. dt))
@@ -743,7 +766,7 @@ fun movePlayers (sys : M.System) (players : [(Int, Int, Int, (Float, Float, Floa
         -- Between their man and the basket, closer to the man with the ball.
         (let mark = whereIs players 0 place in
          let (mx, mz) = mark in
-         let gap = if place == handler then 0.8 else 1.4 in
+         let gap = if place == handler then 1.1 else 1.5 in
          let d = apart mark (0.0, hoopZ) in
          let goal = if d <. 0.01 then mark else (mx +. (0.0 -. mx) /. d *. gap, mz +. (hoopZ -. mz) /. d *. gap) in
          toward here goal (guardSpeed *. dt))
@@ -784,6 +807,11 @@ fun moveBall (sys : M.System) : () ! Process =
   let u2 = setf sys ballZF bz in
   let marked = if handler >= 0 and (phase == live or phase == ready) then whereIs players 0 handler else (0.0, 99.0) in
   let (mx, mz) = marked in
+  -- The meter stands beside whoever is rising to shoot, and is gone otherwise.
+  let rising = getf sys risingF >. 0.5 in
+  let meter = if getf sys meterF >. 1.2 then 1.2 else getf sys meterF in
+  let (gx, gz) = if rising then (mx +. 0.75, mz -. 0.4) else (0.0, 99.0) in
+  let filled = 1.4 *. (if meter >. 1.0 then 1.0 else meter) in
   M.forEachIn2 sys 1 (\entity kind tr ->
     let k = F.round (M.readFloat32 kind 0) in
     if k == 0 then
@@ -794,9 +822,15 @@ fun moveBall (sys : M.System) : () ! Process =
     else if k == 1 then
       (let u = M.setTranslation tr (bx, 0.2, bz) in
        M.setScale tr (0.25, 1.0, 0.5))
-    else
+    else if k == 2 then
       (let u = M.setTranslation tr (mx, 1.5, mz -. 1.0) in
-       M.setScale tr (0.3, 1.0, 0.52)))
+       M.setScale tr (0.3, 1.0, 0.52))
+    else if k == 3 then
+      (let u = M.setTranslation tr (gx, 1.6, gz) in
+       M.setScale tr (1.5, 1.0, 0.3))
+    else
+      (let u = M.setTranslation tr (gx, 1.7, gz +. 0.7 -. filled /. 2.0) in
+       M.setScale tr (if filled >. 0.01 then filled else 0.01, 1.0, 0.18)))
 
 -- The board beside the court, and what is said in the middle of it: made again when any of
 -- it changes.
