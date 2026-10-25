@@ -1,14 +1,18 @@
 name: iOS app
 
-# Builds Tail Lights for an iPhone and for the iPhone simulator, and tries it on the
-# simulator. Run by hand, or when what it is built from changes in a pull request. Nothing
-# here is signed for a phone yet: that needs an Apple developer account (see docs/IOS.md).
+# Builds Tail Lights, and RetroDunk (a Meadow script), for an iPhone and for the iPhone
+# simulator, and tries them on the simulator. Run by hand, or when what they are built from
+# changes in a pull request. Nothing here is signed for a phone yet: that needs an Apple
+# developer account (see docs/IOS.md).
 on:
   workflow_dispatch:
   pull_request:
     paths:
       - 'ios/**'
       - 'examples/tail_lights/**'
+      - 'examples/retro_dunk/**'
+      - 'bindings/meadow/**'
+      - 'scripts/meadow-for.sh'
       - '.github/workflows/ios.yml'
 
 concurrency:
@@ -61,6 +65,71 @@ jobs:
       if: always()
       with:
         name: tried-on-the-simulator
+        path: |
+          tried-screen.png
+          tried-log.txt
+          tried-alive.txt
+        if-no-files-found: warn
+
+  # RetroDunk is a Meadow script: MeadowBoot (from Meadow's release; the Apple-silicon one
+  # carries the iPhone's runtimes) builds it ahead of time into a static library, which is
+  # linked into the program, as iOS lets an app open no library of its own.
+  retro-dunk:
+    runs-on: macos-latest
+    timeout-minutes: 50
+    env:
+      MEADOWBOOT_RELEASE: v0.4.0
+      IPHONEOS_DEPLOYMENT_TARGET: '16.0'
+      CARGO_PROFILE_DEV_OPT_LEVEL: 3
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_DEV_STRIP: symbols
+    steps:
+    - uses: actions/checkout@v4
+    - name: Rust
+      run: rustup update stable && rustup default stable && rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+    - uses: Swatinem/rust-cache@v2
+    - name: Xcode
+      run: |
+        xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)
+        echo "Building with $xcode"
+        echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
+    - name: MeadowBoot
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release download "$MEADOWBOOT_RELEASE" -R meadow-lang/meadow -p 'meadowboot-aarch64-apple-darwin.tar.gz' -D "$RUNNER_TEMP/meadowboot"
+        tar -xzf "$RUNNER_TEMP"/meadowboot/*.tar.gz -C "$RUNNER_TEMP/meadowboot"
+        echo "MIRA_MEADOWBOOT=$(find "$RUNNER_TEMP/meadowboot" -name MeadowBoot -type f | head -n 1)" >> "$GITHUB_ENV"
+    - name: The game, for a phone and for the simulator
+      run: |
+        sh scripts/meadow-for.sh examples/retro_dunk/Dunk.mw aarch64-apple-ios game/phone
+        sh scripts/meadow-for.sh examples/retro_dunk/Dunk.mw aarch64-apple-ios-sim game/simulator
+        ls -l game/*
+    - name: Build
+      run: |
+        RETRO_DUNK_LIB="$PWD/game/phone" cargo build -p retro_dunk_ios --target aarch64-apple-ios
+        RETRO_DUNK_LIB="$PWD/game/simulator" cargo build -p retro_dunk_ios --target aarch64-apple-ios-sim
+    - name: Package
+      run: |
+        sh ios/package.sh target/aarch64-apple-ios/debug/retro_dunk_ios iPhoneOS packages/phone RetroDunk dev.mira.retrodunk
+        sh ios/package.sh target/aarch64-apple-ios-sim/debug/retro_dunk_ios iPhoneSimulator packages/simulator RetroDunk dev.mira.retrodunk
+        (cd packages/simulator && zip -qry ../retro-dunk-simulator.zip RetroDunk.app)
+    - uses: actions/upload-artifact@v4
+      with:
+        name: retro-dunk-simulator-app
+        path: packages/retro-dunk-simulator.zip
+        if-no-files-found: error
+    - name: Try it on the simulator
+      timeout-minutes: 10
+      continue-on-error: true
+      env:
+        SIMCTL_CHILD_RUST_LOG: info
+        SIMCTL_CHILD_RUST_BACKTRACE: '1'
+      run: sh ios/try-on-simulator.sh packages/simulator/RetroDunk.app dev.mira.retrodunk
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: retro-dunk-on-the-simulator
         path: |
           tried-screen.png
           tried-log.txt

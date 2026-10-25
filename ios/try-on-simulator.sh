@@ -2,9 +2,9 @@
 # Puts an app on an iPhone simulator, starts it, leaves it a while, and keeps what it said
 # and what was on the screen. It never fails: whether the game lived is in what it keeps.
 #
-#     ios/try-on-simulator.sh <Tail Lights.app>
+#     ios/try-on-simulator.sh <App.app> [identifier, dev.mira.taillights unless given]
 app=$1
-name=dev.mira.taillights
+name=${2:-dev.mira.taillights}
 # An iPhone the runner has, the newest listed.
 device=$(xcrun simctl list devices available | grep -E '^ +iPhone' | tail -n 1 | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/')
 echo "simulator: $(xcrun simctl list devices available | grep "$device")"

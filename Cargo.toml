@@ -6,7 +6,7 @@ edition = "2021"
 [workspace]
 # Bare `cargo run` is the engine app; `cargo run --example <name>` finds the engine's examples.
 default-members = [".", "crates/mira_app"]
-members = ["crates/mira_app", "crates/mira_ecs", "crates/mira_plugin", "crates/mira_derive", "crates/mira_ui", "plugins/wave", "plugins/scoreboard", "android/tail_lights", "android/retro_dunk"]
+members = ["crates/mira_app", "crates/mira_ecs", "crates/mira_plugin", "crates/mira_derive", "crates/mira_ui", "plugins/wave", "plugins/scoreboard", "android/tail_lights", "android/retro_dunk", "ios/retro_dunk"]
 
 [dependencies]
 mira_plugin = { path = "crates/mira_plugin" }

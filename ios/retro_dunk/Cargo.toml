@@ -1,0 +1,19 @@
+# RetroDunk as an iPhone app: the engine, with the game linked into the program, a Meadow
+# script built ahead of time into a static library (scripts/meadow-for.sh) that iOS lets an
+# app carry, where it lets no library be opened. Packaged by ios/package.sh.
+[package]
+name = "retro_dunk_ios"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+
+[[bin]]
+name = "retro_dunk_ios"
+path = "main.rs"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+mira = { path = "../.." }
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
