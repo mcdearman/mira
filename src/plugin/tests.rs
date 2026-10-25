@@ -2724,3 +2724,69 @@ fn a_bundled_plugin_is_opened_where_it_is_and_never_reloaded() {
     assert_eq!(app.reload_native_plugins(), 0);
     assert!(app.load_bundled_plugin(workspace.dir.join("no-such-plugin.dll")).is_err());
 }
+
+/// RetroDunk plays itself from its script: possessions go back and forth, baskets are
+/// scored, a game is won or lost, and the record of it is kept.
+#[test]
+fn retro_dunk_plays_a_game_from_its_script() {
+    use crate::{
+        assets::Assets,
+        audio::SilentAudioPlugin,
+        input::InputPlugin,
+        render::{Image, Mesh},
+        save::SaveGames,
+        signal::Signals,
+        time::Time,
+    };
+    if !have_meadowboot() {
+        return;
+    }
+    // The game keeps its record where a player's is kept: what was there is put back after.
+    struct PutBack(PathBuf, Option<Vec<u8>>);
+    impl Drop for PutBack {
+        fn drop(&mut self) {
+            match &self.1 {
+                Some(bytes) => drop(std::fs::write(&self.0, bytes)),
+                None => drop(std::fs::remove_file(&self.0)),
+            }
+        }
+    }
+    let record = SaveGames::for_game("RetroDunk").folder().join("record.txt");
+    let kept = PutBack(record.clone(), std::fs::read(&record).ok());
+    let _ = std::fs::remove_file(&record);
+
+    let workspace = Workspace::new("retro-dunk");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/retro_dunk/Dunk.mw");
+    std::fs::copy(script, workspace.dir.join("Dunk.mw")).unwrap();
+    let mut app = app();
+    app.add_plugins(InputPlugin).add_plugins(SilentAudioPlugin).init_resource::<Assets<Mesh>>().init_resource::<Assets<Image>>();
+    app.load_scripts(&workspace.dir).unwrap();
+    assert!(app.script_problems().next().is_none(), "{:?}", app.script_problems().next());
+    app.world.resource_mut::<Time>().set_fixed_step(Some(std::time::Duration::from_secs_f64(1.0 / 30.0)));
+    app.update();
+    app.world.resource_mut::<Signals>().set("dunk.autoplay", 1.0);
+
+    let said = |app: &App, what: &str| app.world.resource::<Signals>().number(what);
+    let (mut phases, mut most) = (std::collections::BTreeSet::new(), (0.0, 0.0));
+    let mut frames = 0;
+    while said(&app, "dunk.games") < 1.0 {
+        assert!(frames < 40_000, "no game was finished in {frames} frames: {most:?}");
+        app.update();
+        frames += 1;
+        phases.insert(said(&app, "dunk.phase") as i32);
+        let (ours, theirs) = (said(&app, "dunk.ours"), said(&app, "dunk.theirs"));
+        assert!(ours >= most.0 && theirs >= most.1, "a score went down: {ours} {theirs} after {most:?}");
+        most = (ours, theirs);
+    }
+    // Both sides scored on the way, and one reached 21.
+    assert!(most.0 > 0.0 && most.1 > 0.0, "{most:?}");
+    assert!(most.0 >= 21.0 || most.1 >= 21.0, "{most:?}");
+    // Every phase was gone through: ready, live, a shot, a result, theirs, over.
+    for phase in [0, 1, 2, 3, 4, 5] {
+        assert!(phases.contains(&phase), "phase {phase} never came: {phases:?}");
+    }
+    let saved = std::fs::read_to_string(&record).expect("the record is kept");
+    let won = most.0 >= 21.0;
+    assert_eq!(saved, if won { "1 0" } else { "0 1" });
+    drop(kept);
+}

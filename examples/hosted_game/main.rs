@@ -8,6 +8,7 @@
 //!
 //! ```sh
 //! cargo run --example hosted_game -- frame.png
+//! cargo run --example hosted_game -- frame.png examples/retro_dunk   # another game folder
 //! ```
 
 use mira::{prelude::*, render::Screenshot};
@@ -18,6 +19,7 @@ const GAME: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/sacred_sites")
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     let saved = std::env::args().nth(1).unwrap_or("hosted.png".to_owned());
+    let game = std::env::args().nth(2).unwrap_or(GAME.to_owned());
 
     // The host's own device, opened with nothing asked of it.
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -26,7 +28,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut app = App::new();
     app.add_plugins(DefaultPlugins);
-    app.load_scripts(GAME)?;
+    app.load_scripts(&game)?;
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
     app.host(device.clone(), queue, format, 640, 360);
     for frame in 0..60 {
