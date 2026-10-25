@@ -10,7 +10,6 @@
 -- mouse go, and a second Escape ends the game.
 
 use Mira as M
-use Mira (VoxelHit)
 use Std.Ffi (Ptr)
 use Std.Num.Float as F
 use Std.Collections.Vector as V
@@ -148,7 +147,7 @@ fun fly (sys : M.System) (grabbed : Bool) (me : Ptr) (place : Ptr) : () ! Proces
 -- Breaks the block looked at, or puts the chosen one against the face looked at.
 fun build (sys : M.System) (from : (Float, Float, Float)) (forward : (Float, Float, Float)) (breaking : Bool) : () ! Process =
   match M.voxelRaycast sys from forward reach with
-  | Just (VoxelHit block face d kind) ->
+  | Just (M.VoxelHit block face d kind) ->
       if breaking then M.setVoxel sys block M.air
       else if face == (0, 0, 0) then ()
       else M.setVoxel sys (beside block face) (M.readInt32 (keptPtr sys chosenAt))
