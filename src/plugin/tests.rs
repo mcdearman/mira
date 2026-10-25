@@ -279,7 +279,6 @@ MIRA_EXPORT int32_t mira_plugin_load(const MiraApi *a, MiraApp *app) {
 /// vertices and a material, on the ground, and its systems put in order.
 const MEADOW_SCENE: &str = r#"
 use Mira as M
-use Mira (Contact, RayHit)
 use Std.Num.Float as F
 
 -- What is kept: the transform, test.Report (the contacts, the speed, the ray and the ticks
@@ -338,14 +337,14 @@ fun scene_observe (s : Int) (user : Int) : () ! Process =
     let touches =
       M.foldEvents sys (M.kept sys 4) M.contactSize 0 (\n v ->
         match M.readContact v with
-        | Contact a b point normal impulse -> if a == ball or b == ball then n + 1 else n)
+        | M.Contact a b point normal impulse -> if a == ball or b == ball then n + 1 else n)
     in
     let u3 = M.writeInt32At report 0 (M.readInt32At report 0 + touches) in
     let speed = (match M.velocity sys e with | Just (x, y, z) -> F.abs y | None -> 0.0 -. 1.0) in
     let u4 = M.writeFloat32 report 1 speed in
     let ray =
       (match M.raycast sys (0.0, 10.0, 0.0) (0.0, 0.0 -. 3.0, 0.0) 100.0 with
-       | Just (RayHit hit point normal distance) -> if hit == ball then distance else 0.0 -. 1.0
+       | Just (M.RayHit hit point normal distance) -> if hit == ball then distance else 0.0 -. 1.0
        | None -> 0.0 -. 1.0)
     in
     let u5 = M.writeFloat32 report 2 ray in
