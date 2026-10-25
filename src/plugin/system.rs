@@ -136,6 +136,7 @@ impl System for DynamicSystem {
         access.read_resource::<crate::voxel::VoxelWorld>();
         access.read_resource::<crate::voxel::BlockRegistry>();
         access.read_resource::<crate::actions::Actions>();
+        access.read_resource::<crate::render::PointerSight>();
         access.write_resource::<ImageNames>();
         self.access = Some(access);
     }

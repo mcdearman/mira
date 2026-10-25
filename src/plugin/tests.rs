@@ -1697,6 +1697,10 @@ static void play(MiraSystem *s, void *user) {
     say(s, MIRA_STR("maker.presses"), *presses);
     say(s, MIRA_STR("maker.up_held"), (up & MIRA_ACTION_DOWN) != 0);
     say(s, MIRA_STR("maker.across"), api->action_value(s, MIRA_STR("across")));
+    float at[3] = {0, 0, 0};
+    say(s, MIRA_STR("maker.pointer"), api->pointer_on_ground(s, 0.5f, at));
+    say(s, MIRA_STR("maker.pointer_x"), at[0]);
+    say(s, MIRA_STR("maker.pointer_z"), at[2]);
 }
 
 MIRA_EXPORT int32_t mira_plugin_load(const MiraApi *a, MiraApp *app) {
@@ -1791,7 +1795,13 @@ fun maker_play (s : Int) (user : Int) : () ! Process =
   let u1 = (if M.actionPressed sys "up" then M.writeInt32 presses (M.readInt32 presses + 1) else ()) in
   let u2 = M.setSignalNumber sys "maker.presses" (toFloat (M.readInt32 presses)) in
   let u3 = say sys "maker.up_held" (M.actionHeld sys "up") in
-  M.setSignalNumber sys "maker.across" (M.actionValue sys "across")
+  let u4 = M.setSignalNumber sys "maker.across" (M.actionValue sys "across") in
+  match M.pointerOnGround sys 0.5 with
+  | Just (x, y, z) ->
+    let u5 = say sys "maker.pointer" True in
+    let u6 = M.setSignalNumber sys "maker.pointer_x" x in
+    M.setSignalNumber sys "maker.pointer_z" z
+  | None -> say sys "maker.pointer" False
 "#;
 
 #[test]
@@ -1870,6 +1880,16 @@ fn play_the_maker(game: &str, load: impl FnOnce(&mut App)) {
         app.update();
     }
     assert_eq!((said(&app, "maker.presses"), said(&app, "maker.up_held"), said(&app, "maker.across")), (1.0, 0.0, 0.0));
+
+    // No pointer with no window or camera; and where a line of sight down from above meets
+    // the level the plugin asked about.
+    assert_eq!(said(&app, "maker.pointer"), 0.0);
+    let down = (Vec3::new(1.5, 10.0, -2.0), Vec3::new(0.0, -2.0, 0.5));
+    app.world.insert_resource(crate::render::PointerSight(Some(down)));
+    app.update();
+    app.update();
+    let met = (said(&app, "maker.pointer"), said(&app, "maker.pointer_x"), said(&app, "maker.pointer_z"));
+    assert_eq!(met, (1.0, 1.5, -2.0 + 9.5 / 2.0 * 0.5));
     let _ = std::fs::remove_dir_all(&kept);
 }
 /// What a Meadow script does with files and sounds, through mira's bindings: an image on a
@@ -2724,19 +2744,45 @@ fn a_bundled_plugin_is_opened_where_it_is_and_never_reloaded() {
     assert!(app.load_bundled_plugin(workspace.dir.join("no-such-plugin.dll")).is_err());
 }
 
-/// RetroDunk plays itself from its script: possessions go back and forth, baskets are
-/// scored, a game is won or lost, and the record of it is kept.
-#[test]
-fn retro_dunk_plays_a_game_from_its_script() {
+/// RetroDunk's script loaded into an app with what it needs, a frame a thirtieth of a second,
+/// and its first frame run.
+fn retro_dunk(name: &str) -> (Workspace, App) {
     use crate::{
         assets::Assets,
         audio::SilentAudioPlugin,
         input::InputPlugin,
         render::{Image, Mesh},
-        save::SaveGames,
-        signal::Signals,
         time::Time,
     };
+    let workspace = Workspace::new(name);
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/retro_dunk/Dunk.mw");
+    std::fs::copy(script, workspace.dir.join("Dunk.mw")).unwrap();
+    let mut app = app();
+    app.add_plugins(InputPlugin).add_plugins(SilentAudioPlugin).init_resource::<Assets<Mesh>>().init_resource::<Assets<Image>>();
+    app.load_scripts(&workspace.dir).unwrap();
+    assert!(app.script_problems().next().is_none(), "{:?}", app.script_problems().next());
+    app.world.resource_mut::<Time>().set_fixed_step(Some(std::time::Duration::from_secs_f64(1.0 / 30.0)));
+    app.update();
+    (workspace, app)
+}
+
+/// Where a RetroDunk player is: of a team, at a place in it.
+fn dunk_player(world: &World, team: f32, place: f32) -> Vec3 {
+    let id = world.named_component_id("dunk.Player").expect("the players' component");
+    let storage = world.erased_storage(world.named_component(id).unwrap().key).unwrap();
+    let found = storage.entities().iter().copied().find(|&entity| {
+        // SAFETY: nothing else is using the world, and the component is four floats.
+        let player = unsafe { *storage.value_ptr(entity).unwrap().cast::<[f32; 4]>() };
+        (player[0], player[1]) == (team, place)
+    });
+    world.get::<Transform>(found.expect("the player")).unwrap().translation
+}
+
+/// RetroDunk plays itself from its script: possessions go back and forth, baskets are
+/// scored, a game is won or lost, and the record of it is kept.
+#[test]
+fn retro_dunk_plays_a_game_from_its_script() {
+    use crate::{save::SaveGames, signal::Signals};
     if !have_meadowboot() {
         return;
     }
@@ -2754,15 +2800,7 @@ fn retro_dunk_plays_a_game_from_its_script() {
     let kept = PutBack(record.clone(), std::fs::read(&record).ok());
     let _ = std::fs::remove_file(&record);
 
-    let workspace = Workspace::new("retro-dunk");
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/retro_dunk/Dunk.mw");
-    std::fs::copy(script, workspace.dir.join("Dunk.mw")).unwrap();
-    let mut app = app();
-    app.add_plugins(InputPlugin).add_plugins(SilentAudioPlugin).init_resource::<Assets<Mesh>>().init_resource::<Assets<Image>>();
-    app.load_scripts(&workspace.dir).unwrap();
-    assert!(app.script_problems().next().is_none(), "{:?}", app.script_problems().next());
-    app.world.resource_mut::<Time>().set_fixed_step(Some(std::time::Duration::from_secs_f64(1.0 / 30.0)));
-    app.update();
+    let (_workspace, mut app) = retro_dunk("retro-dunk");
     app.world.resource_mut::<Signals>().set("dunk.autoplay", 1.0);
 
     let said = |app: &App, what: &str| app.world.resource::<Signals>().number(what);
@@ -2788,4 +2826,53 @@ fn retro_dunk_plays_a_game_from_its_script() {
     let won = most.0 >= 21.0;
     assert_eq!(saved, if won { "1 0" } else { "0 1" });
     drop(kept);
+}
+
+/// RetroDunk aimed with the mouse: held on empty floor and let go, nothing is thrown; on a
+/// teammate, the ball is passed to them; on the rim, it is a shot.
+#[test]
+fn retro_dunk_is_aimed_with_the_mouse() {
+    use crate::{
+        input::{InjectedInput, MouseButton, Played},
+        render::PointerSight,
+        signal::Signals,
+    };
+    if !have_meadowboot() {
+        return;
+    }
+    let (_workspace, mut app) = retro_dunk("retro-dunk-aim");
+    let said = |app: &App, what: &str| app.world.resource::<Signals>().number(what);
+    // The button held for two thirds of a second, the pointer straight down onto the floor
+    // wherever `at` says as it is held, and let go.
+    let throw = |app: &mut App, at: &dyn Fn(&World) -> (f32, f32)| {
+        app.world.resource_mut::<InjectedInput>().play(Played::Button(MouseButton::Left, true));
+        for _ in 0..20 {
+            let (x, z) = at(&app.world);
+            app.world.insert_resource(PointerSight(Some((Vec3::new(x, 20.0, z), Vec3::NEG_Y))));
+            app.update();
+        }
+        app.world.resource_mut::<InjectedInput>().play(Played::Button(MouseButton::Left, false));
+        app.update();
+        app.update();
+    };
+    for _ in 0..4 {
+        app.update();
+    }
+    assert_eq!(said(&app, "dunk.phase"), 1.0, "the ball is yours to play");
+
+    throw(&mut app, &|_| (6.5, 6.0));
+    assert_eq!((said(&app, "dunk.phase"), said(&app, "dunk.handler")), (1.0, 0.0), "nothing is thrown at nothing");
+
+    throw(&mut app, &|world| {
+        let mate = dunk_player(world, 0.0, 2.0);
+        (mate.x, mate.z)
+    });
+    assert_eq!(said(&app, "dunk.phase"), 6.0, "a pass");
+    for _ in 0..20 {
+        app.update();
+    }
+    assert_eq!((said(&app, "dunk.phase"), said(&app, "dunk.handler")), (1.0, 2.0), "caught, and played on as them");
+
+    throw(&mut app, &|_| (0.0, -5.4));
+    assert_eq!(said(&app, "dunk.phase"), 2.0, "a shot");
 }

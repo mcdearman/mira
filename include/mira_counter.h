@@ -170,6 +170,7 @@ typedef struct MiraApi {
     void *action_value; /* not described here: see mira.h */
     void *file_write; /* not described here: see mira.h */
     void *file_read; /* not described here: see mira.h */
+    void *pointer_on_ground; /* not described here: see mira.h */
 } MiraApi;
 
 /* Expands a string literal to the (pointer, length) pair the API takes. */

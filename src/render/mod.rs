@@ -341,6 +341,60 @@ impl Camera {
             None => ((self.fov_y * 0.5).tan(), 0.0),
         }
     }
+
+    /// The line of sight through a place in the picture, for the camera placed in the world by
+    /// `placed`, in a picture `aspect` times as wide as it is tall: where it starts, and the
+    /// way it goes (of no particular length). A place is counted from the picture's top-left
+    /// corner, across and down, from 0 to 1.
+    pub fn sight(&self, placed: Mat4, at: Vec2, aspect: f32) -> (Vec3, Vec3) {
+        // From the middle: right and up are positive, the edges are at one.
+        let (across, up) = (at.x * 2.0 - 1.0, 1.0 - at.y * 2.0);
+        let (widening, half_height) = self.spread();
+        // A perspective camera looks out from a point; an orthographic one, straight ahead from
+        // wherever in its view the place is.
+        let from = Vec3::new(across * half_height * aspect, up * half_height, 0.0);
+        let along = Vec3::new(across * widening * aspect, up * widening, -1.0);
+        (placed.transform_point3(from), placed.transform_vector3(along))
+    }
+}
+
+/// The line of sight through the pointer: the mouse over the window, or else the first finger
+/// down on the screen, as the active camera sees it. Worked out at the start of each frame; none
+/// with no pointer, no window or no camera. A resource.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PointerSight(pub Option<(Vec3, Vec3)>);
+
+impl PointerSight {
+    /// Where the pointer points on the level plane at `height`, if it points at it at all.
+    pub fn on_level(&self, height: f32) -> Option<Vec3> {
+        let (from, along) = self.0?;
+        if along.y.abs() < 1e-6 {
+            return None;
+        }
+        let ahead = (height - from.y) / along.y;
+        (ahead >= 0.0).then(|| from + along * ahead)
+    }
+}
+
+fn follow_pointer(
+    mut sight: ResMut<PointerSight>,
+    mouse: Option<Res<crate::input::Mouse>>,
+    touches: Option<Res<crate::touch::Touches>>,
+    window: Option<Res<Window>>,
+    cameras: Query<(&Camera, &GlobalTransform, Option<&ViewTarget>)>,
+) {
+    sight.0 = None;
+    let Some(size) = window.map(|window| window.size().as_vec2()).filter(|size| size.x >= 1.0 && size.y >= 1.0) else {
+        return;
+    };
+    let pointer = mouse.and_then(|mouse| mouse.position).or_else(|| touches.and_then(|touches| touches.iter().next().map(|finger| finger.position)));
+    let Some(at) = pointer else {
+        return;
+    };
+    // The camera the frame is seen through: the first active one drawing to the window.
+    if let Some((camera, placed, _)) = cameras.iter().find(|(camera, _, target)| camera.active && target.is_none()) {
+        sight.0 = Some(camera.sight(placed.0, at / size, size.x / size.y));
+    }
 }
 
 /// The sun, shining along its entity's forward direction.
@@ -1392,7 +1446,8 @@ impl Plugin for RenderPlugin {
             .init_resource::<RenderFrame>()
             .init_resource::<VolumetricLight>()
             .add_systems(Stage::PreStartup, init_gpu)
-            .add_systems(Stage::PreUpdate, resize)
+            .init_resource::<PointerSight>()
+            .add_systems(Stage::PreUpdate, (resize, follow_pointer))
             .add_systems(Stage::PostUpdate, (animation::follow_playing, animate, gait::walk, reach::reach))
             .init_resource::<Particles>()
             .add_systems(Stage::Last, particles::simulate)
@@ -1424,5 +1479,45 @@ impl Plugin for RenderPlugin {
             .resource_mut::<ShadowDrawFunctions>()
             .0
             .push(draw_mesh_shadows);
+    }
+}
+
+#[cfg(test)]
+mod sight_tests {
+    use glam::{Mat4, Quat, Vec2, Vec3};
+
+    use super::{Camera, PointerSight};
+
+    fn near(a: Vec3, b: Vec3) -> bool {
+        (a - b).length() < 1e-4
+    }
+
+    #[test]
+    fn an_orthographic_camera_looking_down_sees_the_floor_under_the_pointer() {
+        // 10 m tall and twice as wide, 20 m up, looking straight down with up the screen
+        // toward -z: as RetroDunk's camera is.
+        let camera = Camera::orthographic(10.0);
+        let placed = Mat4::from_rotation_translation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2), Vec3::new(0.0, 20.0, 0.0));
+        let floor = |at: Vec2| PointerSight(Some(camera.sight(placed, at, 2.0))).on_level(0.0).unwrap();
+        assert!(near(floor(Vec2::new(0.5, 0.5)), Vec3::ZERO));
+        assert!(near(floor(Vec2::new(1.0, 0.5)), Vec3::new(10.0, 0.0, 0.0)));
+        assert!(near(floor(Vec2::new(0.5, 0.0)), Vec3::new(0.0, 0.0, -5.0)));
+        assert!(near(floor(Vec2::new(0.25, 1.0)), Vec3::new(-5.0, 0.0, 5.0)));
+    }
+
+    #[test]
+    fn a_perspective_camera_sees_further_off_toward_the_edges() {
+        let camera = Camera::default();
+        let placed = Mat4::from_rotation_translation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2), Vec3::new(0.0, 10.0, 0.0));
+        let floor = |at: Vec2| PointerSight(Some(camera.sight(placed, at, 1.0))).on_level(0.0).unwrap();
+        assert!(near(floor(Vec2::new(0.5, 0.5)), Vec3::ZERO));
+        let edge = 10.0 * (camera.fov_y * 0.5).tan();
+        assert!(near(floor(Vec2::new(0.5, 0.0)), Vec3::new(0.0, 0.0, -edge)));
+        // A line of sight along the level, or away from it, meets it nowhere.
+        let level = PointerSight(Some((Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 0.0, -1.0))));
+        assert_eq!(level.on_level(0.0), None);
+        let upward = PointerSight(Some((Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 1.0, -1.0))));
+        assert_eq!(upward.on_level(0.0), None);
+        assert_eq!(PointerSight(None).on_level(0.0), None);
     }
 }

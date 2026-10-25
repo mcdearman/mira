@@ -159,6 +159,11 @@ name: a key (`KeyW`, `Space`, `ArrowUp`), a mouse button (`MouseLeft`), a finger
 action is held, was pressed this frame or was let go, and `action_value` where an axis is.
 So one game is played with keys at a desk and with swipes on a phone, and does not know which.
 
+`pointer_on_ground` says where the pointer, the mouse over the window or else the first
+finger down, points on a level plane, as the camera sees it: what a game aimed or steered by
+pointing at the floor asks. It is worked out at the start of each frame, through the first
+active camera drawing to the window.
+
 ## The game's own files
 
 `file_write` and `file_read` keep small files, a best score or the player's choices, in

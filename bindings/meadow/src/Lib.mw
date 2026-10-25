@@ -1103,3 +1103,14 @@ fun actionBits (sys : System) (action : String) : Int ! { Process | e } =
       Ffi.withBuffer (max 1 size) (\out ->
         let got = call sys 80 [Arg.Ptr g, Arg.Int gn, Arg.Ptr f, Arg.Int fn, Arg.Ptr out, Arg.Int size] in
         Just (Ffi.readText out (if got < size then got else size)))))
+
+-- ---------------------------------------------------------------------------------------
+-- The pointer
+
+-- Where the pointer (the mouse over the window, or else the first finger down) points on the
+-- level plane at `height`, as the camera sees it at the start of the frame; none with no
+-- pointer or camera.
+@pub fun pointerOnGround (sys : System) (height : Float) : Maybe (Float, Float, Float) ! { Process | e } =
+  Ffi.withBuffer 12 (\out ->
+    if call sys 81 [Arg.Float32 height, Arg.Ptr out] % 256 == 0 then None
+    else Just (readFloat32 out 0, readFloat32 out 1, readFloat32 out 2))

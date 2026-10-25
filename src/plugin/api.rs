@@ -166,6 +166,7 @@ pub(crate) static API: MiraApi = MiraApi {
     action_value,
     file_write,
     file_read,
+    pointer_on_ground,
 };
 
 /// Runs `body`, turning a panic into `fallback` so it never unwinds into the plugin.
@@ -2047,5 +2048,21 @@ unsafe extern "C" fn file_read(
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, fits);
         }
         bytes.len() as i64
+    })
+}
+
+unsafe extern "C" fn pointer_on_ground(system: *mut MiraSystem, height: f32, out: *mut f32) -> u8 {
+    guard("pointer_on_ground", 0, || {
+        if out.is_null() {
+            return 0;
+        }
+        let at = context(system).and_then(|context| context.world().get_resource::<crate::render::PointerSight>()).and_then(|sight| sight.on_level(height));
+        let Some(at) = at else {
+            return 0;
+        };
+        out.write(at.x);
+        out.add(1).write(at.y);
+        out.add(2).write(at.z);
+        1
     })
 }

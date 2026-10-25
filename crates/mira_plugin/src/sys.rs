@@ -569,6 +569,7 @@ pub struct MiraApi {
         out: *mut u8,
         capacity: usize,
     ) -> i64,
+    pub pointer_on_ground: unsafe extern "C" fn(system: *mut MiraSystem, height: f32, out: *mut f32) -> u8,
 }
 
 /// `mira.Transform`: 48 bytes, 16-byte aligned.

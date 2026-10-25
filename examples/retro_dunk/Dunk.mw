@@ -4,9 +4,10 @@
 --
 -- > cargo run --bin mira-play -- examples/retro_dunk
 --
--- WASD or the arrows move whoever has the ball. Hold Space (or the left mouse button) to
--- rise for a shot and let go when the meter beside you is in the green. E (or the right
--- mouse button) passes to the most open teammate, and you play on as them. On a phone, a
+-- WASD or the arrows move whoever has the ball. Hold Space to rise for a shot and let go
+-- when the meter beside you is in the green. Or hold the left mouse button and aim: let go
+-- on the rim to shoot, surer the nearer its middle, or on a teammate to pass to them. E (or
+-- the right mouse button) passes to the most open teammate, and you play on as them. On a phone, a
 -- thumb on the left of the screen runs, drawn the way to go, and taps to pass; one on the
 -- right holds to shoot. Inside the arc a basket is 2, beyond it 3; close in, it is a dunk.
 -- The shot clock is 14 seconds, and a defender left at your side long enough takes the ball.
@@ -61,6 +62,8 @@ def afterI : Int = 12
 def bounceI : Int = 13
 def gamesI : Int = 14
 def startedI : Int = 15
+def aimingI : Int = 16
+def dotShownI : Int = 17
 -- ...the pictures and sounds made at the start...
 def ourFrameI : Int = 20
 def theirFrameI : Int = 22
@@ -75,6 +78,8 @@ def swishI : Int = 31
 def clankI : Int = 32
 def buzzerI : Int = 33
 def cheerI : Int = 34
+def aimNoneI : Int = 35
+def aimShotI : Int = 36
 -- ...and the fractional ones.
 def timerF : Int = 0
 def clockF : Int = 1
@@ -91,6 +96,13 @@ def toXF : Int = 11
 def toZF : Int = 12
 def guardedF : Int = 13
 def nowF : Int = 14
+def aimXF : Int = 15
+def aimZF : Int = 16
+
+-- The dots of the line the mouse aims along, and how near the rim's middle an aim must be to
+-- be a shot.
+def dots : Int = 10
+def rimReach : Float = 1.5
 
 -- The phases of a possession.
 def ready : Int = 0
@@ -128,8 +140,8 @@ fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
     let transform = M.lookupComponent p "mira.Transform" in
     -- A player: team (0 yours, 1 theirs), place in the team, and how far it has run.
     let player = M.registerComponent p "dunk.Player" 16 4 in
-    -- The ball (0), its shadow (1), the mark over whoever has it (2), and the shot meter's
-    -- frame (3) and what fills it (4).
+    -- The ball (0), its shadow (1), the mark over whoever has it (2), the shot meter's frame
+    -- (3) and what fills it (4), and the dots of the line the mouse aims along (5 and up).
     let ball = M.registerComponent p "dunk.Ball" 4 4 in
     -- A letter: on the board (1), said in the middle (2), or the help (3).
     let text = M.registerComponent p "dunk.Text" 4 4 in
@@ -154,9 +166,10 @@ fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
         M.bindAxis p "along" "KeyW" "KeyS",
         M.bindAxis p "along" "ArrowUp" "ArrowDown",
         M.bindAction p "shoot" "Space",
-        M.bindAction p "shoot" "MouseLeft",
         M.bindAction p "pass" "KeyE",
         M.bindAction p "pass" "MouseRight",
+        -- Held to aim at the rim or a teammate, and let go to throw.
+        M.bindAction p "aim" "MouseLeft",
         -- On a phone: a thumb on the left runs and taps to pass, one on the right holds to shoot.
         M.bindAxis p "across" "DragLeft" "DragRight",
         M.bindAxis p "along" "DragUp" "DragDown",
@@ -410,6 +423,8 @@ fun dunk_setup (s : Int) (user : Int) : () ! Process =
   let v6 = seti sys shadowImageI (M.createImage sys "dunk.shadow" 12 6 (generated 12 6 shadowColour) M.imagePixelated) in
   let v9 = seti sys meterImageI (M.createImage sys "dunk.meter" 4 20 (generated 4 20 meterColour) M.imagePixelated) in
   let v10 = seti sys fillImageI (M.createImage sys "dunk.fill" 2 2 [250, 220, 60, 255, 250, 220, 60, 255, 250, 220, 60, 255, 250, 220, 60, 255] M.imagePixelated) in
+  let v11 = seti sys aimNoneI (M.createImage sys "dunk.aim.none" 2 2 (generated 2 2 (\x y -> (250, 244, 224, 255))) M.imagePixelated) in
+  let v12 = seti sys aimShotI (M.createImage sys "dunk.aim.shot" 2 2 (generated 2 2 (\x y -> (90, 220, 110, 255))) M.imagePixelated) in
   let v7 = seti sys markerImageI (M.createImage sys "dunk.marker" 7 4 (drawn marker (\k -> if k == "y" then (250, 220, 60, 255) else clear)) M.imagePixelated) in
   let letters = M.pointer (M.kept sys glyphsAt) in
   let v8 = V.forEach (\c -> let key = C.toString c in M.writeInt32At letters (C.code c - 32) (M.createImage sys ("dunk.letter." ++ key) 3 5 (drawn (letterRows key) ink) M.imagePixelated)) (S.chars alphabet) in
@@ -434,11 +449,13 @@ fun dunk_setup (s : Int) (user : Int) : () ! Process =
       let entity = flat sys transform image (formation team place) (0.9, 1.26) in
       M.insertFloats sys entity (M.kept sys playerAt) [toFloat team, toFloat place, 0.0, 0.0]) (range 0 6) in
 
-  -- The ball, its shadow, and the mark over whoever has it.
+  -- The ball, its shadow, the mark over whoever has it, the meter, and the aiming dots.
   let kinds = V.forEach (\kind ->
-      let image = if kind == 0 then geti sys ballImageI else if kind == 1 then geti sys shadowImageI else if kind == 2 then geti sys markerImageI else if kind == 3 then geti sys meterImageI else geti sys fillImageI in
-      let entity = flat sys transform image (0.0, 0.5, 0.0) (0.5, 0.5) in
-      M.insertFloats sys entity (M.kept sys ballAt) [toFloat kind]) (range 0 5) in
+      let image = if kind == 0 then geti sys ballImageI else if kind == 1 then geti sys shadowImageI else if kind == 2 then geti sys markerImageI else if kind == 3 then geti sys meterImageI else if kind == 4 then geti sys fillImageI else geti sys aimNoneI in
+      let entity = flat sys transform image (0.0, 0.5, 99.0) (0.5, 0.5) in
+      M.insertFloats sys entity (M.kept sys ballAt) [toFloat kind]) (range 0 (5 + dots)) in
+  let a1 = seti sys dotShownI (geti sys aimNoneI) in
+  let a2 = setf sys aimZF hoopZ in
 
   -- Seen from straight above, the baseline at the top.
   let eye = M.spawn sys in
@@ -451,7 +468,7 @@ fun dunk_setup (s : Int) (user : Int) : () ! Process =
   let r1 = seti sys winsI (V.getOr 0 numbers 0) in
   let r2 = seti sys lossesI (V.getOr 0 numbers 1) in
   let h = V.forEach (\line -> let (row, size, words) = line in write sys 3 (0.0 -. 14.4, toFloat row *. 0.9 -. 6.0) size words)
-      [(0, 0.18, "RETRODUNK"), (2, 0.1, "MOVE: WASD"), (3, 0.1, "SHOOT: HOLD SPACE"), (4, 0.1, "RELEASE IN GREEN"), (5, 0.1, "PASS: E"), (7, 0.1, "FIRST TO 21")] in
+      [(0, 0.18, "RETRODUNK"), (2, 0.1, "MOVE: WASD"), (3, 0.1, "SHOOT: HOLD SPACE"), (4, 0.1, "RELEASE IN GREEN"), (5, 0.1, "PASS: E"), (7, 0.1, "AIM: HOLD MOUSE"), (8, 0.1, "AT RIM OR PLAYER"), (10, 0.1, "FIRST TO 21")] in
   -- Whether the game plays itself, for trying it unwatched.
   M.defineTruth sys "dunk.autoplay" False
 
@@ -581,11 +598,16 @@ fun playLive (sys : M.System) (players : [(Int, Int, Int, (Float, Float, Float))
   let u0 = setf sys clockF clock in
   let close = nearestDefender players at in
   let shootHeld = if auto then autoShooting sys at clock else M.actionHeld sys "shoot" in
+  let aimHeld = (not auto) and M.actionHeld sys "aim" in
+  let u1 = if aimHeld then follow sys else () in
   let rising = getf sys risingF >. 0.5 in
+  let aiming = geti sys aimingI == 1 in
   if clock <. 0.0 then turnover sys 6
-  else if rising and not shootHeld then shoot sys players at
-  else if shootHeld then
-    (let u1 = setf sys risingF 1.0 in
+  else if aiming and not aimHeld then release sys players at
+  else if rising and not shootHeld and not aiming then shoot sys players at 1.0 (0.0, hoopZ)
+  else if shootHeld or aimHeld then
+    (let u2 = setf sys risingF 1.0 in
+     let u3 = if aimHeld then seti sys aimingI 1 else () in
      setf sys meterF (getf sys meterF +. dt /. 0.8))
   else if (not auto) and M.actionPressed sys "pass" then pass sys players
   else
@@ -601,22 +623,57 @@ fun autoShooting (sys : M.System) (at : (Float, Float)) (clock : Float) : Bool !
   if rising then getf sys meterF <. 0.85
   else apart at (0.0, hoopZ) <. 2.6 or clock <. 3.0
 
+-- Where the mouse points on the floor, while it aims.
+fun follow (sys : M.System) : () ! Process =
+  match M.pointerOnGround sys 0.0 with
+  | Just (x, y, z) -> let u = setf sys aimXF x in setf sys aimZF z
+  | None -> ()
+
+fun aimOf (sys : M.System) : (Float, Float) ! Process = (getf sys aimXF, getf sys aimZF)
+
+-- What an aim from the handler is at: the rim (1), the nearest teammate near it (2 and up,
+-- by place), or nothing (0).
+fun aimedAt (players : [(Int, Int, Int, (Float, Float, Float))]) (handler : Int) (aim : (Float, Float)) : Int =
+  if apart aim (0.0, hoopZ) <. rimReach then 1
+  else
+    let nearest = V.foldl (\so p -> let (b, gap) = so in let d = apart (spotOf p) aim in if teamOf p == 0 and placeOf p != handler and d <. gap then (placeOf p, d) else so) (0 - 1, 1.6) players in
+    let (mate, gap) = nearest in
+    if mate < 0 then 0 else 2 + mate
+
+-- The mouse let go: a shot when it aimed at the rim, surer the nearer the middle; a pass
+-- when at a teammate; and nothing thrown when at neither.
+fun release (sys : M.System) (players : [(Int, Int, Int, (Float, Float, Float))]) (at : (Float, Float)) : () ! Process =
+  let aim = aimOf sys in
+  let target = aimedAt players (geti sys handlerI) aim in
+  let u1 = seti sys aimingI 0 in
+  if target == 1 then
+    let off = apart aim (0.0, hoopZ) in
+    let sure = if off <. 0.3 then 1.0 else 1.0 -. 0.6 *. (off -. 0.3) /. (rimReach -. 0.3) in
+    shoot sys players at sure aim
+  else
+    let u2 = setf sys risingF 0.0 in
+    let u3 = setf sys meterF 0.0 in
+    if target >= 2 then passTo sys players (target - 2) else ()
+
 -- Lets the shot go: whether it goes in is settled now, by where it is taken, the timing,
--- and how close a defender is; the ball flies for a second either way.
-fun shoot (sys : M.System) (players : [(Int, Int, Int, (Float, Float, Float))]) (at : (Float, Float)) : () ! Process =
+-- how close a defender is, and how `sure` the aim was; the ball flies for a second either
+-- way, to the basket when it goes in and to where it was aimed when it does not.
+fun shoot (sys : M.System) (players : [(Int, Int, Int, (Float, Float, Float))]) (at : (Float, Float)) (sure : Float) (aim : (Float, Float)) : () ! Process =
   let meter = getf sys meterF in
   let timing = 1.0 -. F.abs (meter -. 0.85) /. 0.45 in
   let timing2 = if timing <. 0.0 then 0.0 else timing in
   let close = nearestDefender players at in
   let contest = if close <. 1.0 then 0.55 else if close <. 1.8 then 0.8 else 1.0 in
-  let p = chance at *. (0.35 +. 0.65 *. timing2) *. contest in
+  let p = chance at *. (0.35 +. 0.65 *. timing2) *. contest *. sure in
   let (x, z) = at in
   let d = apart at (0.0, hoopZ) in
   let u1 = seti sys pointsI (if d >. arc then 3 else 2) in
-  let u2 = seti sys madeI (if random sys <. p then 1 else 0) in
+  let made = random sys <. p in
+  let u2 = seti sys madeI (if made then 1 else 0) in
   let u3 = setf sys meterF 0.0 in
   let u4 = setf sys risingF 0.0 in
-  let u5 = fly sys (x, z) (0.0, hoopZ) (if d <. 1.6 then 0.45 else 1.0) in
+  let v4 = seti sys aimingI 0 in
+  let u5 = fly sys (x, z) (if made then (0.0, hoopZ) else aim) (if d <. 1.6 then 0.45 else 1.0) in
   begin sys shooting 9.0
 
 -- Starts the ball flying from one place to another.
@@ -650,7 +707,7 @@ fun landed (sys : M.System) : () ! Process =
     let u1 = M.playSoundWith sys (geti sys clankI) 0.7 0.0 1.0 False in
     let ours = random sys <. 0.33 in
     let landing = (random sys *. 6.0 -. 3.0, hoopZ +. 1.0 +. random sys *. 3.0) in
-    let u2 = fly sys (0.0, hoopZ) landing 0.5 in
+    let u2 = fly sys (getf sys toXF, getf sys toZF) landing 0.5 in
     let u3 = say sys (if ours then 13 else 4) in
     let u4 = seti sys afterI (if ours then 1 else 0) in
     begin sys result 1.1
@@ -661,13 +718,17 @@ fun pass (sys : M.System) (players : [(Int, Int, Int, (Float, Float, Float))]) :
   let mates = V.filter (\p -> teamOf p == 0 and placeOf p != handler) players in
   let open = V.foldl (\best p -> let room = nearestDefender players (spotOf p) in let (b, broom) = best in if room >. broom then (placeOf p, room) else best) (handler, 0.0 -. 1.0) mates in
   let (to, room) = open in
-  if to == handler then ()
-  else
-    let u1 = seti sys passToI to in
-    let u2 = seti sys madeI (if room <. 1.0 and random sys <. 0.35 then 0 else 1) in
-    let u3 = fly sys (whereIs players 0 handler) (whereIs players 0 to) 0.35 in
-    let u4 = seti sys handlerI (0 - 1) in
-    begin sys passing 9.0
+  if to == handler then () else passTo sys players to
+
+-- The ball to a teammate, picked off now and then when a defender is close to them.
+fun passTo (sys : M.System) (players : [(Int, Int, Int, (Float, Float, Float))]) (to : Int) : () ! Process =
+  let handler = geti sys handlerI in
+  let room = nearestDefender players (whereIs players 0 to) in
+  let u1 = seti sys passToI to in
+  let u2 = seti sys madeI (if room <. 1.0 and random sys <. 0.35 then 0 else 1) in
+  let u3 = fly sys (whereIs players 0 handler) (whereIs players 0 to) 0.35 in
+  let u4 = seti sys handlerI (0 - 1) in
+  begin sys passing 9.0
 
 fun passFlight (sys : M.System) (dt : Float) : () ! Process =
   let t = getf sys flightF +. dt /. getf sys lengthF in
@@ -689,6 +750,7 @@ fun turnover (sys : M.System) (message : Int) : () ! Process =
   let u2 = seti sys afterI 0 in
   let u3 = setf sys risingF 0.0 in
   let u4 = setf sys meterF 0.0 in
+  let v4 = seti sys aimingI 0 in
   let u5 = if message == 6 then M.playSoundWith sys (geti sys buzzerI) 0.6 0.0 1.0 False else 0 in
   begin sys result 1.2
 
@@ -812,6 +874,13 @@ fun moveBall (sys : M.System) : () ! Process =
   let meter = if getf sys meterF >. 1.2 then 1.2 else getf sys meterF in
   let (gx, gz) = if rising then (mx +. 0.75, mz -. 0.4) else (0.0, 99.0) in
   let filled = 1.4 *. (if meter >. 1.0 then 1.0 else meter) in
+  -- The line the mouse aims along, from the ball, coloured by what it aims at.
+  let aiming = geti sys aimingI == 1 and phase == live in
+  let (ax, az) = aimOf sys in
+  let target = if aiming then aimedAt players handler (ax, az) else 0 in
+  let dot = if target == 1 then geti sys aimShotI else if target >= 2 then geti sys fillImageI else geti sys aimNoneI in
+  let recolour = dot != geti sys dotShownI in
+  let u3 = seti sys dotShownI dot in
   M.forEachIn2 sys 1 (\entity kind tr ->
     let k = F.round (M.readFloat32 kind 0) in
     if k == 0 then
@@ -828,9 +897,16 @@ fun moveBall (sys : M.System) : () ! Process =
     else if k == 3 then
       (let u = M.setTranslation tr (gx, 1.6, gz) in
        M.setScale tr (1.5, 1.0, 0.3))
-    else
+    else if k == 4 then
       (let u = M.setTranslation tr (gx, 1.7, gz +. 0.7 -. filled /. 2.0) in
-       M.setScale tr (if filled >. 0.01 then filled else 0.01, 1.0, 0.18)))
+       M.setScale tr (if filled >. 0.01 then filled else 0.01, 1.0, 0.18))
+    else
+      (let along = toFloat (k - 4) /. toFloat dots in
+       let last = k - 4 == dots in
+       let u1 = M.setTranslation tr (if aiming then (bx +. (ax -. bx) *. along, 1.45, bz +. (az -. bz) *. along) else (0.0, 1.45, 99.0)) in
+       let u2 = if recolour then M.setTextures sys entity dot 0 0 else () in
+       let size = if last then 0.3 else 0.13 in
+       M.setScale tr (size, 1.0, size)))
 
 -- The board beside the court, and what is said in the middle of it: made again when any of
 -- it changes.
