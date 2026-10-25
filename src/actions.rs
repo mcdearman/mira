@@ -29,7 +29,7 @@ use crate::{
     ecs::{Res, ResMut},
     gamepad::{Gamepads, PadAxis, PadButton},
     input::{key_named, ButtonInput, KeyCode, MouseButton},
-    touch::{Swipe, Touches},
+    touch::{Side, Swipe, Touches},
 };
 
 /// Everything an action can be pressed by, as it is this frame.
@@ -51,6 +51,13 @@ pub enum Binding {
     Swipe(Swipe),
     Tap,
     Pad(PadButton),
+    /// A tap on one half of the screen.
+    TapOn(Side),
+    /// A finger held down on one half of the screen, or anywhere: held for as long as it is.
+    Touch(Option<Side>),
+    /// A finger held on the left half and drawn that way: held while it is. Four of them, as
+    /// an axis's pairs, are a stick.
+    Drag(Swipe),
 }
 
 impl From<PadButton> for Binding {
@@ -92,6 +99,10 @@ impl Binding {
             Self::Swipe(way) => format!("Swipe{way:?}"),
             Self::Tap => "Tap".into(),
             Self::Pad(button) => button.name(),
+            Self::TapOn(side) => format!("Tap{side:?}"),
+            Self::Touch(None) => "Touch".into(),
+            Self::Touch(Some(side)) => format!("Touch{side:?}"),
+            Self::Drag(way) => format!("Drag{way:?}"),
         }
     }
 
@@ -104,6 +115,15 @@ impl Binding {
             "swipedown" => return Some(Self::Swipe(Swipe::Down)),
             "swipeleft" => return Some(Self::Swipe(Swipe::Left)),
             "swiperight" => return Some(Self::Swipe(Swipe::Right)),
+            "tapleft" => return Some(Self::TapOn(Side::Left)),
+            "tapright" => return Some(Self::TapOn(Side::Right)),
+            "touch" => return Some(Self::Touch(None)),
+            "touchleft" => return Some(Self::Touch(Some(Side::Left))),
+            "touchright" => return Some(Self::Touch(Some(Side::Right))),
+            "dragup" => return Some(Self::Drag(Swipe::Up)),
+            "dragdown" => return Some(Self::Drag(Swipe::Down)),
+            "dragleft" => return Some(Self::Drag(Swipe::Left)),
+            "dragright" => return Some(Self::Drag(Swipe::Right)),
             _ => {}
         }
         if let Some(button) = PadButton::named(name) {
@@ -129,6 +149,9 @@ impl Binding {
             Self::Swipe(way) => from.touches.is_some_and(|touches| touches.swiped() == Some(*way)),
             Self::Tap => from.touches.is_some_and(|touches| touches.tapped().is_some()),
             Self::Pad(button) => from.pads.is_some_and(|pads| pads.pressed(*button)),
+            Self::TapOn(side) => from.touches.is_some_and(|touches| touches.tapped_on(*side)),
+            Self::Touch(side) => from.touches.is_some_and(|touches| touches.held(*side)),
+            Self::Drag(way) => from.touches.is_some_and(|touches| touches.dragged(*way)),
         }
     }
 }
@@ -411,6 +434,51 @@ mod tests {
 
     fn inputs() -> (ButtonInput<KeyCode>, ButtonInput<MouseButton>) {
         (ButtonInput::default(), ButtonInput::default())
+    }
+
+    #[test]
+    fn a_thumb_on_the_left_is_a_stick_and_one_on_the_right_a_button() {
+        let (keys, buttons) = inputs();
+        let mut actions = Actions::default();
+        for (axis, less, more) in [("across", "DragLeft", "DragRight"), ("along", "DragUp", "DragDown")] {
+            actions.bind_axis(axis, Binding::named(less).unwrap(), Binding::named(more).unwrap());
+        }
+        actions.bind("shoot", Binding::named("TouchRight").unwrap()).bind("pass", Binding::named("TapLeft").unwrap());
+        let mut touches = Touches::default();
+        touches.screen_width = 1000.0;
+        let frame = |actions: &mut Actions, touches: &mut Touches| {
+            actions.update_from(&Inputs { keys: &keys, buttons: &buttons, touches: Some(touches), pads: None });
+            touches.clear();
+        };
+        // Left thumb down and drawn up and right: the stick, on a slant.
+        touches.began(1, Vec2::new(200.0, 600.0));
+        touches.moved(1, Vec2::new(260.0, 540.0));
+        frame(&mut actions, &mut touches);
+        assert_eq!((actions.value("across"), actions.value("along")), (1.0, -1.0));
+        // Right thumb held: the button, held for as long as the thumb is down.
+        touches.began(2, Vec2::new(800.0, 600.0));
+        frame(&mut actions, &mut touches);
+        assert!(actions.just_pressed("shoot") && !actions.pressed("pass"));
+        frame(&mut actions, &mut touches);
+        assert!(actions.pressed("shoot") && !actions.just_pressed("shoot"));
+        touches.ended(2, Vec2::new(800.0, 600.0));
+        frame(&mut actions, &mut touches);
+        assert!(actions.just_released("shoot"), "let go: a tap on the right is no pass");
+        assert!(!actions.pressed("pass"));
+        // The left thumb lifted where it is: the stick lets go. A tap on the left passes.
+        touches.ended(1, Vec2::new(260.0, 540.0));
+        frame(&mut actions, &mut touches);
+        assert_eq!(actions.value("across"), 0.0);
+        touches.began(3, Vec2::new(300.0, 300.0));
+        touches.ended(3, Vec2::new(300.0, 300.0));
+        frame(&mut actions, &mut touches);
+        assert!(actions.just_pressed("pass"));
+        // Written down and read back by their names.
+        let text = actions.to_text();
+        assert!(text.contains("shoot = TouchRight") && text.contains("across = DragLeft/DragRight") && text.contains("pass = TapLeft"), "{text}");
+        let mut again = Actions::default();
+        again.read_text(&text).unwrap();
+        assert_eq!(again.to_text(), text);
     }
 
     #[test]

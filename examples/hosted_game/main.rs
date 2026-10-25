@@ -9,6 +9,7 @@
 //! ```sh
 //! cargo run --example hosted_game -- frame.png
 //! cargo run --example hosted_game -- frame.png examples/retro_dunk   # another game folder
+//! cargo run --example hosted_game -- frame.png examples/retro_dunk 300   # 300 frames, of 1/30 s each
 //! ```
 
 use mira::{prelude::*, render::Screenshot};
@@ -20,6 +21,10 @@ fn main() -> anyhow::Result<()> {
     env_logger::init();
     let saved = std::env::args().nth(1).unwrap_or("hosted.png".to_owned());
     let game = std::env::args().nth(2).unwrap_or(GAME.to_owned());
+    // With a number of frames asked for, each is a thirtieth of a second of the game's time,
+    // however fast they are run; else the game goes by the clock.
+    let asked: Option<u32> = std::env::args().nth(3).and_then(|n| n.parse().ok());
+    let frames = asked.unwrap_or(60);
 
     // The host's own device, opened with nothing asked of it.
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -29,20 +34,26 @@ fn main() -> anyhow::Result<()> {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins);
     app.load_scripts(&game)?;
+    if asked.is_some() {
+        app.world.resource_mut::<Time>().set_fixed_step(Some(std::time::Duration::from_secs_f64(1.0 / 30.0)));
+    }
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
     app.host(device.clone(), queue, format, 640, 360);
-    for frame in 0..60 {
-        if frame == 30 {
+    for frame in 0..frames {
+        if frame == frames / 2 {
             app.host_resized(960, 540);
         }
         app.update();
-        let shown = mira::render::frame_texture(&app.world).expect("a frame to show");
+        // A frame just after the size changed may not be drawn yet: there is then none to show.
+        let Some(shown) = mira::render::frame_texture(&app.world) else {
+            continue;
+        };
         // What a host with an sRGB-encoded canvas samples: the bytes as stored.
         let _view = shown.create_view(&wgpu::TextureViewDescriptor {
             format: Some(format.remove_srgb_suffix()),
             ..Default::default()
         });
-        if frame == 0 || frame == 59 {
+        if frame == 0 || frame == frames - 1 {
             println!(
                 "frame {frame}: {}x{} {:?}",
                 shown.width(),

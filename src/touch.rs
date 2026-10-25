@@ -11,6 +11,11 @@
 //!
 //! On a machine with no screen to touch, `Touches::mouse_too` has the left mouse button
 //! stand for a finger, so that a game made for a phone can be tried at a desk.
+//!
+//! A game that is steered rather than swiped (a player run about, a car driven) has the
+//! screen's two halves: a finger held on the left half and drawn away from where it went
+//! down is a stick (`Touches::dragged`), one held on the right a button
+//! (`Touches::held`), and either half can be tapped on its own (`Touches::tapped_on`).
 
 use glam::Vec2;
 
@@ -24,6 +29,13 @@ use crate::{
 pub enum Swipe {
     Up,
     Down,
+    Left,
+    Right,
+}
+
+/// A half of the screen, as it is held: a finger is on the half it went down on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Side {
     Left,
     Right,
 }
@@ -59,11 +71,17 @@ pub struct Touches {
     pub swipe_distance: f32,
     /// Whether the left mouse button stands for a finger.
     pub mouse_too: bool,
+    /// How far, in physical pixels, a finger held as a stick must go from where it went down
+    /// before it pushes it at all.
+    pub drag_dead_zone: f32,
+    /// How wide the screen is, in physical pixels, for telling its halves apart: kept up to
+    /// date from the window. Nought until it is known, when every finger is on the left.
+    pub screen_width: f32,
 }
 
 impl Default for Touches {
     fn default() -> Self {
-        Self { down: Vec::new(), gestures: Vec::new(), swipe_distance: 36.0, mouse_too: false }
+        Self { down: Vec::new(), gestures: Vec::new(), swipe_distance: 36.0, mouse_too: false, drag_dead_zone: 24.0, screen_width: 0.0 }
     }
 }
 
@@ -144,12 +162,51 @@ impl Touches {
     pub fn clear(&mut self) {
         self.gestures.clear();
     }
+
+    /// The half of the screen a place is on.
+    pub fn side_of(&self, at: Vec2) -> Side {
+        if self.screen_width > 0.0 && at.x >= self.screen_width / 2.0 { Side::Right } else { Side::Left }
+    }
+
+    /// Whether a finger is down on a half of the screen, or anywhere.
+    pub fn held(&self, side: Option<Side>) -> bool {
+        self.down.iter().any(|touch| side.is_none_or(|side| self.side_of(touch.start) == side))
+    }
+
+    /// Whether a half of the screen was tapped this frame.
+    pub fn tapped_on(&self, side: Side) -> bool {
+        self.gestures.iter().any(|gesture| matches!(gesture, Gesture::Tap(at) if self.side_of(*at) == side))
+    }
+
+    /// Whether a finger held on the left half is drawn the given way from where it went down,
+    /// past the dead zone: the four of these are a stick, two of them at once on a slant.
+    pub fn dragged(&self, way: Swipe) -> bool {
+        self.down.iter().filter(|touch| self.side_of(touch.start) == Side::Left).any(|touch| {
+            let gone = touch.position - touch.start;
+            let far = gone.length();
+            if far < self.drag_dead_zone {
+                return false;
+            }
+            // Down the screen is more y. A third of the way off the line still counts, so that
+            // a slant pushes both ways.
+            let along = gone / far;
+            match way {
+                Swipe::Up => along.y < -0.38,
+                Swipe::Down => along.y > 0.38,
+                Swipe::Left => along.x < -0.38,
+                Swipe::Right => along.x > 0.38,
+            }
+        })
+    }
 }
 
 /// Has the left mouse button stand for a finger, where that is asked for.
-pub(crate) fn mouse_as_a_finger(mut touches: ResMut<Touches>, buttons: Res<ButtonInput<MouseButton>>, mouse: Res<Mouse>) {
+pub(crate) fn mouse_as_a_finger(mut touches: ResMut<Touches>, buttons: Res<ButtonInput<MouseButton>>, mouse: Res<Mouse>, window: Option<Res<crate::window::Window>>) {
     if !touches.mouse_too {
         return;
+    }
+    if let Some(window) = window {
+        touches.screen_width = window.size().x as f32;
     }
     let Some(at) = mouse.position else {
         // Off the window with the button down: the finger is gone.
@@ -213,6 +270,34 @@ mod tests {
         touches.ended(2, Vec2::new(500.0, 0.0));
         assert_eq!(touches.gestures(), [Gesture::Tap(Vec2::new(500.0, 0.0))]);
         assert!(touches.iter().next().is_none());
+    }
+
+    #[test]
+    fn the_left_half_is_a_stick_the_right_a_button_and_each_can_be_tapped() {
+        let mut touches = Touches { screen_width: 1000.0, ..Default::default() };
+        // A thumb on the left, drawn up and to the right: both ways at once, past the dead zone.
+        touches.began(1, Vec2::new(200.0, 500.0));
+        touches.moved(1, Vec2::new(210.0, 490.0));
+        assert!(!touches.dragged(Swipe::Up) && touches.held(Some(Side::Left)), "not past the dead zone yet");
+        touches.moved(1, Vec2::new(240.0, 450.0));
+        assert!(touches.dragged(Swipe::Up) && touches.dragged(Swipe::Right));
+        assert!(!touches.dragged(Swipe::Down) && !touches.dragged(Swipe::Left));
+        // A thumb on the right is held, and is no stick.
+        touches.ended(1, Vec2::new(240.0, 450.0));
+        touches.began(2, Vec2::new(800.0, 500.0));
+        touches.moved(2, Vec2::new(800.0, 300.0));
+        assert!(touches.held(Some(Side::Right)) && touches.held(None) && !touches.held(Some(Side::Left)));
+        assert!(!touches.dragged(Swipe::Up), "the right thumb pushes nothing");
+        touches.ended(2, Vec2::new(800.0, 300.0));
+        assert!(!touches.held(Some(Side::Right)));
+        // Taps, told apart by their half.
+        touches.clear();
+        touches.began(3, Vec2::new(100.0, 100.0));
+        touches.ended(3, Vec2::new(100.0, 100.0));
+        assert!(touches.tapped_on(Side::Left) && !touches.tapped_on(Side::Right));
+        // With the screen's width unknown, every finger is on the left.
+        let unknown = Touches::default();
+        assert_eq!(unknown.side_of(Vec2::new(5000.0, 0.0)), Side::Left);
     }
 
     #[test]

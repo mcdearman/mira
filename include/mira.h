@@ -648,8 +648,11 @@ ame as images are: the first time a
     /* During load: binds an action, by name, to a key, a mouse button, a swipe, a tap or a
      * controller's button, besides what it is bound to already. The binding is named as the
      * engine writes bindings down: `KeyW`, `Space`, `ArrowUp`, `MouseLeft`, `SwipeUp`,
-     * `SwipeDown`, `SwipeLeft`, `SwipeRight`, `Tap`, `PadSouth`. Returns 0, or -1 for a
-     * binding with no such name or an app without actions. */
+     * `SwipeDown`, `SwipeLeft`, `SwipeRight`, `Tap`, `PadSouth`; and for a game steered on a
+     * screen, `DragUp`, `DragDown`, `DragLeft`, `DragRight` (a finger held on the left half
+     * and drawn that way: a stick), `TouchLeft`, `TouchRight`, `Touch` (a finger held down on a
+     * half, or anywhere) and `TapLeft`, `TapRight`. Returns 0, or -1 for a binding with no
+     * such name or an app without actions. */
     int32_t (*action_bind)(MiraApp *app, const char *action, size_t action_len,
                            const char *binding, size_t binding_len);
     /* During load: binds an axis to a pair, the first pulling it toward -1 and the second
