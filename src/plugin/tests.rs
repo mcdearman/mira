@@ -1647,6 +1647,232 @@ fn a_plugin_makes_sounds_plays_them_and_puts_them_in_the_world() {
     assert_eq!(said(&app, "noisy.playing"), 0.0);
     assert_eq!(app.world.resource::<Audio>().playing(), 1);
 }
+
+/// Makes its own picture and sound, sets the look and the input it wants, and keeps a file:
+/// what a game drawn and heard from code, as Tail Lights is, needs of the engine. What it
+/// found it says as signals.
+const MAKER: &str = r#"
+static MiraComponent transform_c;
+static int32_t *presses;
+
+static void say(MiraSystem *s, const char *name, size_t len, double value) {
+    api->signal_set(s, name, len, value, 1);
+}
+
+#define GAME "mira plugin test maker"
+
+static void setup(MiraSystem *s, void *user) {
+    /* Red, green, a clear blue, and a half-seen white. */
+    uint8_t pixels[16] = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 0, 255, 255, 255, 128};
+    MiraImage tile = api->image_create(s, MIRA_STR("maker.tile"), 2, 2, pixels, MIRA_IMAGE_PIXELATED);
+    say(s, MIRA_STR("maker.same_image"), tile != 0 && tile == api->image_create(s, MIRA_STR("maker.tile"), 2, 2, pixels, MIRA_IMAGE_PIXELATED));
+    say(s, MIRA_STR("maker.no_pixels"), api->image_create(s, MIRA_STR("maker.none"), 0, 0, NULL, 0) == 0);
+
+    MiraTransform here = {{0, 0, 0}, 0, {0, 0, 0, 1}, {1, 1, 1}, 0};
+    MiraEntity sprite = api->spawn(s);
+    api->insert(s, sprite, transform_c, &here);
+    api->set_mesh(s, sprite, api->mesh_shape(s, MIRA_SHAPE_PLANE, 1.0f));
+    api->set_textures(s, sprite, tile, 0, 0);
+    api->set_alpha_cutoff(s, sprite, 0.5f);
+
+    /* A tenth of a second of a rising saw. */
+    static float samples[4800];
+    for (int i = 0; i < 4800; i++) samples[i] = (float)(i % 100) / 50.0f - 1.0f;
+    MiraSound buzz = api->sound_create(s, MIRA_STR("maker.buzz"), 48000, 1, samples, 4800);
+    say(s, MIRA_STR("maker.same_sound"), buzz != 0 && buzz == api->sound_create(s, MIRA_STR("maker.buzz"), 48000, 1, samples, 4800));
+    say(s, MIRA_STR("maker.three_channels"), api->sound_create(s, MIRA_STR("maker.odd"), 48000, 3, samples, 4800) == 0);
+    say(s, MIRA_STR("maker.playing"), api->sound_playing(s, api->sound_play(s, buzz, 0.5f, 0.0f, 1.0f, 1)));
+
+    const char *best = "road 3 260";
+    say(s, MIRA_STR("maker.wrote"), api->file_write(s, MIRA_STR(GAME), MIRA_STR("best.txt"), (const uint8_t *)best, 10) == 0);
+    char back[4] = {0};
+    say(s, MIRA_STR("maker.read_length"), (double)api->file_read(s, MIRA_STR(GAME), MIRA_STR("best.txt"), (uint8_t *)back, 4));
+    say(s, MIRA_STR("maker.read_start"), back[0] == 'r' && back[3] == 'd');
+    say(s, MIRA_STR("maker.missing"), api->file_read(s, MIRA_STR(GAME), MIRA_STR("nothing.txt"), NULL, 0) == -1);
+    say(s, MIRA_STR("maker.kept_in"), api->file_write(s, MIRA_STR(GAME), MIRA_STR("../out.txt"), (const uint8_t *)best, 10) == -1);
+}
+
+static void play(MiraSystem *s, void *user) {
+    uint32_t up = api->action_state(s, MIRA_STR("up"));
+    if (up & MIRA_ACTION_PRESSED) *presses += 1;
+    say(s, MIRA_STR("maker.presses"), *presses);
+    say(s, MIRA_STR("maker.up_held"), (up & MIRA_ACTION_DOWN) != 0);
+    say(s, MIRA_STR("maker.across"), api->action_value(s, MIRA_STR("across")));
+}
+
+MIRA_EXPORT int32_t mira_plugin_load(const MiraApi *a, MiraApp *app) {
+    api = a;
+    transform_c = api->component_lookup(app, MIRA_STR("mira.Transform"), NULL, NULL);
+    presses = api->state(app, MIRA_STR("maker.presses"), sizeof(int32_t), _Alignof(int32_t));
+    /* The flat look, and fingers that a mouse can stand for. */
+    if (api->setting(app, MIRA_STR("view_mode"), MIRA_VIEW_UNLIT) != 0) return -2;
+    if (api->setting(app, MIRA_STR("ray_tracing"), 0) != 0) return -2;
+    if (api->setting(app, MIRA_STR("bloom"), 0) != 0 || api->setting(app, MIRA_STR("taa"), 0) != 0) return -2;
+    if (api->setting(app, MIRA_STR("mouse_as_finger"), 1) != 0) return -2;
+    if (api->setting(app, MIRA_STR("no_such_setting"), 1) != -1) return -3;
+    if (api->setting(app, MIRA_STR("view_mode"), 9) != -1) return -3;
+    if (api->action_bind(app, MIRA_STR("up"), MIRA_STR("KeyW")) != 0) return -4;
+    if (api->action_bind(app, MIRA_STR("up"), MIRA_STR("SwipeUp")) != 0) return -4;
+    if (api->action_bind(app, MIRA_STR("up"), MIRA_STR("Tap")) != 0) return -4;
+    if (api->action_bind(app, MIRA_STR("up"), MIRA_STR("NoSuchKey")) != -1) return -5;
+    if (api->action_bind_axis(app, MIRA_STR("across"), MIRA_STR("KeyA"), MIRA_STR("KeyD")) != 0) return -4;
+    MiraSystemDesc systems[] = {
+        {MIRA_STR("setup"), MIRA_STAGE_STARTUP, 0, setup, NULL, NULL, 0},
+        {MIRA_STR("play"), MIRA_STAGE_UPDATE, 0, play, NULL, NULL, 0},
+    };
+    for (int i = 0; i < 2; i++)
+        if (api->system_add(app, &systems[i]) != 0) return -1;
+    return 0;
+}
+"#;
+
+#[test]
+fn a_plugin_makes_pictures_and_sounds_sets_the_look_binds_actions_and_keeps_a_file() {
+    let workspace = Workspace::new("maker");
+    let library = workspace.compile("maker", MAKER, &["ABI=MIRA_ABI_VERSION"]);
+    play_the_maker("mira plugin test maker", |app| {
+        app.load_native_plugin(&library).unwrap();
+    });
+}
+
+/// The same, written in Meadow with mira's bindings.
+const MEADOW_MAKER: &str = r#"
+use Mira as M
+
+def game : String = "mira plugin test meadow maker"
+
+fun say (sys : M.System) (name : String) (so : Bool) : () ! Process = M.setSignalNumber sys name (if so then 1.0 else 0.0)
+
+@export
+fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
+  M.load api app (\p ->
+    let transform = M.lookupComponent p "mira.Transform" in
+    let presses = M.state p "maker.presses" 4 4 in
+    let u = M.keep p [transform, M.address presses] in
+    -- The flat look, and fingers that a mouse can stand for.
+    let looks = [M.setting p "view_mode" M.viewUnlit, M.setting p "ray_tracing" 0.0, M.setting p "bloom" 0.0, M.setting p "taa" 0.0, M.setting p "mouse_as_finger" 1.0] in
+    let wrong = [M.setting p "no_such_setting" 1.0, M.setting p "view_mode" 9.0, M.bindAction p "up" "NoSuchKey"] in
+    let bound = [M.bindAction p "up" "KeyW", M.bindAction p "up" "SwipeUp", M.bindAction p "up" "Tap", M.bindAxis p "across" "KeyA" "KeyD"] in
+    let added = [M.addSystem p "setup" M.startup "maker_setup" [], M.addSystem p "play" M.update "maker_play" []] in
+    if looks != [0, 0, 0, 0, 0] then 0 - 2
+    else if wrong != [0 - 1, 0 - 1, 0 - 1] then 0 - 3
+    else if bound != [0, 0, 0, 0] then 0 - 4
+    else if added == [0, 0] then 0 else 0 - 1)
+
+@export
+fun maker_setup (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  -- Red, green, a clear blue, and a half-seen white.
+  let pixels = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 0, 255, 255, 255, 128] in
+  let tile = M.createImage sys "maker.tile" 2 2 pixels M.imagePixelated in
+  let u1 = say sys "maker.same_image" (tile != 0 and tile == M.createImage sys "maker.tile" 2 2 pixels M.imagePixelated) in
+  let u2 = say sys "maker.no_pixels" (M.createImage sys "maker.none" 0 0 [] 0 == 0) in
+  let sprite = M.spawn sys in
+  let u3 = M.insertAt sys sprite (M.kept sys 0) (0.0, 0.0, 0.0) in
+  let u4 = M.setMesh sys sprite (M.meshPlane sys 1.0) in
+  let u5 = M.setTextures sys sprite tile 0 0 in
+  let u6 = M.setAlphaCutoff sys sprite 0.5 in
+  -- A tenth of a second of a rising saw.
+  let samples = map (\i -> toFloat (i % 100) /. 50.0 -. 1.0) (range 0 4800) in
+  let buzz = M.createSound sys "maker.buzz" 48000 1 samples in
+  let u7 = say sys "maker.same_sound" (buzz != 0 and buzz == M.createSound sys "maker.buzz" 48000 1 samples) in
+  let u8 = say sys "maker.three_channels" (M.createSound sys "maker.odd" 48000 3 samples == 0) in
+  let u9 = say sys "maker.playing" (M.soundPlaying sys (M.playSoundWith sys buzz 0.5 0.0 1.0 True)) in
+  let u10 = say sys "maker.wrote" (M.writeGameText sys game "best.txt" "road 3 260") in
+  let same = (match M.readGameText sys game "best.txt" with | Just text -> text == "road 3 260" | None -> False) in
+  let u11 = M.setSignalNumber sys "maker.read_length" (if same then 10.0 else 0.0) in
+  let u12 = say sys "maker.read_start" same in
+  let u13 = say sys "maker.missing" (match M.readGameText sys game "nothing.txt" with | Just t -> False | None -> True) in
+  say sys "maker.kept_in" (not (M.writeGameText sys game "../out.txt" "road 3 260"))
+
+@export
+fun maker_play (s : Int) (user : Int) : () ! Process =
+  let sys = M.system s user in
+  let presses = M.pointer (M.kept sys 1) in
+  let u1 = (if M.actionPressed sys "up" then M.writeInt32 presses (M.readInt32 presses + 1) else ()) in
+  let u2 = M.setSignalNumber sys "maker.presses" (toFloat (M.readInt32 presses)) in
+  let u3 = say sys "maker.up_held" (M.actionHeld sys "up") in
+  M.setSignalNumber sys "maker.across" (M.actionValue sys "across")
+"#;
+
+#[test]
+fn a_meadow_script_makes_pictures_and_sounds_sets_the_look_binds_actions_and_keeps_a_file() {
+    if !have_meadowboot() {
+        return;
+    }
+    let workspace = Workspace::new("meadow-maker");
+    let scripts = workspace.dir.join("scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("Maker.mw"), MEADOW_MAKER).unwrap();
+    play_the_maker("mira plugin test meadow maker", |app| {
+        app.load_scripts(&scripts).unwrap();
+        assert!(app.script_problems().next().is_none(), "{:?}", app.script_problems().next());
+    });
+}
+
+/// Loads the maker plugin with `load` into an app with input, sound, meshes and images, and
+/// checks what it did; `game` is the name its files are kept under.
+fn play_the_maker(game: &str, load: impl FnOnce(&mut App)) {
+    use crate::{
+        actions::Binding,
+        assets::Assets,
+        audio::{Audio, SilentAudioPlugin, Sound},
+        input::{InjectedInput, InputPlugin, KeyCode},
+        render::{Image, Material, Mesh, PostProcess, RayTracingSettings, ViewMode},
+        save::SaveGames,
+        touch::{Swipe, Touches},
+    };
+    let kept = SaveGames::for_game(game).folder().to_path_buf();
+    let _ = std::fs::remove_dir_all(&kept);
+    let mut app = app();
+    app.add_plugins(InputPlugin).add_plugins(SilentAudioPlugin).init_resource::<Assets<Mesh>>().init_resource::<Assets<Image>>();
+    load(&mut app);
+
+    // What it set as it loaded.
+    assert_eq!(*app.world.resource::<ViewMode>(), ViewMode::Unlit);
+    assert!(!app.world.resource::<RayTracingSettings>().enabled);
+    let post = app.world.resource::<PostProcess>();
+    assert_eq!((post.bloom, post.taa), (0.0, false));
+    assert!(app.world.resource::<Touches>().mouse_too);
+    let actions = app.world.resource::<crate::actions::Actions>();
+    assert_eq!(actions.bindings("up"), [Binding::Key(KeyCode::KeyW), Binding::Swipe(Swipe::Up), Binding::Tap]);
+    assert_eq!(actions.axis_bindings("across"), [(Binding::Key(KeyCode::KeyA), Binding::Key(KeyCode::KeyD))]);
+
+    app.update();
+    app.update();
+    let said = |app: &App, what: &str| app.world.resource::<crate::signal::Signals>().number(what);
+    for what in ["maker.same_image", "maker.no_pixels", "maker.same_sound", "maker.three_channels", "maker.playing", "maker.wrote", "maker.read_start", "maker.missing", "maker.kept_in"] {
+        assert_eq!(said(&app, what), 1.0, "{what}");
+    }
+    assert_eq!(said(&app, "maker.read_length"), 10.0, "the whole file's length, though four bytes were asked for");
+    assert_eq!(std::fs::read_to_string(kept.join("best.txt")).unwrap(), "road 3 260");
+    assert!(!kept.parent().unwrap().join("out.txt").exists(), "nothing is written outside the game's folder");
+
+    // The picture, on its sprite, cut out where it is clear.
+    let (material, tile) = {
+        let material = app.world.query::<&Material>().iter().copied().next().expect("the sprite's material");
+        (material, material.base_color_texture.expect("the picture is on it"))
+    };
+    assert_eq!(material.alpha_cutoff, Some(0.5));
+    let image = app.world.resource::<Assets<Image>>().get(tile).expect("the made picture").clone();
+    assert_eq!((image.width, image.height), (2, 2));
+    assert_eq!(image.data[..8], [255, 0, 0, 255, 0, 255, 0, 255]);
+    assert_eq!(app.world.resource::<Assets<Sound>>().len(), 1, "one sound however often asked for, and none of three channels");
+    assert!(app.world.resource::<Audio>().playing() >= 1);
+
+    // An action by any of its bindings, and an axis: what the plugin says of a frame, the
+    // signals have the frame after.
+    app.world.resource_mut::<InjectedInput>().tap(KeyCode::KeyW, 4);
+    app.world.resource_mut::<InjectedInput>().tap(KeyCode::KeyD, 4);
+    app.update();
+    app.update();
+    assert_eq!((said(&app, "maker.up_held"), said(&app, "maker.across")), (1.0, 1.0));
+    for _ in 0..4 {
+        app.update();
+    }
+    assert_eq!((said(&app, "maker.presses"), said(&app, "maker.up_held"), said(&app, "maker.across")), (1.0, 0.0, 0.0));
+    let _ = std::fs::remove_dir_all(&kept);
+}
 /// What a Meadow script does with files and sounds, through mira's bindings: an image on a
 /// cube, a model and a prefab, one entity found by itself, sounds loaded, played, stopped.
 /// What it found it says as signals.

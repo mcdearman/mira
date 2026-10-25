@@ -71,6 +71,22 @@ pub const MIRA_SHAPE_PLANE: u32 = 2;
 pub const MIRA_BEFORE: u32 = 0;
 pub const MIRA_AFTER: u32 = 1;
 
+/// For image_create: drawn crisp however far enlarged; read as numbers, not sRGB colour.
+pub const MIRA_IMAGE_PIXELATED: u32 = 1;
+pub const MIRA_IMAGE_LINEAR: u32 = 2;
+
+/// For setting iew_mode.
+pub const MIRA_VIEW_LIT: u32 = 0;
+pub const MIRA_VIEW_UNLIT: u32 = 1;
+pub const MIRA_VIEW_LIGHTING_ONLY: u32 = 2;
+pub const MIRA_VIEW_NORMALS: u32 = 3;
+pub const MIRA_VIEW_WIREFRAME: u32 = 4;
+
+/// What ction_state says of an action: held, pressed this frame, let go this frame.
+pub const MIRA_ACTION_DOWN: u32 = 1;
+pub const MIRA_ACTION_PRESSED: u32 = 2;
+pub const MIRA_ACTION_RELEASED: u32 = 4;
+
 pub const MIRA_SIGNAL_AND: u32 = 0;
 pub const MIRA_SIGNAL_OR: u32 = 1;
 pub const MIRA_SIGNAL_NOT: u32 = 2;
@@ -497,6 +513,62 @@ pub struct MiraApi {
     pub set_cursor_grabbed: unsafe extern "C" fn(system: *mut MiraSystem, grabbed: u32),
     pub cursor_grabbed: unsafe extern "C" fn(system: *mut MiraSystem) -> u32,
     pub quit: unsafe extern "C" fn(system: *mut MiraSystem),
+    pub image_create: unsafe extern "C" fn(
+        system: *mut MiraSystem,
+        name: *const u8,
+        len: usize,
+        width: u32,
+        height: u32,
+        rgba: *const u8,
+        flags: u32,
+    ) -> MiraImage,
+    pub set_alpha_cutoff: unsafe extern "C" fn(system: *mut MiraSystem, entity: MiraEntity, cutoff: f32),
+    pub sound_create: unsafe extern "C" fn(
+        system: *mut MiraSystem,
+        name: *const u8,
+        len: usize,
+        rate: u32,
+        channels: u32,
+        samples: *const f32,
+        count: usize,
+    ) -> MiraSound,
+    pub setting: unsafe extern "C" fn(app: *mut MiraApp, name: *const u8, len: usize, value: f64) -> i32,
+    pub action_bind: unsafe extern "C" fn(
+        app: *mut MiraApp,
+        action: *const u8,
+        action_len: usize,
+        binding: *const u8,
+        binding_len: usize,
+    ) -> i32,
+    pub action_bind_axis: unsafe extern "C" fn(
+        app: *mut MiraApp,
+        axis: *const u8,
+        axis_len: usize,
+        less: *const u8,
+        less_len: usize,
+        more: *const u8,
+        more_len: usize,
+    ) -> i32,
+    pub action_state: unsafe extern "C" fn(system: *mut MiraSystem, action: *const u8, len: usize) -> u32,
+    pub action_value: unsafe extern "C" fn(system: *mut MiraSystem, axis: *const u8, len: usize) -> f32,
+    pub file_write: unsafe extern "C" fn(
+        system: *mut MiraSystem,
+        game: *const u8,
+        game_len: usize,
+        name: *const u8,
+        name_len: usize,
+        data: *const u8,
+        len: usize,
+    ) -> i32,
+    pub file_read: unsafe extern "C" fn(
+        system: *mut MiraSystem,
+        game: *const u8,
+        game_len: usize,
+        name: *const u8,
+        name_len: usize,
+        out: *mut u8,
+        capacity: usize,
+    ) -> i64,
 }
 
 /// `mira.Transform`: 48 bytes, 16-byte aligned.

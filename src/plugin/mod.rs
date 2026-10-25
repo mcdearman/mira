@@ -30,6 +30,7 @@ mod system;
 
 pub use events::PluginEvents;
 pub use mira_plugin::sys::{MiraApi, MiraApp};
+pub(crate) use system::ImageNames;
 
 #[cfg(test)]
 mod tests;

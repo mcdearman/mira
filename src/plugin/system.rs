@@ -135,6 +135,8 @@ impl System for DynamicSystem {
         access.write_resource::<SoundNames>();
         access.read_resource::<crate::voxel::VoxelWorld>();
         access.read_resource::<crate::voxel::BlockRegistry>();
+        access.read_resource::<crate::actions::Actions>();
+        access.write_resource::<ImageNames>();
         self.access = Some(access);
     }
 
@@ -363,6 +365,29 @@ impl Context<'_> {
         Some(server.load_image(images, name).id())
     }
 
+    /// The image a plugin made under a name: the one made before under that name, its pixels
+    /// made anew, or a new one. Named in the asset server too, where there is one, so that
+    /// scenes can save it. None in an app without images.
+    pub(crate) fn made_image(&mut self, name: &str, image: Image) -> Option<u32> {
+        let images = self.world.resource_cell::<Assets<Image>>()?;
+        let names = self.world.resource_cell::<ImageNames>()?;
+        // SAFETY: as in `shape_mesh`: the running system declared write access to both.
+        let ((images, ticks), (names, _)) = unsafe { (images.get_mut::<Assets<Image>>(), names.get_mut::<ImageNames>()) };
+        ticks.changed = self.tick;
+        if let Some(known) = names.0.get(name) {
+            images.set(*known, image);
+            return Some(known.id());
+        }
+        let handle = images.add(image);
+        names.0.insert(name.to_owned(), handle);
+        if let Some(server) = self.world.resource_cell::<AssetServer>() {
+            // SAFETY: as above; the asset server is written too, and nothing else holds it.
+            let (server, _) = unsafe { server.get_mut::<AssetServer>() };
+            server.name("image", handle, format!("made:{name}"));
+        }
+        Some(handle.id())
+    }
+
     /// Adds a mesh to the app's assets.
     /// The sound with a name, made the first time the name is asked for and the same one
     /// every time after. None in an app without sound, or if it could not be made.
@@ -397,3 +422,8 @@ impl Context<'_> {
         Some(meshes.add(mesh).id())
     }
 }
+
+/// The images plugins made, by the names they gave them: asking again for a name gives the
+/// same image, so a plugin loaded anew has the images it had.
+#[derive(Default)]
+pub(crate) struct ImageNames(pub(crate) std::collections::HashMap<String, crate::assets::Handle<Image>>);

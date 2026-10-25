@@ -120,6 +120,25 @@ module Mira
   , setCursorGrabbed
   , cursorGrabbed
   , quit
+    -- * Settings
+  , setting
+  , ViewMode (..)
+  , setViewMode
+    -- * Input actions
+  , bindAction
+  , bindAxis
+  , ActionState (..)
+  , actionState
+  , actionValue
+    -- * Pictures and sounds made from code
+  , createImage
+  , pixelated
+  , linearImage
+  , setAlphaCutoff
+  , createSound
+    -- * The game's own files
+  , writeGameFile
+  , readGameFile
     -- * Signals
   , SignalOp (..)
   , setSignal
@@ -190,7 +209,7 @@ module Mira
 import Control.Exception (SomeException, displayException, try)
 import Control.Monad (unless, when)
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
-import Data.Int (Int32)
+import Data.Int (Int32, Int64)
 import Data.Word (Word32, Word64, Word8)
 import Foreign
   ( Ptr
@@ -1462,3 +1481,119 @@ cursorGrabbed (System system) = (/= 0) <$> c_cursor_grabbed system
 -- | Ends the game after this frame.
 quit :: System -> IO ()
 quit (System system) = c_quit system
+-- | Sets one of the engine's settings by name, as the plugin loads: @view_mode@ (see
+-- 'setViewMode'), @ray_tracing@, @multisampling@, @taa@, @bloom@, @vignette@, @grain@,
+-- @sharpen@, @exposure@, @contrast@, @saturation@, @render_scale@, @mouse_as_finger@,
+-- @swipe_distance@. The graphics are opened with what the first three say.
+setting :: App -> String -> Double -> IO ()
+setting (App app) name value = do
+  status <- withName name $ \chars len -> c_setting app chars len (realToFrac value)
+  when (status /= 0) $ ioError (userError ("the setting `" ++ name ++ "` can't be " ++ show value))
+
+-- | How the scene is drawn.
+data ViewMode
+  = ViewLit
+  | -- | Each surface in its own colour, with no light or shadow on it: a flat game.
+    ViewUnlit
+  | ViewLightingOnly
+  | ViewNormals
+  | ViewWireframe
+  deriving (Eq, Show, Enum, Bounded)
+
+setViewMode :: App -> ViewMode -> IO ()
+setViewMode app mode = setting app "view_mode" (fromIntegral (fromEnum mode))
+
+-- | Binds an action, as the plugin loads, to a key, a mouse button, a swipe, a tap or a
+-- controller's button by its name (@KeyW@, @MouseLeft@, @SwipeUp@, @Tap@, @PadSouth@),
+-- besides what it is bound to already.
+bindAction :: App -> String -> String -> IO ()
+bindAction (App app) action binding = do
+  status <- withName action $ \a alen -> withName binding $ \b blen -> c_action_bind app a alen b blen
+  when (status /= 0) $ ioError (userError ("`" ++ action ++ "` can't be bound to `" ++ binding ++ "`"))
+
+-- | Binds an axis to a pair: the first pulls it toward -1, the second toward 1.
+bindAxis :: App -> String -> String -> String -> IO ()
+bindAxis (App app) axis less more = do
+  status <- withName axis $ \a alen -> withName less $ \l llen -> withName more $ \m mlen ->
+    c_action_bind_axis app a alen l llen m mlen
+  when (status /= 0) $ ioError (userError ("`" ++ axis ++ "` can't be bound to `" ++ less ++ "` and `" ++ more ++ "`"))
+
+-- | What an action is doing: held now, pressed this frame, let go this frame.
+data ActionState = ActionState {actionHeld, actionPressed, actionReleased :: !Bool}
+  deriving (Eq, Show)
+
+actionState :: System -> String -> IO ActionState
+actionState (System system) action = do
+  bits <- withName action (c_action_state system)
+  pure (ActionState (bits Foreign..&. 1 /= 0) (bits Foreign..&. 2 /= 0) (bits Foreign..&. 4 /= 0))
+
+-- | Where an axis is, from -1 to 1.
+actionValue :: System -> String -> IO Float
+actionValue (System system) axis = realToFrac <$> withName axis (c_action_value system)
+
+-- | Flags for 'createImage': each pixel a crisp square however far it is enlarged (pixel
+-- art), and read as plain numbers rather than colour (data such as normals).
+pixelated, linearImage :: Word32
+pixelated = 1
+linearImage = 2
+
+-- | An image made from @width@ x @height@ pixels, four bytes each (red, green, blue, alpha),
+-- row by row from the top, kept under a name: the same name gives the same image, its pixels
+-- made anew. The flags are 'pixelated' and 'linearImage', added.
+createImage :: System -> String -> Int -> Int -> [Word8] -> Word32 -> IO Image
+createImage (System system) name width height rgba flags = do
+  when (length rgba < width * height * 4) $ ioError (userError ("`" ++ name ++ "` has fewer pixels than its size"))
+  handle <- withName name $ \chars len -> withArrayLen rgba $ \_ pixels ->
+    c_image_create system chars len (fromIntegral width) (fromIntegral height) pixels flags
+  when (handle == 0) $ ioError (userError ("the image `" ++ name ++ "` could not be made"))
+  pure (Image handle)
+
+-- | Draws the entity only where its picture's alpha reaches the cutoff, as a sprite cut out of
+-- its background; 'Nothing' draws it all. When this system returns.
+setAlphaCutoff :: System -> Entity -> Maybe Float -> IO ()
+setAlphaCutoff (System system) (Entity entity) cutoff = c_set_alpha_cutoff system entity (maybe (-1) realToFrac cutoff)
+
+-- | A sound made from samples from -1 to 1, so many channels (1 or 2) to a frame, at so many
+-- frames a second, kept under a name: the first time it is made, and the same sound after.
+createSound :: System -> String -> Int -> Int -> [Float] -> IO Sound
+createSound (System system) name rate channels samples = do
+  handle <- withName name $ \chars len -> withArrayLen (map realToFrac samples :: [CFloat]) $ \count values ->
+    c_sound_create system chars len (fromIntegral rate) (fromIntegral channels) values (fromIntegral count)
+  when (handle == 0) $ ioError (userError ("the sound `" ++ name ++ "` could not be made"))
+  pure (Sound handle)
+
+-- | Writes a small file into the folder the game's own files are kept in for the person
+-- playing, at once and whole: the game's name, then the file's, with no folders in it.
+writeGameFile :: System -> String -> String -> [Word8] -> IO ()
+writeGameFile (System system) game name bytes = do
+  status <- withName game $ \g glen -> withName name $ \n nlen -> withArrayLen bytes $ \count data_ ->
+    c_file_write system g glen n nlen data_ (fromIntegral count)
+  when (status /= 0) $ ioError (userError ("`" ++ name ++ "` could not be written"))
+
+-- | Reads such a file whole, if there is one.
+readGameFile :: System -> String -> String -> IO (Maybe [Word8])
+readGameFile (System system) game name =
+  withName game $ \g glen -> withName name $ \n nlen -> do
+    size <- c_file_read system g glen n nlen Foreign.nullPtr 0
+    if size < 0
+      then pure Nothing
+      else allocaArray (max 1 (fromIntegral size)) $ \out -> do
+        got <- c_file_read system g glen n nlen out (fromIntegral size)
+        Just <$> peekArray (fromIntegral (min size got)) out
+
+foreign import ccall unsafe "mira_hs_setting" c_setting :: Ptr () -> Ptr CChar -> CSize -> CDouble -> IO CInt
+foreign import ccall unsafe "mira_hs_action_bind"
+  c_action_bind :: Ptr () -> Ptr CChar -> CSize -> Ptr CChar -> CSize -> IO CInt
+foreign import ccall unsafe "mira_hs_action_bind_axis"
+  c_action_bind_axis :: Ptr () -> Ptr CChar -> CSize -> Ptr CChar -> CSize -> Ptr CChar -> CSize -> IO CInt
+foreign import ccall unsafe "mira_hs_action_state" c_action_state :: Ptr () -> Ptr CChar -> CSize -> IO Word32
+foreign import ccall unsafe "mira_hs_action_value" c_action_value :: Ptr () -> Ptr CChar -> CSize -> IO CFloat
+foreign import ccall unsafe "mira_hs_image_create"
+  c_image_create :: Ptr () -> Ptr CChar -> CSize -> Word32 -> Word32 -> Ptr Word8 -> Word32 -> IO Word32
+foreign import ccall unsafe "mira_hs_set_alpha_cutoff" c_set_alpha_cutoff :: Ptr () -> Word64 -> CFloat -> IO ()
+foreign import ccall unsafe "mira_hs_sound_create"
+  c_sound_create :: Ptr () -> Ptr CChar -> CSize -> Word32 -> Word32 -> Ptr CFloat -> CSize -> IO Word32
+foreign import ccall unsafe "mira_hs_file_write"
+  c_file_write :: Ptr () -> Ptr CChar -> CSize -> Ptr CChar -> CSize -> Ptr Word8 -> CSize -> IO CInt
+foreign import ccall unsafe "mira_hs_file_read"
+  c_file_read :: Ptr () -> Ptr CChar -> CSize -> Ptr CChar -> CSize -> Ptr Word8 -> CSize -> IO Int64

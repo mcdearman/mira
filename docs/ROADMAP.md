@@ -565,11 +565,17 @@ depends on resolution rather than scene size.
       the voxel world in Meadow, played by the same tests as in Haskell
 - [x] Meadow scripts with the whole interface (physics, events, images, models, system
       order), and MeadowBoot installed in CI (Meadow's prerelease, on Linux and Windows)
+- [x] What a game made from code needs, in the plugin interface: pictures and sounds made from
+      pixels and samples, sprites cut out by alpha, the engine's settings (the flat look),
+      input actions bound by name to keys, mouse, swipes, taps and controllers, and small
+      files kept where the system keeps a game's own (in C, Rust, Haskell and Meadow)
+- [ ] Tail Lights as a Meadow script, beside the Rust one; and Meadow games on phones, which
+      needs Meadow libraries built ahead of time for Android and iOS
 - [x] Meadow the language the examples and the docs lead with, Haskell beside it: the games
       are Meadow scripts (`examples/sound`, `sacred_sites`, `voxel_world`), each also in
       Haskell (`examples/haskell`); the editor's tests, the hosted game and the signal graph
       example play the Meadow sacred sites; CI runs the Meadow scripts on Linux, macOS and
-      Windows (MeadowBoot from Meadow v0.3.0)
+      Windows (MeadowBoot from Meadow v0.4.0)
 - [x] Scripts built by the engine itself, so that no shell is needed on any system: a game
       is a folder of scripts, built, loaded, and built again when one is saved
       (`mira-play <folder>`; see [PLUGINS.md](PLUGINS.md))

@@ -160,6 +160,16 @@ typedef struct MiraApi {
     void *set_cursor_grabbed; /* not described here: see mira.h */
     void *cursor_grabbed; /* not described here: see mira.h */
     void *quit; /* not described here: see mira.h */
+    void *image_create; /* not described here: see mira.h */
+    void *set_alpha_cutoff; /* not described here: see mira.h */
+    void *sound_create; /* not described here: see mira.h */
+    void *setting; /* not described here: see mira.h */
+    void *action_bind; /* not described here: see mira.h */
+    void *action_bind_axis; /* not described here: see mira.h */
+    void *action_state; /* not described here: see mira.h */
+    void *action_value; /* not described here: see mira.h */
+    void *file_write; /* not described here: see mira.h */
+    void *file_read; /* not described here: see mira.h */
 } MiraApi;
 
 /* Expands a string literal to the (pointer, length) pair the API takes. */
