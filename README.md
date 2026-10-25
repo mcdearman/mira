@@ -42,7 +42,8 @@ cargo run --release --bin mira-play -- examples/retro_dunk
 RetroDunk is pixel-art basketball, three on three on half a court, in the spirit of Retro
 Bowl: you play your possessions and theirs are played out for you; first to 21, with your
 record kept. WASD to move, hold Space and let go at the top of the meter to shoot, E to
-pass. Everything in it, the court, the players and the sounds, is made in its script,
+pass; or hold the left mouse button, aim at the rim or a teammate, and let go. Everything in
+it, the court, the players and the sounds, is made in its script,
 [`examples/retro_dunk/Dunk.mw`](examples/retro_dunk/Dunk.mw).
 
 ## Demos

@@ -130,6 +130,7 @@ module Mira
   , ActionState (..)
   , actionState
   , actionValue
+  , pointerOnGround
     -- * Pictures and sounds made from code
   , createImage
   , pixelated
@@ -1526,6 +1527,19 @@ actionState :: System -> String -> IO ActionState
 actionState (System system) action = do
   bits <- withName action (c_action_state system)
   pure (ActionState (bits Foreign..&. 1 /= 0) (bits Foreign..&. 2 /= 0) (bits Foreign..&. 4 /= 0))
+
+-- | Where the pointer (the mouse, or else the first finger) points on the level plane at a
+-- height, as the camera sees it; 'Nothing' with no pointer or camera.
+pointerOnGround :: System -> Float -> IO (Maybe V3)
+pointerOnGround (System system) height = allocaArray 3 $ \out -> do
+  found <- c_pointer_on_ground system (realToFrac height) out
+  if found == 0
+    then pure Nothing
+    else do
+      [x, y, z] <- map realToFrac <$> peekArray 3 out
+      pure (Just (V3 x y z))
+
+foreign import ccall unsafe "mira_hs_pointer_on_ground" c_pointer_on_ground :: Ptr () -> CFloat -> Ptr CFloat -> IO Word8
 
 -- | Where an axis is, from -1 to 1.
 actionValue :: System -> String -> IO Float

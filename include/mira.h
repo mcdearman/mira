@@ -681,6 +681,14 @@ ame is a file's name, with no folders in it. Returns 0,
      * there is no such file. */
     int64_t (*file_read)(MiraSystem *system, const char *game, size_t game_len, const char *name,
                          size_t name_len, uint8_t *out, size_t capacity);
+
+    /* ---- the pointer ---- */
+
+    /* Where the pointer (the mouse over the window, or else the first finger down) points on
+     * the level plane at `height`, as the active camera sees it at the start of the frame:
+     * writes three floats and returns 1, or returns 0 with no pointer, window or camera, or
+     * when it points away from the plane. */
+    uint8_t (*pointer_on_ground)(MiraSystem *system, float height, float *out);
 } MiraApi;
 
 /* ---- conveniences for C and C++ ---- */

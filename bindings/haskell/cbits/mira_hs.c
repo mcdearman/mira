@@ -451,3 +451,7 @@ int64_t mira_hs_file_read(MiraSystem *system, const char *game, size_t game_len,
                           size_t name_len, uint8_t *out, size_t capacity) {
     return api->file_read(system, game, game_len, name, name_len, out, capacity);
 }
+
+uint8_t mira_hs_pointer_on_ground(MiraSystem *system, float height, float *out) {
+    return api->pointer_on_ground(system, height, out);
+}

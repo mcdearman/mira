@@ -865,6 +865,15 @@ impl System {
         }
     }
 
+    /// Where the pointer (the mouse, or else the first finger) points on the level plane at
+    /// `height`, as the camera sees it; None with no pointer or camera.
+    pub fn pointer_on_ground(&self, height: f32) -> Option<[f32; 3]> {
+        let mut at = [0.0f32; 3];
+        // SAFETY: called inside the system; the engine writes three floats into `at`.
+        let found = unsafe { (api().pointer_on_ground)(self.raw, height, at.as_mut_ptr()) };
+        (found != 0).then_some(at)
+    }
+
     /// Where an axis is, from -1 to 1.
     pub fn axis(&self, axis: &str) -> f32 {
         // SAFETY: as above.
