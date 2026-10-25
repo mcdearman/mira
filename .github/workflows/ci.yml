@@ -18,7 +18,7 @@ env:
   # The Haskell plugin tests must run here, not skip.
   MIRA_REQUIRE_GHC: 1
   # The MeadowBoot the Meadow scripts are built with (see the jobs).
-  MEADOWBOOT_RELEASE: v0.3.0
+  MEADOWBOOT_RELEASE: v0.4.0
 
 jobs:
   check:

@@ -21,7 +21,7 @@ The game is in one panel; around it are its entities as a tree, an inspector tha
 chosen one, its signals, and a conversation with an agent. See [docs/EDITOR.md](docs/EDITOR.md).
 Everything else here is an example. Most are games written as scripts in Meadow, mira's
 scripting language, played with the player, which builds them. It needs MeadowBoot, from
-Meadow's [release](https://github.com/meadow-lang/meadow/releases/tag/v0.3.0)
+Meadow's [release](https://github.com/meadow-lang/meadow/releases/tag/v0.4.0)
 for Windows, Linux and macOS, and clang (see [docs/PLUGINS.md](docs/PLUGINS.md)):
 
 ```
