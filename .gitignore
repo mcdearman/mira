@@ -13,3 +13,6 @@ tests/frames/*.new.png
 tests/frames/*.diff.png
 # What the engine app keeps for a project: how its panels were arranged.
 .mira/
+
+# The Meadow game's libraries an Android package carries, built by scripts/meadow-for.sh.
+android/retro_dunk/libs/
