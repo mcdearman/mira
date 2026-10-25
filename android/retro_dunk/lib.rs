@@ -20,6 +20,7 @@ fn android_main(activity: mira::window::AndroidApp) {
         log::error!("the game could not be loaded: {err:#}");
         return;
     }
+    log::info!("RetroDunk is loaded");
     if let Err(err) = app.run() {
         log::error!("the game stopped: {err:#}");
     }
