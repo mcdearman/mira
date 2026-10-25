@@ -1,0 +1,36 @@
+# RetroDunk as an app for an Android phone: the engine, with the game beside it, a Meadow
+# script built ahead of time into libDunk.so (scripts/meadow-for.sh puts it in libs/, which
+# the package carries). Built into a package by `cargo apk` (see docs/ANDROID.md).
+[package]
+name = "retro_dunk_android"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "lib.rs"
+
+[target.'cfg(target_os = "android")'.dependencies]
+mira = { path = "../.." }
+log = "0.4"
+android_logger = "0.14"
+
+[package.metadata.android]
+package = "dev.mira.retrodunk"
+build_targets = ["aarch64-linux-android", "x86_64-linux-android"]
+apk_name = "retro-dunk"
+# The game's own library, for each kind of processor: libs/arm64-v8a/libDunk.so and
+# libs/x86_64/libDunk.so.
+runtime_libs = "libs"
+
+[package.metadata.android.sdk]
+min_sdk_version = 26
+target_sdk_version = 34
+
+[package.metadata.android.application]
+label = "RetroDunk"
+
+[package.metadata.android.application.activity]
+orientation = "landscape"
+config_changes = "orientation|screenSize|screenLayout|keyboardHidden"
