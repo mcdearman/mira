@@ -1,21 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Tail Lights as an iPhone app: what iOS reads of it. PLATFORM is filled in by
+<!-- A game as an iPhone app: what iOS reads of it. NAME, PROGRAM, IDENTIFIER and PLATFORM are filled in by
      ios/package.sh: iPhoneOS for a phone, iPhoneSimulator for the simulator. -->
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>Tail Lights</string>
+	<string>NAME</string>
 	<key>CFBundleExecutable</key>
-	<string>TailLights</string>
+	<string>PROGRAM</string>
 	<key>CFBundleIdentifier</key>
-	<string>dev.mira.taillights</string>
+	<string>IDENTIFIER</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Tail Lights</string>
+	<string>NAME</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

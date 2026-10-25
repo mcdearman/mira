@@ -54,6 +54,25 @@ crawls through the engine unoptimized. Without the tools, the "Android package" 
 builds it on a runner and keeps the package (Actions, the run, `tail-lights-apk`). What the
 game logs, and what a panic says, is in the phone's log: `adb logcat -s mira`.
 
+## A game written as a script
+
+On a desktop the engine builds a game's Meadow scripts itself while it runs. A phone cannot:
+the script is built ahead of time, on a desktop or a runner, into a library the package
+carries, and the app loads it where it is.
+
+```sh
+# MeadowBoot from Meadow's release (v0.4.0 on): its archive carries the phones' runtimes.
+ANDROID_NDK_HOME=... MIRA_MEADOWBOOT=.../MeadowBoot \
+    sh scripts/meadow-for.sh examples/retro_dunk/Dunk.mw aarch64-linux-android android/retro_dunk/libs/arm64-v8a
+CARGO_PROFILE_DEV_OPT_LEVEL=3 cargo apk build -p retro_dunk_android
+```
+
+`scripts/meadow-for.sh` wraps the script in the package the engine would (mira's bindings
+beside it) and builds it for the target. `android/retro_dunk` is the app: the engine, with
+`app.load_bundled_plugin("libDunk.so")`, and cargo-apk's `runtime_libs` carries the
+library for each processor. The Android workflow builds RetroDunk this way, and keeps the
+package (`retro-dunk-apk`).
+
 ## What is not as on a desktop
 
 | | |

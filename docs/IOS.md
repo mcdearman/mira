@@ -27,6 +27,16 @@ what the game printed (`tried-log.txt`), whether it was still running, and a pic
 the screen. The picture is in the phone's upright orientation, so a landscape game lies on
 its side in it.
 
+## A game written as a script
+
+iOS lets an app open no library of its own, so a Meadow script is built ahead of time into
+a static library and linked into the program: `scripts/meadow-for.sh` with the target
+`aarch64-apple-ios` (or `aarch64-apple-ios-sim`) and MeadowBoot from Meadow's Apple-silicon
+release archive, which carries the iPhone's runtimes. `ios/retro_dunk` is the app: its
+build script links `libDunk.a` from the folder `RETRO_DUNK_LIB` names, and it starts the
+game with `app.load_linked_plugin("Dunk", LinkedPlugin { ... })`, from the entry points
+linked in. The iOS workflow builds RetroDunk this way and tries it on the simulator.
+
 ## What is not as on a desktop
 
 | | |
@@ -58,4 +68,4 @@ and upload it with an App Store Connect API key, both kept as repository secrets
 - A run on a real iPhone, and signing for one.
 - An icon, and a launch screen other than plain white.
 - Touch tried on iOS: it is winit's, as on Android, where it works.
-- Anything but Tail Lights built for iOS.
+- A game written as a script played on a real iPhone (RetroDunk runs on the simulator).
