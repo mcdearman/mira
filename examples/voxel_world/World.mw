@@ -74,7 +74,7 @@ fun world_setup (s : Int) (user : Int) : () ! Process =
   let pivot = M.spawn sys in
   let u3 = M.insertAt sys pivot transform (28.0, 84.0, neg 28.0) in
   let u4 = M.insertFloats sys pivot (M.kept sys spinAt) [0.0, 1.0, 0.0, 0.3] in
-  let ring = V.forEach (\i -> piece sys cube pivot (toFloat i /. 12.0 *. F.tau)) (range 0 12) in
+  let ring = V.forEach (\i -> piece sys cube pivot (toFloat i / 12.0 * F.tau)) (range 0 12) in
 
   let sun = M.spawn sys in
   let u5 = M.insertTransform sys sun transform (0.0, 0.0, 0.0) (M.lookingAt (0.0, 0.0, 0.0) (neg 0.5, neg 1.0, neg 0.3)) (1.0, 1.0, 1.0) in
@@ -92,11 +92,11 @@ fun world_setup (s : Int) (user : Int) : () ! Process =
 -- One cube of the ring, `angle` round it.
 fun piece (sys : M.System) (cube : Int) (pivot : Int) (angle : Float) : () ! Process =
   let entity = M.spawn sys in
-  let u1 = M.insertAt sys entity (M.kept sys transformAt) (F.cos angle *. 10.0, 0.0, F.sin angle *. 10.0) in
+  let u1 = M.insertAt sys entity (M.kept sys transformAt) (F.cos angle * 10.0, 0.0, F.sin angle * 10.0) in
   let (ax, ay, az) = M.unit (F.cos angle, 1.0, F.sin angle) in
   let u2 = M.insertFloats sys entity (M.kept sys spinAt) [ax, ay, az, 1.5] in
   let u3 = M.setMesh sys entity cube in
-  let u4 = M.setColor sys entity (0.5 +. F.cos angle *. 0.4, 0.5, 0.5 +. F.sin angle *. 0.4) in
+  let u4 = M.setColor sys entity (0.5 + F.cos angle * 0.4, 0.5, 0.5 + F.sin angle * 0.4) in
   M.setParent sys entity pivot
 
 @export
@@ -105,7 +105,7 @@ fun world_spin (s : Int) (user : Int) : () ! Process =
   let dt = M.deltaSeconds sys in
   M.forEach2 sys (\entity spinning place ->
     let axis = (M.readFloat32 spinning 0, M.readFloat32 spinning 1, M.readFloat32 spinning 2) in
-    M.setRotation place (M.times (M.rotation place) (M.around axis (M.readFloat32 spinning 3 *. dt))))
+    M.setRotation place (M.times (M.rotation place) (M.around axis (M.readFloat32 spinning 3 * dt))))
 
 @export
 fun world_fly (s : Int) (user : Int) : () ! Process =
@@ -120,8 +120,8 @@ fun fly (sys : M.System) (grabbed : Bool) (me : Ptr) (place : Ptr) : () ! Proces
   let speed = M.readFloat32 me 0 in
   let turning = M.readFloat32 me 1 in
   let (dx, dy) = if grabbed then M.mouseMotion sys else (0.0, 0.0) in
-  let yaw = M.readFloat32 me 2 -. dx *. turning in
-  let pitch = within (neg 1.54) 1.54 (M.readFloat32 me 3 -. dy *. turning) in
+  let yaw = M.readFloat32 me 2 - dx * turning in
+  let pitch = within (neg 1.54) 1.54 (M.readFloat32 me 3 - dy * turning) in
   let u1 = M.writeFloat32 me 2 yaw in
   let u2 = M.writeFloat32 me 3 pitch in
   let facing = turned yaw pitch in
@@ -133,7 +133,7 @@ fun fly (sys : M.System) (grabbed : Bool) (me : Ptr) (place : Ptr) : () ! Proces
   in
   let boost = if M.keyDown sys M.keyControlLeft then 5.0 else 1.0 in
   let here = M.translation place in
-  let moved = if M.length way == 0.0 then here else M.plus here (M.scaled (speed *. boost *. M.deltaSeconds sys) (M.unit way)) in
+  let moved = if M.length way == 0.0 then here else M.plus here (M.scaled (speed * boost * M.deltaSeconds sys) (M.unit way)) in
   let u3 = M.setTranslation place moved in
   let u4 = M.setRotation place facing in
 
@@ -178,12 +178,12 @@ fun world_bounce (s : Int) (user : Int) : () ! Process =
   let sys = M.system s user in
   let dt = M.deltaSeconds sys in
   M.forEach2 sys (\entity thrown place ->
-    let left = M.readFloat32 thrown 5 -. dt in
-    if not (left >. 0.0) then M.despawn sys entity
+    let left = M.readFloat32 thrown 5 - dt in
+    if not (left > 0.0) then M.despawn sys entity
     else
       let size = M.readFloat32 thrown 3 in
       let keep = M.readFloat32 thrown 4 in
-      let fallen = M.plus (M.readFloat32 thrown 0, M.readFloat32 thrown 1, M.readFloat32 thrown 2) (0.0, neg (20.0 *. dt), 0.0) in
+      let fallen = M.plus (M.readFloat32 thrown 0, M.readFloat32 thrown 1, M.readFloat32 thrown 2) (0.0, neg (20.0 * dt), 0.0) in
       let (there, after) = V.foldl (\so axis -> step sys dt size keep so axis) (M.translation place, fallen) [0, 1, 2] in
       let (ax, ay, az) = after in
       let u1 = M.writeFloat32 thrown 0 ax in
@@ -195,19 +195,19 @@ fun world_bounce (s : Int) (user : Int) : () ! Process =
 -- One axis of a ball's move: where it gets to, and how it is moving after.
 fun step (sys : M.System) (dt : Float) (size : Float) (keep : Float) (so : ((Float, Float, Float), (Float, Float, Float))) (axis : Int) : ((Float, Float, Float), (Float, Float, Float)) ! Process =
   let (position, velocity) = so in
-  let moving = component axis velocity *. dt in
-  let probe = setComponent axis (component axis position +. moving +. size *. sign moving) position in
+  let moving = component axis velocity * dt in
+  let probe = setComponent axis (component axis position + moving + size * sign moving) position in
   if M.voxelSolid sys (cell probe) then (position, bounced axis keep velocity)
-  else (setComponent axis (component axis position +. moving) position, velocity)
+  else (setComponent axis (component axis position + moving) position, velocity)
 
 -- What happens to a ball's speed along an axis when it meets a block that way: back, and less
 -- of it; meeting the ground, it also rolls less and comes to rest.
 fun bounced (axis : Int) (keep : Float) (v : (Float, Float, Float)) : (Float, Float, Float) =
   if axis == 1 then
     (let (x, y, z) = v in
-     let up = neg y *. keep in
-     (x *. 0.9, if F.abs up <. 1.0 then 0.0 else up, z *. 0.9))
-  else setComponent axis (neg (component axis v) *. keep) v
+     let up = neg y * keep in
+     (x * 0.9, if F.abs up < 1.0 then 0.0 else up, z * 0.9))
+  else setComponent axis (neg (component axis v) * keep) v
 
 @export
 fun world_title (s : Int) (user : Int) : () ! Process =
@@ -215,14 +215,14 @@ fun world_title (s : Int) (user : Int) : () ! Process =
   let counted = keptPtr sys countedAt in
   let since = keptPtr sys sinceAt in
   let frames = M.readInt32 counted + 1 in
-  let elapsed = M.readFloat32 since 0 +. M.deltaSeconds sys in
-  if elapsed <. 0.5 then
+  let elapsed = M.readFloat32 since 0 + M.deltaSeconds sys in
+  if elapsed < 0.5 then
     (let u = M.writeInt32 counted frames in
      M.writeFloat32 since 0 elapsed)
   else
     let now = M.readInt32 (keptPtr sys chosenAt) in
     let name = V.foldl (\found choice -> let (key, n) = choice in if isBlock sys n now then n else found) "?" choices in
-    let fps = F.round (toFloat frames /. elapsed) in
+    let fps = F.round (toFloat frames / elapsed) in
     let u1 = M.setWindowTitle sys "mira: ${fps} fps; placing ${name} (1-4); click: break and place, F: a ball" in
     let u2 = M.writeInt32 counted 0 in
     M.writeFloat32 since 0 0.0
@@ -236,7 +236,7 @@ fun isBlock (sys : M.System) (name : String) (kind : Int) : Bool ! Process =
 -- Looking in a direction: the yaw and pitch that face it.
 fun towards (direction : (Float, Float, Float)) : (Float, Float) =
   let (x, y, z) = M.unit direction in
-  (F.atan2 (neg x) (neg z), F.atan2 y (F.sqrt (1.0 -. y *. y)))
+  (F.atan2 (neg x) (neg z), F.atan2 y (F.sqrt (1.0 - y * y)))
 
 -- The rotation of a flyer: turned about the vertical, then tipped up or down.
 fun turned (yaw : Float) (pitch : Float) : (Float, Float, Float, Float) =
@@ -259,8 +259,8 @@ fun beside (a : (Int, Int, Int)) (b : (Int, Int, Int)) : (Int, Int, Int) =
   let (bx, by, bz) = b in
   (ax + bx, ay + by, az + bz)
 
-fun sign (x : Float) : Float = if x >. 0.0 then 1.0 else if x <. 0.0 then neg 1.0 else 0.0
+fun sign (x : Float) : Float = if x > 0.0 then 1.0 else if x < 0.0 then neg 1.0 else 0.0
 
-fun within (low : Float) (high : Float) (x : Float) : Float = if x <. low then low else if x >. high then high else x
+fun within (low : Float) (high : Float) (x : Float) : Float = if x < low then low else if x > high then high else x
 
-fun neg (x : Float) : Float = 0.0 -. x
+fun neg (x : Float) : Float = 0.0 - x
