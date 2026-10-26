@@ -273,7 +273,7 @@ fun drift (s : Int) (user : Int) : () ! Process =
   let sys = M.system s user in
   M.forEach1 sys (\e t ->
     let (x, y, z) = M.translation t in
-    M.setTranslation t (x +. M.deltaSeconds sys, y, z))
+    M.setTranslation t (x + M.deltaSeconds sys, y, z))
 ```
 
 The bindings export the rest of what the engine looks for: the interface's version, and the
