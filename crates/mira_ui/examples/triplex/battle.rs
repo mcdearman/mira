@@ -12,9 +12,9 @@ use std::f32::consts::PI;
 pub const STEPS_A_SECOND: f32 = 20.0;
 pub const DT: f32 = 1.0 / STEPS_A_SECOND;
 
-/// How far the commander's voice carries: orders to cohorts nearer than this are heard at once;
-/// further ones go by rider.
-pub const VOICE: f32 = 45.0;
+/// How far the commander's voice carries, from him to the nearest man of a century: the
+/// centuries within it hear his orders at once; further ones get them by rider.
+pub const VOICE: f32 = 16.0;
 /// How far a general's presence steadies men.
 pub const COMMANDER_REACH: f32 = 55.0;
 pub const LEGATE_REACH: f32 = 32.0;
@@ -90,6 +90,8 @@ pub enum Command {
 pub struct Unit {
     pub name: String,
     pub side: Side,
+    /// Which cohort a century belongs to; none for the Gauls.
+    pub cohort: Option<usize>,
     /// Which line of the triplex acies, 1 to 3; 0 for the Gauls.
     pub line: u8,
     /// The middle of its front rank.
@@ -151,6 +153,17 @@ impl Unit {
         let ahead = d.dot(f);
         let across = d.dot(right_of(f));
         ahead < margin && ahead > -self.depth() - margin && across.abs() < self.width() * 0.5 + margin
+    }
+    /// How far a point is from the nearest part of the formation (0 inside it).
+    pub fn distance_to(&self, p: Vec2) -> f32 {
+        let d = p - self.pos;
+        let f = self.forward();
+        let ahead = d.dot(f);
+        let across = d.dot(right_of(f)).abs();
+        let out_front = (ahead).max(0.0);
+        let out_back = (-self.depth() - ahead).max(0.0);
+        let out_side = (across - self.width() * 0.5).max(0.0);
+        Vec2::new(out_side, out_front.max(out_back)).length()
     }
     pub fn strength(&self) -> f32 {
         self.count as f32 / self.start_men.max(1) as f32
@@ -253,6 +266,9 @@ pub struct Battle {
 
 const NUMERALS: [&str; 10] = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
 
+/// A cohort's six centuries, by their centurions: the senior first.
+const CENTURIES: [&str; 6] = ["pilus prior", "pilus posterior", "princeps prior", "princeps posterior", "hastatus prior", "hastatus posterior"];
+
 impl Battle {
     /// A legion of ten cohorts in triplex acies, four, three and three, the cohorts of each line
     /// standing behind the gaps in the line before; and five Gallic war bands to the north.
@@ -271,16 +287,28 @@ impl Battle {
             dice: Dice::new(seed),
             fallen: Vec::new(),
         };
-        let files = 45.min(cohort_men.max(8) / 4);
-        let width = (files - 1) as f32 * 0.9;
+        // Six centuries to a cohort, each a square block, side by side with a little room
+        // between; the senior century (the pilus prior's) on the right, the place of honour.
+        let century_men = (cohort_men / CENTURIES.len()).max(4);
+        let files = (century_men as f32).sqrt().round().max(2.0) as usize;
+        let spacing = 1.1;
+        let century_width = (files - 1) as f32 * spacing;
+        let century_gap = 3.0;
+        let width = century_width * CENTURIES.len() as f32 + century_gap * (CENTURIES.len() - 1) as f32;
         // A gap as wide as a cohort between cohorts, so the next line can pass through.
         let pitch = width * 2.0;
         let lines: [(u8, &[f32]); 3] = [(1, &[-1.5, -0.5, 0.5, 1.5]), (2, &[-1.0, 0.0, 1.0]), (3, &[-1.5, 0.0, 1.5])];
         let mut n = 0;
         for (line, places) in lines {
             for &x in places {
-                let pos = Vec2::new(x * pitch, (line as f32 - 1.0) * LINE_GAP);
-                b.add_unit(format!("Cohort {}", NUMERALS[n]), Side::Rome, line, pos, PI, files, 0.9, 1.2, 0.08, cohort_men);
+                let middle = Vec2::new(x * pitch, (line as f32 - 1.0) * LINE_GAP);
+                for (k, title) in CENTURIES.iter().enumerate() {
+                    // Facing north, the right hand is east (+x): the first century is furthest east.
+                    let across = width * 0.5 - century_width * 0.5 - k as f32 * (century_width + century_gap);
+                    let pos = middle + Vec2::new(across, 0.0);
+                    b.add_unit(format!("Cohort {} · {title}", NUMERALS[n]), Side::Rome, line, pos, PI, files, spacing, spacing, 0.06, century_men);
+                    b.units.last_mut().expect("just added").cohort = Some(n);
+                }
                 n += 1;
             }
         }
@@ -291,7 +319,8 @@ impl Battle {
             let name = ["Helvetii", "Tigurini", "Boii", "Tulingi", "Verbigeni"][k].to_string();
             b.add_unit(name, Side::Gaul, 0, pos, 0.0, band_files, 1.0, 1.3, 0.45, band_men);
         }
-        b.riders.push(Rider { name: "Caesar".into(), commander: true, pos: Vec2::new(0.0, LINE_GAP * 1.5), was: Vec2::ZERO, facing: PI, target: None, walked: 0.0, moving: false });
+        // Caesar starts just behind the second cohort of the front line, among its centuries.
+        b.riders.push(Rider { name: "Caesar".into(), commander: true, pos: Vec2::new(-0.5 * pitch, 18.0), was: Vec2::ZERO, facing: PI, target: None, walked: 0.0, moving: false });
         b.riders.push(Rider { name: "Labienus".into(), commander: false, pos: Vec2::new(-pitch * 1.6, LINE_GAP * 0.55), was: Vec2::ZERO, facing: PI, target: None, walked: 0.0, moving: false });
         b.riders.push(Rider { name: "Crassus".into(), commander: false, pos: Vec2::new(pitch * 1.6, LINE_GAP * 0.55), was: Vec2::ZERO, facing: PI, target: None, walked: 0.0, moving: false });
         for r in &mut b.riders {
@@ -307,6 +336,7 @@ impl Battle {
         let mut unit = Unit {
             name,
             side,
+            cohort: None,
             line,
             pos,
             facing,
@@ -352,12 +382,23 @@ impl Battle {
     /// Gives an order to a cohort: at once if the commander is near enough to shout it, or
     /// else by a rider who must reach it first.
     pub fn order(&mut self, unit: usize, command: Command) {
-        let from = self.commander().pos;
-        if self.units[unit].pos.distance(from) <= VOICE {
+        if self.in_voice(unit) {
             self.messages.push(Message { unit, command, rider: None, at: self.time + 0.3 });
         } else {
-            self.messages.push(Message { unit, command, rider: Some(from), at: f32::INFINITY });
+            self.messages.push(Message { unit, command, rider: Some(self.commander().pos), at: f32::INFINITY });
         }
+    }
+
+    /// Whether a century is near enough to hear the commander's own voice: his to command
+    /// directly.
+    pub fn in_voice(&self, unit: usize) -> bool {
+        let u = &self.units[unit];
+        u.side == Side::Rome && u.alive() && !u.routed && u.distance_to(self.commander().pos) <= VOICE
+    }
+
+    /// The centuries of a cohort.
+    pub fn cohort(&self, cohort: usize) -> Vec<usize> {
+        (0..self.units.len()).filter(|&u| self.units[u].cohort == Some(cohort) && self.units[u].alive()).collect()
     }
 
     /// An order sounded on the trumpets: every cohort hears it together, a moment later.
@@ -836,18 +877,49 @@ mod tests {
 
     #[test]
     fn far_orders_go_by_rider() {
-        let mut b = Battle::new(1, 60, 100);
+        let mut b = Battle::new(1, 384, 100);
         b.gauls_go = f32::MAX;
-        // Caesar is behind the third line; cohort I is in the first, beyond his voice.
+        // Caesar starts behind cohort II; cohort I's senior century is a cohort's width away,
+        // beyond his voice.
+        assert!(!b.in_voice(0));
         b.order(0, Command::Advance);
         assert!(b.messages[0].rider.is_some());
         let mut steps = 0;
         while !b.messages.is_empty() {
             b.step();
             steps += 1;
-            assert!(steps < 2000);
+            assert!(steps < 4000);
         }
         assert_eq!(b.units[0].order, Order::Advance);
-        assert!(steps as f32 * DT > 5.0, "the rider took no time to arrive");
+        assert!(steps as f32 * DT > 3.0, "the rider took no time to arrive");
+    }
+
+    #[test]
+    fn the_centuries_by_caesar_hear_him_at_once() {
+        let mut b = Battle::new(1, 384, 100);
+        b.gauls_go = f32::MAX;
+        let near: Vec<usize> = (0..b.units.len()).filter(|&u| b.in_voice(u)).collect();
+        assert!(!near.is_empty() && near.len() < 6, "Caesar should be among a few centuries, not a whole line: {}", near.len());
+        b.order(near[0], Command::Halt);
+        assert!(b.messages[0].rider.is_none());
+        // Ride him to the far wing, and the centuries there are his instead.
+        let far = b.romans_in_line(1)[0];
+        b.riders[0].target = Some(b.units[far].pos + Vec2::new(0.0, 6.0));
+        for _ in 0..(STEPS_A_SECOND as usize * 60) {
+            b.step();
+        }
+        assert!(b.in_voice(far));
+        assert!(!b.in_voice(near[0]));
+    }
+
+    #[test]
+    fn a_cohort_is_six_square_centuries() {
+        let b = Battle::new(1, 384, 100);
+        let c = b.cohort(0);
+        assert_eq!(c.len(), 6);
+        for &u in &c {
+            let unit = &b.units[u];
+            assert!((unit.width() - unit.depth()).abs() < unit.rank_gap * 1.5, "a century should be square");
+        }
     }
 }

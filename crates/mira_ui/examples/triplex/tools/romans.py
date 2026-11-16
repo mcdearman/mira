@@ -1,7 +1,10 @@
 """Dresses a scanned modern man as Romans of 49 BC and their Gallic enemies, and renders
 them as sprites for a battlefield seen from above at a slant.
 
-    python3 crates/mira_ui/examples/triplex/tools/romans.py . res/triplex/sprites [only=legate,commander] [pitch=35] [quick]
+    python3 crates/mira_ui/examples/triplex/tools/romans.py . res/triplex/sprites [only=legate,commander] [pitch=35] [style=painted] [quick]
+
+Looks (`style=`): plain (as first made), painted (bright, saturated, team-coloured shields, a dark
+edge), gritty (overcast, muted, worn), clean (even light, clear colour, a crisp edge).
 
 Run from the repository's root with Blender as a Python module (`pip install bpy`), or as
 `blender -b --python romans.py -- <mira root> <output dir>`. A sheet takes a minute or two
@@ -43,12 +46,37 @@ OUT = os.path.abspath(ARGS[1])
 ONLY = None
 QUICK = "quick" in ARGS
 PITCH_DEGREES = 35.0
+STYLE_NAME = "plain"
 for a in ARGS[2:]:
+    if a.startswith("style="):
+        STYLE_NAME = a[6:]
     if a.startswith("only="):
         ONLY = a[5:].split(",")
     if a.startswith("pitch="):
         PITCH_DEGREES = float(a[6:])
 os.makedirs(OUT, exist_ok=True)
+
+# ---- Looks ------------------------------------------------------------------------------------
+
+# How each look lights the men, how their shields are painted, and what is done to the
+# rendered pictures after (colour, contrast, a dark edge round each figure so it reads
+# against the grass).
+STYLES = {
+    # As first made: soft daylight, plain shields.
+    "plain": dict(sun=4.2, sun_angle=8, sun_color=(1.0, 0.96, 0.9), sky=(0.55, 0.62, 0.72), sky_strength=0.9,
+                  saturation=1.0, contrast=1.0, brightness=1.0, outline=None, shields="plain"),
+    # Bright and painted, as the strategy games of old: a strong warm sun, saturated colour,
+    # shields in their side's colours, and a dark edge.
+    "painted": dict(sun=6.5, sun_angle=4, sun_color=(1.0, 0.9, 0.74), sky=(0.42, 0.58, 0.88), sky_strength=0.75,
+                    saturation=1.4, contrast=1.14, brightness=1.06, outline=(46, 30, 20), shields="colours"),
+    # Grim: an overcast sky, muted and dirty colour, shields worn dull.
+    "gritty": dict(sun=1.4, sun_angle=40, sun_color=(0.93, 0.95, 1.0), sky=(0.6, 0.62, 0.64), sky_strength=1.5,
+                   saturation=0.62, contrast=1.08, brightness=0.9, outline=None, shields="worn", tint=(1.0, 0.96, 0.88)),
+    # Clean and readable: even light, clear colour, bright shields of each side, a crisp edge.
+    "clean": dict(sun=2.6, sun_angle=25, sun_color=(1.0, 1.0, 1.0), sky=(0.75, 0.78, 0.82), sky_strength=1.7,
+                  saturation=1.3, contrast=1.0, brightness=1.1, outline=(22, 22, 30), shields="colours"),
+}
+STYLE = STYLES[STYLE_NAME]
 
 # ---- How the game sees them ----------------------------------------------------------------
 
@@ -628,9 +656,12 @@ def scutum(center, facing, paint_mat):
             a = u * (width / 2) / radius
             row.append(bm.verts.new((radius * math.sin(a), -radius * (math.cos(a) - 1) - 0.0, v * height / 2)))
         verts.append(row)
+    uv_layer = bm.loops.layers.uv.new()
     for i in range(rows):
         for j in range(cols):
-            bm.faces.new((verts[i][j], verts[i][j + 1], verts[i + 1][j + 1], verts[i + 1][j]))
+            f = bm.faces.new((verts[i][j], verts[i][j + 1], verts[i + 1][j + 1], verts[i + 1][j]))
+            for loop, (jj, ii) in zip(f.loops, ((j, i), (j + 1, i), (j + 1, i + 1), (j, i + 1))):
+                loop[uv_layer].uv = (jj / cols, ii / rows)
     face = mesh_object("scutum", bm, paint_mat)
     sol = face.modifiers.new("thick", "SOLIDIFY")
     sol.thickness = 0.018
@@ -650,7 +681,10 @@ def gallic_shield(center, facing, paint_mat):
     height, width = 1.05, 0.56
     bm = bmesh.new()
     ring = [bm.verts.new((width / 2 * math.cos(a), 0, height / 2 * math.sin(a))) for a in (k / 24 * math.tau for k in range(24))]
-    bm.faces.new(ring)
+    f = bm.faces.new(ring)
+    uv_layer = bm.loops.layers.uv.new()
+    for loop in f.loops:
+        loop[uv_layer].uv = (0.5 - loop.vert.co.x / width, 0.5 + loop.vert.co.z / height)
     face = mesh_object("gallic_shield", bm, paint_mat, smooth=False)
     sol = face.modifiers.new("thick", "SOLIDIFY")
     sol.thickness = 0.015
@@ -729,8 +763,61 @@ def dress(kind):
     return worn
 
 
-SHIELD_PAINT = material("shield_paint", srgb(0x8E2A22), 0.7)
-GALLIC_PAINT = material("gallic_paint", srgb(0x6E5A2C), 0.75)
+def picture_material(name, px, roughness=0.7):
+    """A material painted with a picture made here (rows bottom first, sRGB, 0 to 1)."""
+    h, w, _ = px.shape
+    img = bpy.data.images.new(name, w, h, alpha=False)
+    img.pixels = np.concatenate([px.astype(np.float32), np.ones((h, w, 1), np.float32)], 2).ravel()
+    img.pack()
+    m = bpy.data.materials.new(name)
+    m.use_nodes = True
+    nt = m.node_tree
+    tex = nt.nodes.new("ShaderNodeTexImage")
+    tex.image = img
+    bsdf = nt.nodes["Principled BSDF"]
+    nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    bsdf.inputs["Roughness"].default_value = roughness
+    return m
+
+
+def shield_paintings():
+    """The faces of the two sides' shields, as the look asks: plain, in each side's colours,
+    or worn."""
+    w, h = 128, 256
+    u, v = np.meshgrid((np.arange(w) + 0.5) / w, (np.arange(h) + 0.5) / h)
+    rng = np.random.default_rng(3)
+    grime = rng.random((h, w))[..., None]
+    if STYLE["shields"] == "plain":
+        return material("shield_paint", srgb(0x8E2A22), 0.7), material("gallic_paint", srgb(0x6E5A2C), 0.75)
+    if STYLE["shields"] == "worn":
+        roman = hexc(0x6E2A22) * (0.8 + 0.25 * grime)
+        gaul = hexc(0x5A4E34) * (0.8 + 0.25 * grime)
+        return picture_material("shield_worn", roman, 0.85), picture_material("gallic_worn", gaul, 0.85)
+    # Rome: red, a yellow rim, and the thunderbolt and wings of Jupiter's eagle in yellow.
+    red, gold = hexc(0xB3241C), hexc(0xF0B83A)
+    roman = np.broadcast_to(red, (h, w, 3)).copy()
+    rim = (u < 0.08) | (u > 0.92) | (v < 0.04) | (v > 0.96)
+    du, dv = (u - 0.5) * 0.57, v - 0.5
+    bolt = np.zeros_like(u, dtype=bool)
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            # A zigzag from the boss toward each corner.
+            t = np.clip((sx * du * 2 + sy * dv) / 0.75, 0, 1)
+            zig = 0.03 * np.sin(t * 18)
+            line = np.abs(sx * du * 2 - sy * dv * 1.0 - zig) < 0.028
+            bolt |= line & (t > 0.12) & (t < 0.95) & (sx * du > 0) & (sy * dv > 0)
+    wings = (np.abs(dv) < 0.05 + 0.04 * np.abs(du) * 6) & (np.abs(du) > 0.06) & (np.abs(du) < 0.25) & (np.abs(dv) < 0.12)
+    roman[rim | bolt | wings] = gold
+    # Gauls: blue, a pale rim and an ochre spine band.
+    blue, pale, ochre = hexc(0x2C5AA8), hexc(0xE8E2D0), hexc(0xC8962E)
+    gaul = np.broadcast_to(blue, (h, w, 3)).copy()
+    r = np.hypot((u - 0.5) * 2, (v - 0.5) * 2)
+    gaul[r > 0.86] = pale
+    gaul[(np.abs(u - 0.5) < 0.07) & (r <= 0.86)] = ochre
+    return picture_material("shield_colours", roman, 0.6), picture_material("gallic_colours", gaul, 0.65)
+
+
+SHIELD_PAINT, GALLIC_PAINT = shield_paintings()
 FWD = Vector((0, -1, 0))
 
 
@@ -940,8 +1027,8 @@ scene.render.image_settings.file_format = "PNG"
 scene.render.image_settings.color_mode = "RGBA"
 world = bpy.data.worlds.new("sky")
 world.use_nodes = True
-world.node_tree.nodes["Background"].inputs[0].default_value = (0.55, 0.62, 0.72, 1)
-world.node_tree.nodes["Background"].inputs[1].default_value = 0.9
+world.node_tree.nodes["Background"].inputs[0].default_value = (*STYLE["sky"], 1)
+world.node_tree.nodes["Background"].inputs[1].default_value = STYLE["sky_strength"]
 scene.world = world
 
 pivot = bpy.data.objects.new("pivot", None)
@@ -953,9 +1040,9 @@ cam = bpy.data.objects.new("cam", cam_data)
 scene.collection.objects.link(cam)
 scene.camera = cam
 sun_data = bpy.data.lights.new("sun", "SUN")
-sun_data.energy = 4.2
-sun_data.angle = math.radians(8)
-sun_data.color = (1.0, 0.96, 0.9)
+sun_data.energy = STYLE["sun"]
+sun_data.angle = math.radians(STYLE["sun_angle"])
+sun_data.color = STYLE["sun_color"]
 sun = bpy.data.objects.new("sun", sun_data)
 scene.collection.objects.link(sun)
 for o in (cam, sun):
@@ -1011,10 +1098,32 @@ def render_kind(kind, frames, cell):
         for d in range(DIRECTIONS):
             p = os.path.join(tmp, f"{name}_{d}.png")
             if os.path.exists(p):
-                sheet.paste(Image.open(p), (c * w, d * h))
+                sheet.paste(finish(Image.open(p).convert("RGBA")), (c * w, d * h))
     sheet.save(os.path.join(OUT, f"{kind}.png"), optimize=True)
     shutil.rmtree(tmp, ignore_errors=True)
     return {"cell": [w, h], "foot": foot, "frames": names}
+
+
+def finish(picture):
+    """What the look does to a rendered picture: colour, contrast, a tint, and an edge."""
+    from PIL import Image, ImageEnhance, ImageFilter
+    alpha = picture.getchannel("A")
+    rgb = picture.convert("RGB")
+    rgb = ImageEnhance.Color(rgb).enhance(STYLE["saturation"])
+    rgb = ImageEnhance.Contrast(rgb).enhance(STYLE["contrast"])
+    rgb = ImageEnhance.Brightness(rgb).enhance(STYLE["brightness"])
+    if "tint" in STYLE:
+        r, g, b = rgb.split()
+        r, g, b = (ch.point(lambda x, k=k: min(255, int(x * k))) for ch, k in zip((r, g, b), STYLE["tint"]))
+        rgb = Image.merge("RGB", (r, g, b))
+    out = rgb.convert("RGBA")
+    out.putalpha(alpha)
+    if STYLE["outline"]:
+        solid = alpha.point(lambda a: 255 if a > 127 else 0)
+        grown = solid.filter(ImageFilter.MaxFilter(3))
+        edge = Image.composite(grown, Image.new("L", solid.size, 0), solid.point(lambda a: 255 - a))
+        out.paste(Image.new("RGBA", out.size, (*STYLE["outline"], 255)), (0, 0), edge)
+    return out
 
 
 def infantry_frames(kind):
@@ -1029,7 +1138,7 @@ def infantry_frames(kind):
     return frames
 
 
-meta = {"pitch_degrees": math.degrees(PITCH), "metres_per_pixel": PX, "directions": DIRECTIONS, "kinds": {}}
+meta = {"pitch_degrees": math.degrees(PITCH), "metres_per_pixel": PX, "directions": DIRECTIONS, "style": STYLE_NAME, "kinds": {}}
 kinds = ONLY or ["legionary", "gaul", "legate", "commander"]
 for kind in kinds:
     if kind in ("legionary", "gaul"):

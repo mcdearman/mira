@@ -55,6 +55,9 @@ const SPRITES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../res/triplex/sp
 #[derive(Clone, Debug)]
 struct Lens {
     folder: String,
+    /// The look the sprites were rendered in (see `tools/romans.py`), which the ground
+    /// matches.
+    style: String,
     pitch: f32,
     px: f32,
 }
@@ -79,6 +82,11 @@ impl Lens {
             folder: folder.to_owned(),
             pitch: number("pitch_degrees").unwrap_or(35.0).to_radians(),
             px: number("metres_per_pixel").unwrap_or(0.0185),
+            style: json
+                .find("\"style\"")
+                .and_then(|at| json[at + 7..].split('"').nth(1))
+                .unwrap_or("plain")
+                .to_owned(),
         }
     }
 }
@@ -277,7 +285,7 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>, mut meshes: 
         commands.spawn((Transform::from_xyz(r.pos.x, 0.0, r.pos.y), Mesh3d(sheet.mesh), sheet.material(0, row), NotShadowCaster, RiderSprite { rider: i, shown: (0, row) }));
     }
     // The field: grass, with a darker band where a stream once ran.
-    let ground = images.add(grass(1024));
+    let ground = images.add(grass(1024, &lens().style));
     let mut mesh = Mesh::default();
     mesh.push_quad(Vec3::ZERO, Vec3::Y, Vec3::Z * 1500.0, Vec3::X * 1500.0);
     for v in &mut mesh.vertices {
@@ -288,8 +296,9 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>, mut meshes: 
     commands.insert_resource(sheets);
 }
 
-/// A tile of grass that repeats without a seam: noise over a lattice that wraps.
-fn grass(size: u32) -> Image {
+/// A tile of grass that repeats without a seam: noise over a lattice that wraps, coloured
+/// for the look the sprites were made in.
+fn grass(size: u32, style: &str) -> Image {
     let hash = |x: i32, y: i32, period: i32, seed: u32| {
         let (x, y) = (x.rem_euclid(period) as u32, y.rem_euclid(period) as u32);
         let mut h = x.wrapping_mul(0x8da6_b343).wrapping_add(y.wrapping_mul(0xd816_3841)).wrapping_add(seed.wrapping_mul(0xcb1a_b31f));
@@ -316,9 +325,42 @@ fn grass(size: u32) -> Image {
             let broad = noise(u, v, 3, 1) * 0.5 + noise(u, v, 7, 2) * 0.3 + noise(u, v, 17, 3) * 0.2;
             let fine = noise(u, v, 64, 4) * 0.5 + noise(u, v, 160, 5) * 0.5;
             let dry = (noise(u, v, 5, 6) - 0.55).max(0.0) * 1.2;
-            let shade = 0.88 + 0.18 * (broad - 0.5) + 0.12 * (fine - 0.5);
-            let (r, g, b) = (92.0 + 30.0 * dry, 114.0 - 2.0 * dry, 62.0 + 4.0 * dry);
-            data.extend([(r * shade).min(255.0) as u8, (g * shade).min(255.0) as u8, (b * shade).min(255.0) as u8, 255]);
+            let speck = hash(x as i32, y as i32, size as i32, 9);
+            let [r, g, b] = match style {
+                // Lush, warm and painted: broad strokes of yellow-green and deep green, bare
+                // earth here and there, and a scatter of flowers.
+                "painted" => {
+                    let stroke = noise(u + fine * 0.01, v, 40, 7);
+                    let shade = 0.9 + 0.25 * (broad - 0.5) + 0.1 * (stroke - 0.5) + 0.06 * (fine - 0.5);
+                    let earth = ((noise(u, v, 13, 8) * 0.7 + noise(u, v, 31, 10) * 0.3 - 0.7).max(0.0) * 7.0).min(1.0);
+                    let mut c = [96.0 + 40.0 * (broad - 0.3).max(0.0), 150.0 + 18.0 * stroke, 52.0].map(|c| c * shade);
+                    for (c, e) in c.iter_mut().zip([150.0, 118.0, 72.0]) {
+                        *c = *c * (1.0 - earth) + e * earth * (0.92 + 0.1 * fine);
+                    }
+                    if speck > 0.9985 {
+                        c = if speck > 0.9993 { [236.0, 214.0, 90.0] } else { [232.0, 230.0, 222.0] };
+                    }
+                    c
+                }
+                // Trampled and wet: olive grass worn through to mud.
+                "gritty" => {
+                    let shade = 0.86 + 0.2 * (broad - 0.5) + 0.14 * (fine - 0.5);
+                    let mud = ((noise(u, v, 5, 8) - 0.45).max(0.0) * 2.6).min(1.0);
+                    let grass = [84.0, 90.0, 56.0];
+                    let earth = [78.0, 64.0, 46.0];
+                    [0, 1, 2].map(|i| (grass[i] * (1.0 - mud) + earth[i] * mud) * shade)
+                }
+                // Even and quiet, so the men stand out.
+                "clean" => {
+                    let shade = 0.97 + 0.05 * (broad - 0.5) + 0.03 * (fine - 0.5);
+                    [126.0 * shade, 168.0 * shade, 92.0 * shade]
+                }
+                _ => {
+                    let shade = 0.88 + 0.18 * (broad - 0.5) + 0.12 * (fine - 0.5);
+                    [(92.0 + 30.0 * dry) * shade, (114.0 - 2.0 * dry) * shade, (62.0 + 4.0 * dry) * shade]
+                }
+            };
+            data.extend([r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255]);
         }
     }
     Image::from_rgba(size, size, data, true)
@@ -420,19 +462,29 @@ fn ground(p: Vec2, y: f32) -> Vec3 {
     Vec3::new(p.x, y, p.y)
 }
 
-/// Marks on the field: what is chosen and where it is going, Caesar's reach, riders with
-/// orders, and pila in the air.
+/// The square of ground a century stands on, a little outside its men.
+fn square(unit: &battle::Unit, margin: f32) -> [Vec3; 4] {
+    let f = unit.forward();
+    let r = right_of(f) * (unit.width() * 0.5 + margin);
+    let back = f * (unit.depth() + margin * 0.5);
+    let front = unit.pos + f * margin;
+    [front - r, front + r, front + r - back, front - r - back].map(|p| ground(p, 0.3))
+}
+
+/// Marks on the field: the centuries within Caesar's voice (his to command directly), what is
+/// chosen and where it is going, his reach, riders with orders, and pila in the air.
 fn marks(field: Res<Field>, chosen: Res<Chosen>, pointer: Res<PointerSight>, mut lines: ResMut<DebugLines>) {
     let b = &field.battle;
+    lines.width = 3.0;
+    for u in 0..b.units.len() {
+        if b.in_voice(u) {
+            lines.path(&square(&b.units[u], 1.4), true, Color::srgb(1.0, 0.78, 0.25));
+        }
+    }
     lines.width = 2.0;
     for &u in &chosen.units {
         let unit = &b.units[u];
-        let f = unit.forward();
-        let r = right_of(f) * (unit.width() * 0.5 + 1.0);
-        let back = f * (unit.depth() + 0.5);
-        let front = unit.pos + f * 1.0;
-        let corners = [front - r, front + r, front + r - back, front - r - back].map(|p| ground(p, 0.3));
-        lines.path(&corners, true, Color::srgb(1.0, 0.85, 0.3));
+        lines.path(&square(unit, 0.7), true, Color::srgb(1.0, 1.0, 1.0));
         if let battle::Order::MoveTo { to, facing } = unit.order {
             lines.arrow(ground(unit.pos, 0.3), ground(to, 0.3), Color::srgb(0.9, 0.9, 0.9));
             lines.arrow(ground(to, 0.3), ground(to + facing_vector(facing) * 8.0, 0.3), Color::srgb(0.9, 0.9, 0.9));
@@ -591,12 +643,20 @@ fn control(
             }
             let b = &field.battle;
             if from_screen.distance(screen) < 6.0 {
-                // A click: the general under it, or else the cohort.
+                // A click: the general under it, or else the century (with Ctrl, its whole
+                // cohort).
+                let whole = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
                 if let Some(r) = (0..b.riders.len()).find(|&r| b.riders[r].pos.distance(here) < 5.0) {
                     chosen.riders.push(r);
-                } else if let Some(u) = (0..b.units.len()).find(|&u| b.units[u].side == Side::Rome && b.units[u].alive() && b.units[u].covers(here, 2.0)) {
-                    if !chosen.units.contains(&u) {
-                        chosen.units.push(u);
+                } else if let Some(u) = (0..b.units.len()).find(|&u| b.units[u].side == Side::Rome && b.units[u].alive() && b.units[u].covers(here, 0.8)) {
+                    let picked = match (whole, b.units[u].cohort) {
+                        (true, Some(c)) => b.cohort(c),
+                        _ => vec![u],
+                    };
+                    for u in picked {
+                        if !chosen.units.contains(&u) {
+                            chosen.units.push(u);
+                        }
                     }
                 }
             } else if let Some(project) = projector(&cameras, window.as_deref()) {
@@ -705,6 +765,7 @@ struct Hud {
     paused: bool,
     speed: f32,
     riders_out: usize,
+    in_voice: usize,
     asked: Vec<Ask>,
 }
 
@@ -744,7 +805,7 @@ impl Interface for Hud {
         );
         let mut chosen = column().spacing(6.0);
         if self.chosen.is_empty() && self.generals.is_empty() {
-            chosen = chosen.push(caption("Click a cohort, or drag a box; 1 2 3 choose a line, C Caesar."));
+            chosen = chosen.push(caption("Click a century (Ctrl: its cohort) or drag a box; 1 2 3 choose a line, C Caesar."));
         }
         for (name, commander) in &self.generals {
             let what = if *commander { "Right click to ride. Cohorts within his circle tire more slowly and hold longer; orders beyond his voice go by rider." } else { "A legate: the cohorts near him are steadied, a little." };
@@ -758,6 +819,7 @@ impl Interface for Hud {
         if self.chosen.len() > 4 {
             chosen = chosen.push(caption(format!("and {} more", self.chosen.len() - 4)));
         }
+        chosen = chosen.push(caption(format!("Within Caesar's voice: {} centur{} (gold), his to command at once", self.in_voice, if self.in_voice == 1 { "y" } else { "ies" })));
         if self.riders_out > 0 {
             chosen = chosen.push(caption(format!("{} rider{} carrying orders", self.riders_out, if self.riders_out == 1 { "" } else { "s" })));
         }
@@ -817,6 +879,7 @@ fn read_out(world: &World, hud: &mut Hud) {
         .collect();
     hud.generals = chosen.riders.iter().map(|&r| (b.riders[r].name.clone(), b.riders[r].commander)).collect();
     hud.riders_out = b.messages.iter().filter(|m| m.rider.is_some()).count();
+    hud.in_voice = (0..b.units.len()).filter(|&u| b.in_voice(u)).count();
 }
 
 fn carry_out(world: &mut World) {
@@ -898,7 +961,7 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let value = |key: &str| args.iter().find_map(|a| a.strip_prefix(&format!("{key}="))).map(str::to_owned);
     let watch = args.iter().any(|a| a == "watch");
-    let cohort: usize = value("cohort").and_then(|v| v.parse().ok()).unwrap_or(360);
+    let cohort: usize = value("cohort").and_then(|v| v.parse().ok()).unwrap_or(384);
     let band: usize = value("band").and_then(|v| v.parse().ok()).unwrap_or(800);
     let mut shots = Shots::default();
     for a in args.iter().filter_map(|a| a.strip_prefix("shot=")) {
@@ -908,10 +971,9 @@ fn main() -> anyhow::Result<()> {
     }
     shots.quit_after = value("quit").and_then(|v| v.parse().ok());
     let speed = value("speed").and_then(|v| v.parse().ok()).unwrap_or(1.0);
-    let height = value("zoom").and_then(|v| v.parse().ok()).unwrap_or(230.0);
-    let focus = value("look")
-        .and_then(|v| v.split_once(',').and_then(|(x, z)| Some(Vec2::new(x.parse().ok()?, z.parse().ok()?))))
-        .unwrap_or(Vec2::new(0.0, -50.0));
+    // Close in, as a game of this kind is played; the wheel pulls back to see the field.
+    let height = value("zoom").and_then(|v| v.parse().ok()).unwrap_or(58.0);
+    let look = value("look").and_then(|v| v.split_once(',').and_then(|(x, z)| Some(Vec2::new(x.parse().ok()?, z.parse().ok()?))));
     let (width, tall) = value("size").and_then(|v| v.split_once('x').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))).unwrap_or((1600, 900));
 
     // A view turned an eighth of a circle, at a slant both ways, unless asked otherwise.
@@ -928,6 +990,8 @@ fn main() -> anyhow::Result<()> {
         }
         field.battle.step();
     }
+    // Unless asked otherwise, the view opens on Caesar and the front line before him.
+    let focus = look.unwrap_or(field.battle.commander().pos - Vec2::new(0.0, 12.0));
     let mut app = App::new();
     app.insert_resource(WindowSettings { title: "Triplex acies".into(), width, height: tall, ..Default::default() })
         .insert_resource(RayTracingSettings { enabled: false, ..Default::default() })

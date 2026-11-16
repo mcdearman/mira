@@ -96,7 +96,7 @@ line standing behind the gaps of the one before, against five Gallic war bands: 
 and 4,000 Gauls, every man a sprite, seen from above at a slant. The front line tires as it
 fights; relieve it (R) and it falls back through the gaps of the second while the second comes
 forward through the gaps of the first. Caesar steadies the cohorts near him, and orders to
-cohorts beyond his voice go by rider. Click or drag to choose cohorts, right click to send
+centuries beyond his voice go by rider; the centuries within it are marked in gold, his to command at once. Each cohort is six square centuries. Click or drag to choose centuries (Ctrl: a whole cohort), right click to send
 them, W A S D and the wheel for the view, Q and E to turn it, Space to pause; `-- watch` has it command itself.
 The battle is plain data stepped twenty times a second (`battle.rs`); the men are rendered
 from the Rocketbox figure by `tools/romans.py` and drawn from sprite sheets
