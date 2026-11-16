@@ -30,7 +30,7 @@ mod view;
 mod views;
 mod volumetric;
 
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 
 pub use debug_lines::DebugLines;
 pub use environment::{direction_to_uv, uv_to_direction, Environment};
@@ -163,6 +163,12 @@ pub struct Material {
     /// water; falling water streams down).
     pub waves: f32,
     pub flow: Vec2,
+    /// The part of the textures this surface shows, for a sprite sheet: x and y are where the
+    /// part begins and z and w how wide and tall it is, as fractions of the texture (0 to 1,
+    /// y down from the top). `None` shows all of it. Each instance has its own, so a sheet's
+    /// pictures are drawn together however many of them are on screen, and a sprite is
+    /// animated by changing its region, which sends only its look to the card.
+    pub texture_region: Option<Vec4>,
 }
 
 impl Component for Material {}
@@ -218,6 +224,7 @@ impl Default for Material {
             puddles: 0.0,
             waves: 0.0,
             flow: Vec2::ZERO,
+            texture_region: None,
         }
     }
 }

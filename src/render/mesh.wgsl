@@ -34,6 +34,8 @@ struct Look {
     extra: vec4<f32>,
     // x: puddles, y: animated waves, zw: flow of the water over the ground, metres a second
     more: vec4<f32>,
+    // The part of the textures shown, for a sprite sheet: offset in xy, size in zw.
+    region: vec4<f32>,
 };
 
 @group(2) @binding(0) var<storage, read> places: array<Place>;
@@ -69,7 +71,7 @@ fn vs_main(vertex: VertexInput, @builtin(instance_index) at: u32) -> VertexOutpu
     out.clip_position = view.view_proj * world_position;
     out.world_position = world_position.xyz;
     out.world_normal = normal * vertex.normal;
-    out.uv = vertex.uv;
+    out.uv = instance.region.xy + vertex.uv * instance.region.zw;
     out.color = instance.color * vec4<f32>(vertex.color, 1.0);
     out.params = instance.params;
     out.emissive = instance.emissive;
