@@ -55,6 +55,29 @@ is then a sixteen-pixel image.
 A picture that changes, a walk or a splat, is a picture for each moment, and the entity's
 material is given the one for now.
 
+## Sprite sheets
+
+Many pictures in one image: a material's `texture_region` is the part of its textures the
+surface shows, as fractions of the image (x and y where it begins, from the top left, then
+its width and height).
+
+```rust
+// A sheet of 16 columns of frames and 8 rows of directions.
+let region = |column: u32, row: u32| Vec4::new(column as f32 / 16.0, row as f32 / 8.0, 1.0 / 16.0, 1.0 / 8.0);
+let material = Material { base_color_texture: Some(sheet), alpha_cutoff: Some(0.5), texture_region: Some(region(3, 2)), ..Default::default() };
+```
+
+Every sprite drawn from one sheet is one draw, whichever picture each shows, since the region
+is the instance's own and not part of what the draws are grouped by. Changing a sprite's
+region from frame to frame (a walk, a swing) sends only that instance's look to the card.
+
+Leave a few transparent pixels round each picture: a picture made small on the screen is read
+from the image's smaller copies, where neighbours on the sheet run together at their edges.
+
+A sprite that stands up in a world seen at a slant (`examples/triplex`, in `mira_ui`) is a
+square turned to face the camera, with the picture drawn as the camera sees it; the depth
+buffer then puts the nearer man over the further without any sorting.
+
 ## The rest is the engine as it is
 
 Keys by name ([INPUT.md](INPUT.md)), sound ([AUDIO.md](AUDIO.md)), saved games
@@ -63,5 +86,5 @@ Keys by name ([INPUT.md](INPUT.md)), sound ([AUDIO.md](AUDIO.md)), saved games
 ## What there is not yet
 
 - Text: `tail_lights` writes its score with a font of its own, a quad a letter.
-- Many pictures in one image (a sprite sheet), and tiles drawn as one mesh.
+- Tiles drawn as one mesh.
 - A flat world's own physics and lighting.

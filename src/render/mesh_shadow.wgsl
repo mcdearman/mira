@@ -22,6 +22,7 @@ struct Look {
     emissive: vec4<f32>,
     extra: vec4<f32>,
     more: vec4<f32>,
+    region: vec4<f32>,
 };
 
 @group(2) @binding(0) var<storage, read> places: array<Place>;
@@ -42,7 +43,7 @@ fn vs_main(vertex: VertexInput, @builtin(instance_index) at: u32) -> VertexOutpu
     let model = transpose(mat4x4<f32>(rows[0], rows[1], rows[2], vec4<f32>(0.0, 0.0, 0.0, 1.0)));
     var out: VertexOutput;
     out.clip_position = light_view_proj * model * vec4<f32>(vertex.position, 1.0);
-    out.uv = vertex.uv;
+    out.uv = instance.region.xy + vertex.uv * instance.region.zw;
     out.cutoff = instance.params.w;
     out.alpha = instance.color.a;
     return out;

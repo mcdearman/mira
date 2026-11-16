@@ -44,6 +44,8 @@ pub(crate) struct LookRaw {
     emissive: [f32; 4],
     extra: [f32; 4],
     more: [f32; 4],
+    /// The part of the textures shown: offset in xy, size in zw.
+    region: [f32; 4],
 }
 
 impl LookRaw {
@@ -64,6 +66,7 @@ impl LookRaw {
                 if m.decal { 1.0 } else { 0.0 },
             ],
             more: [m.puddles, m.waves, m.flow.x, m.flow.y],
+            region: m.texture_region.map_or([0.0, 0.0, 1.0, 1.0], |r| r.to_array()),
         }
     }
 }
