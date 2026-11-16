@@ -97,7 +97,7 @@ and 4,000 Gauls, every man a sprite, seen from above at a slant. The front line 
 fights; relieve it (R) and it falls back through the gaps of the second while the second comes
 forward through the gaps of the first. Caesar steadies the cohorts near him, and orders to
 cohorts beyond his voice go by rider. Click or drag to choose cohorts, right click to send
-them, W A S D and the wheel for the view, Space to pause; `-- watch` has it command itself.
+them, W A S D and the wheel for the view, Q and E to turn it, Space to pause; `-- watch` has it command itself.
 The battle is plain data stepped twenty times a second (`battle.rs`); the men are rendered
 from the Rocketbox figure by `tools/romans.py` and drawn from sprite sheets
 (`Material::texture_region`, [docs/FLAT.md](docs/FLAT.md#sprite-sheets)).

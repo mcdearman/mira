@@ -1,7 +1,7 @@
 """Dresses a scanned modern man as Romans of 49 BC and their Gallic enemies, and renders
 them as sprites for a battlefield seen from above at a slant.
 
-    python3 crates/mira_ui/examples/triplex/tools/romans.py . res/triplex/sprites [only=legate,commander] [quick]
+    python3 crates/mira_ui/examples/triplex/tools/romans.py . res/triplex/sprites [only=legate,commander] [pitch=35] [quick]
 
 Run from the repository's root with Blender as a Python module (`pip install bpy`), or as
 `blender -b --python romans.py -- <mira root> <output dir>`. A sheet takes a minute or two
@@ -42,15 +42,18 @@ MIRA = os.path.abspath(ARGS[0])
 OUT = os.path.abspath(ARGS[1])
 ONLY = None
 QUICK = "quick" in ARGS
+PITCH_DEGREES = 35.0
 for a in ARGS[2:]:
     if a.startswith("only="):
         ONLY = a[5:].split(",")
+    if a.startswith("pitch="):
+        PITCH_DEGREES = float(a[6:])
 os.makedirs(OUT, exist_ok=True)
 
 # ---- How the game sees them ----------------------------------------------------------------
 
 # The game's camera looks down at this angle below the horizon, orthographically.
-PITCH = math.radians(35.0)
+PITCH = math.radians(PITCH_DEGREES)
 # Metres of the world a pixel of the sprite is (across, and up the picture).
 PX = 0.0185
 # Cells: (width, height, how far up from the bottom the man's feet are), pixels.

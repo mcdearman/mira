@@ -16,12 +16,17 @@
 //!   choose a line; C chooses Caesar.
 //! - Right click to send them there; drag with the right button to say which way they face.
 //! - F advances the chosen cohorts, H halts them, R sounds the relief of the line.
-//! - W A S D or the arrows move the view, the wheel zooms; Space pauses; + and − change speed.
+//! - W A S D or the arrows move the view, the wheel zooms, Q and E turn it an eighth of a
+//!   circle; Space pauses; + and − change speed.
 //!
 //! For looking at it without playing: `watch` (it commands itself), `follow` (the view keeps
 //! Caesar in the middle), `speed=4`, `zoom=60` (metres of the field the view is tall),
-//! `look=x,z`, `size=1280x720`, `shot=picture.png@95` (a screenshot at 95 seconds of battle;
-//! as many as wanted) and `quit=100`.
+//! `look=x,z`, `turn=0` (eighths of a circle from looking north; 1 unless said),
+//! `sprites=<folder>` (another set of sheets, such as one rendered at another slant),
+//! `size=1280x720`, `shot=picture.png@95` (a screenshot at 95 seconds of battle;
+//! as many as wanted), `quit=100`, `from=90` (begin ninety seconds into the battle), and
+//! `film=0.0333` (step that many seconds of battle for
+//! every frame drawn, however long the frame took, for recording on a slow machine).
 //!
 //! The battle is in `battle.rs`, as plain data stepped twenty times a second: nothing in it
 //! draws or reads input. The sprites are rendered by `tools/romans.py` (Blender) from the
@@ -43,20 +48,54 @@ use mira_ui::{
 
 const SPRITES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../res/triplex/sprites");
 
-/// As the sprites were rendered (see `res/triplex/sprites/sprites.json`): the camera's angle
-/// below the horizon, and metres of the world to a pixel of a sprite.
-const PITCH: f32 = 35.0 * PI / 180.0;
-const PX: f32 = 0.0185;
+/// How the sprites were rendered, from the `sprites.json` beside them: the camera's angle
+/// below the horizon, and metres of the world to a pixel of a sprite. The view must look down
+/// at the same angle; which way round it looks is free, since the sheets' eight directions are
+/// counted from the camera.
+#[derive(Clone, Debug)]
+struct Lens {
+    folder: String,
+    pitch: f32,
+    px: f32,
+}
+
+static LENS: std::sync::OnceLock<Lens> = std::sync::OnceLock::new();
+
+fn lens() -> &'static Lens {
+    LENS.get_or_init(|| Lens::read(SPRITES))
+}
+
+impl Lens {
+    fn read(folder: &str) -> Lens {
+        let json = std::fs::read_to_string(format!("{folder}/sprites.json")).unwrap_or_default();
+        // Two numbers are all that is wanted from it.
+        let number = |key: &str| {
+            let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
+            let rest = json[at..].trim_start().strip_prefix(':')?.trim_start();
+            let end = rest.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).unwrap_or(rest.len());
+            rest[..end].parse::<f32>().ok()
+        };
+        Lens {
+            folder: folder.to_owned(),
+            pitch: number("pitch_degrees").unwrap_or(35.0).to_radians(),
+            px: number("metres_per_pixel").unwrap_or(0.0185),
+        }
+    }
+}
+
 /// How far each sprite is brought toward the camera: enough that the parts of the picture
 /// below a man's feet (a foot stepping toward us, a horse's forelegs) stay above the ground.
 const LIFT: f32 = 2.5;
 
-fn view_dir() -> Vec3 {
-    Vec3::new(0.0, -PITCH.sin(), -PITCH.cos())
+/// Which way the camera looks, turned `yaw` about the upright from looking north.
+fn view_dir(yaw: f32) -> Vec3 {
+    let p = lens().pitch;
+    Vec3::new(-yaw.sin() * p.cos(), -p.sin(), -yaw.cos() * p.cos())
 }
 
-fn view_up() -> Vec3 {
-    Vec3::new(0.0, PITCH.cos(), -PITCH.sin())
+fn view_up(yaw: f32) -> Vec3 {
+    let p = lens().pitch;
+    Vec3::new(-yaw.sin() * p.sin(), p.cos(), -yaw.cos() * p.sin())
 }
 
 // ---- Sprite sheets ---------------------------------------------------------------------------
@@ -97,17 +136,21 @@ struct Sheets {
 
 /// A square standing up to face the camera, as big as a sprite's cell, with the man's feet
 /// at the origin.
+///
+/// It is made for a camera looking north; a sprite seen from a camera turned about the upright
+/// is turned with it (its `Transform`'s rotation).
 fn sprite_mesh(cell: (u32, u32), foot: u32) -> Mesh {
-    let (w, h) = (cell.0 as f32 * PX, cell.1 as f32 * PX);
-    let up = view_up();
-    let centre = -view_dir() * LIFT + up * (h * 0.5 - foot as f32 * PX);
+    let px = lens().px;
+    let (w, h) = (cell.0 as f32 * px, cell.1 as f32 * px);
+    let up = view_up(0.0);
+    let centre = -view_dir(0.0) * LIFT + up * (h * 0.5 - foot as f32 * px);
     let mut mesh = Mesh::default();
-    mesh.push_quad(centre, -view_dir(), Vec3::X * (w * 0.5), up * (h * 0.5));
+    mesh.push_quad(centre, -view_dir(0.0), Vec3::X * (w * 0.5), up * (h * 0.5));
     mesh
 }
 
 fn load_sheet(images: &mut Assets<Image>, meshes: &mut Assets<Mesh>, name: &str, cell: (u32, u32), foot: u32) -> anyhow::Result<Sheet> {
-    let path = format!("{SPRITES}/{name}.png");
+    let path = format!("{}/{name}.png", lens().folder);
     let bytes = std::fs::read(&path).map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
     let image = Image::from_bytes(&bytes, true)?;
     let size = (image.width, image.height);
@@ -125,11 +168,13 @@ const DEAD: u32 = 15;
 /// Metres walked between one frame of the walk and the next.
 const STRIDE: f32 = 0.16;
 
-/// A man's picture: which man, and what he shows now.
+/// A man's picture: which man, what he shows now, and how the camera was turned when it was
+/// last placed.
 struct Sprite {
     man: usize,
     shown: (u32, u32),
     at: Vec2,
+    turn: i32,
 }
 
 impl Component for Sprite {}
@@ -137,6 +182,11 @@ impl Component for Sprite {}
 struct RiderSprite {
     rider: usize,
     shown: (u32, u32),
+}
+
+/// The rotation that keeps a sprite facing a camera turned this many eighths of a circle.
+fn facing_camera(turn: i32) -> Quat {
+    Quat::from_rotation_y(turn as f32 * FRAC_PI_4)
 }
 
 impl Component for RiderSprite {}
@@ -154,6 +204,9 @@ struct Field {
     watch: bool,
     /// When it last relieved its line by itself.
     watch_relieved: f32,
+    /// For filming on a slow machine: seconds of battle to step for every frame drawn,
+    /// whatever time the frame took.
+    film: Option<f32>,
 }
 
 #[derive(Default)]
@@ -169,8 +222,22 @@ struct Chosen {
 struct View {
     focus: Vec2,
     height: f32,
+    /// How far the camera is turned from looking north, in eighths of a circle, toward the
+    /// west (counterclockwise seen from above).
+    turn: i32,
     /// Keep Caesar in the middle of the view.
     follow: bool,
+}
+
+impl View {
+    fn yaw(&self) -> f32 {
+        self.turn as f32 * FRAC_PI_4
+    }
+    /// Up and right on the screen, as directions on the ground.
+    fn screen_axes(&self) -> (Vec2, Vec2) {
+        let (s, c) = self.yaw().sin_cos();
+        (Vec2::new(-s, -c), Vec2::new(c, -s))
+    }
 }
 
 /// Screenshots to take, at seconds of battle, and when to stop.
@@ -201,7 +268,7 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>, mut meshes: 
             Mesh3d(sheet.mesh),
             sheet.material(0, row),
             NotShadowCaster,
-            Sprite { man: i, shown: (0, row), at: man.pos },
+            Sprite { man: i, shown: (0, row), at: man.pos, turn: i32::MIN },
         ));
     }
     for (i, r) in b.riders.iter().enumerate() {
@@ -264,7 +331,8 @@ fn step(time: Res<Time>, mut field: ResMut<Field>) {
         return;
     }
     let speed = field.speed;
-    field.owed = (field.owed + time.delta_secs() * speed).min(0.5 * speed.max(1.0));
+    let elapsed = field.film.unwrap_or(time.delta_secs());
+    field.owed = (field.owed + elapsed * speed).min(0.5 * speed.max(1.0));
     while field.owed >= DT {
         field.owed -= DT;
         if field.watch {
@@ -298,15 +366,18 @@ fn command_itself(field: &mut Field) {
 
 // ---- Showing it ---------------------------------------------------------------------------------
 
-fn show_men(field: Res<Field>, sheets: Res<Sheets>, mut sprites: Query<(&mut Sprite, &mut Transform, &mut Material)>) {
+fn show_men(field: Res<Field>, sheets: Res<Sheets>, view: Res<View>, mut sprites: Query<(&mut Sprite, &mut Transform, &mut Material)>) {
     let b = &field.battle;
+    let yaw = view.yaw();
     let alpha = if field.paused { 1.0 } else { (field.owed / DT).clamp(0.0, 1.0) };
     for (mut sprite, mut at, mut material) in &mut sprites {
         let man = &b.men[sprite.man];
         let pos = if man.alive { man.was.lerp(man.pos, alpha) } else { man.pos };
-        if pos != sprite.at {
+        if pos != sprite.at || sprite.turn != view.turn {
             sprite.at = pos;
+            sprite.turn = view.turn;
             at.translation = Vec3::new(pos.x, 0.0, pos.y);
+            at.rotation = facing_camera(view.turn);
         }
         let column = if !man.alive {
             DEAD
@@ -317,7 +388,7 @@ fn show_men(field: Res<Field>, sheets: Res<Sheets>, mut sprites: Query<(&mut Spr
         } else {
             0
         };
-        let shown = (column, direction(man.facing));
+        let shown = (column, direction(man.facing - yaw));
         if shown != sprite.shown {
             sprite.shown = shown;
             let sheet = if b.units[man.unit].side == Side::Rome { sheets.legionary } else { sheets.gaul };
@@ -326,15 +397,17 @@ fn show_men(field: Res<Field>, sheets: Res<Sheets>, mut sprites: Query<(&mut Spr
     }
 }
 
-fn show_riders(field: Res<Field>, sheets: Res<Sheets>, mut sprites: Query<(&mut RiderSprite, &mut Transform, &mut Material)>) {
+fn show_riders(field: Res<Field>, sheets: Res<Sheets>, view: Res<View>, mut sprites: Query<(&mut RiderSprite, &mut Transform, &mut Material)>) {
     let b = &field.battle;
+    let yaw = view.yaw();
     let alpha = if field.paused { 1.0 } else { (field.owed / DT).clamp(0.0, 1.0) };
     for (mut sprite, mut at, mut material) in &mut sprites {
         let r = &b.riders[sprite.rider];
         let pos = r.was.lerp(r.pos, alpha);
         at.translation = Vec3::new(pos.x, 0.0, pos.y);
+        at.rotation = facing_camera(view.turn);
         let column = if r.moving { 1 + ((r.walked / 0.45) as u32 % 8) } else { 0 };
-        let shown = (column, direction(r.facing));
+        let shown = (column, direction(r.facing - yaw));
         if shown != sprite.shown {
             sprite.shown = shown;
             let sheet = if r.commander { sheets.commander } else { sheets.legate };
@@ -411,11 +484,12 @@ fn marks(field: Res<Field>, chosen: Res<Chosen>, pointer: Res<PointerSight>, mut
 
 fn place_camera(mut view: ResMut<View>, field: Res<Field>, mut cameras: Query<(&mut Transform, &mut Camera)>) {
     if view.follow {
-        view.focus = field.battle.riders[0].pos - Vec2::new(0.0, view.height * 0.15);
+        let (up, _) = view.screen_axes();
+        view.focus = field.battle.riders[0].pos + up * view.height * 0.15;
     }
     for (mut at, mut camera) in &mut cameras {
         let focus = Vec3::new(view.focus.x, 0.0, view.focus.y);
-        *at = Transform::from_translation(focus - view_dir() * 1500.0).looking_at(focus, Vec3::Y);
+        *at = Transform::from_translation(focus - view_dir(view.yaw()) * 1500.0).looking_at(focus, Vec3::Y);
         camera.orthographic_height = Some(view.height);
     }
 }
@@ -454,7 +528,15 @@ fn control(
     if d != Vec2::ZERO {
         view.follow = false;
     }
-    view.focus += d * pan;
+    let (up, right) = view.screen_axes();
+    view.focus += (right * d.x - up * d.y) * pan;
+    // Q and E turn the view an eighth of a circle about the middle of the screen.
+    if keys.just_pressed(KeyCode::KeyQ) {
+        view.turn = (view.turn + 7) % 8;
+    }
+    if keys.just_pressed(KeyCode::KeyE) {
+        view.turn = (view.turn + 1) % 8;
+    }
     if mouse.scroll.y != 0.0 {
         view.height = (view.height * 0.88f32.powf(mouse.scroll.y.signum() * mouse.scroll.y.abs().min(3.0))).clamp(18.0, 600.0);
     }
@@ -832,6 +914,20 @@ fn main() -> anyhow::Result<()> {
         .unwrap_or(Vec2::new(0.0, -50.0));
     let (width, tall) = value("size").and_then(|v| v.split_once('x').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))).unwrap_or((1600, 900));
 
+    // A view turned an eighth of a circle, at a slant both ways, unless asked otherwise.
+    let turn = value("turn").and_then(|v| v.parse::<i32>().ok()).unwrap_or(1).rem_euclid(8);
+    if let Some(folder) = value("sprites") {
+        let _ = LENS.set(Lens::read(&folder));
+    }
+    let mut field = Field { battle: Battle::new(49, cohort, band), owed: 0.0, speed, paused: false, watch, watch_relieved: -100.0, film: value("film").and_then(|v| v.parse().ok()) };
+    // `from=90` begins ninety seconds in, the battle stepped there before anything is drawn.
+    let from: f32 = value("from").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    while field.battle.time < from {
+        if field.watch {
+            command_itself(&mut field);
+        }
+        field.battle.step();
+    }
     let mut app = App::new();
     app.insert_resource(WindowSettings { title: "Triplex acies".into(), width, height: tall, ..Default::default() })
         .insert_resource(RayTracingSettings { enabled: false, ..Default::default() })
@@ -839,9 +935,9 @@ fn main() -> anyhow::Result<()> {
         .add_plugins(DefaultPlugins)
         // Each sprite in the colours it was rendered with, lit as it was in Blender.
         .insert_resource(ViewMode::Unlit)
-        .insert_resource(Field { battle: Battle::new(49, cohort, band), owed: 0.0, speed, paused: false, watch, watch_relieved: -100.0 })
+        .insert_resource(field)
         .insert_resource(Chosen::default())
-        .insert_resource(View { focus, height, follow: args.iter().any(|a| a == "follow") })
+        .insert_resource(View { focus, height, turn, follow: args.iter().any(|a| a == "follow") })
         .insert_resource(shots)
         .add_plugins(UiPlugin::new(Hud::default).sync(read_out))
         .add_systems(Stage::Startup, setup)
