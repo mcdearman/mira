@@ -74,7 +74,7 @@ region from frame to frame (a walk, a swing) sends only that instance's look to 
 Leave a few transparent pixels round each picture: a picture made small on the screen is read
 from the image's smaller copies, where neighbours on the sheet run together at their edges.
 
-A sprite that stands up in a world seen at a slant (`examples/triplex`, in `mira_ui`) is a
+A sprite that stands up in a world seen at a slant (`crates/mira_ui/examples/triplex`) is a
 square turned to face the camera, with the picture drawn as the camera sees it; the depth
 buffer then puts the nearer man over the further without any sorting.
 

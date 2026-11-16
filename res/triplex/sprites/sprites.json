@@ -1,0 +1,93 @@
+{
+  "pitch_degrees": 35.0,
+  "metres_per_pixel": 0.0185,
+  "directions": 8,
+  "kinds": {
+    "legionary": {
+      "cell": [
+        112,
+        144
+      ],
+      "foot": 22,
+      "frames": [
+        "idle",
+        "walk0",
+        "walk1",
+        "walk2",
+        "walk3",
+        "walk4",
+        "walk5",
+        "walk6",
+        "walk7",
+        "fight0",
+        "fight1",
+        "fight2",
+        "fight3",
+        "fight4",
+        "fight5",
+        "dead"
+      ]
+    },
+    "gaul": {
+      "cell": [
+        112,
+        144
+      ],
+      "foot": 22,
+      "frames": [
+        "idle",
+        "walk0",
+        "walk1",
+        "walk2",
+        "walk3",
+        "walk4",
+        "walk5",
+        "walk6",
+        "walk7",
+        "fight0",
+        "fight1",
+        "fight2",
+        "fight3",
+        "fight4",
+        "fight5",
+        "dead"
+      ]
+    },
+    "legate": {
+      "cell": [
+        208,
+        192
+      ],
+      "foot": 50,
+      "frames": [
+        "idle",
+        "walk0",
+        "walk1",
+        "walk2",
+        "walk3",
+        "walk4",
+        "walk5",
+        "walk6",
+        "walk7"
+      ]
+    },
+    "commander": {
+      "cell": [
+        208,
+        192
+      ],
+      "foot": 50,
+      "frames": [
+        "idle",
+        "walk0",
+        "walk1",
+        "walk2",
+        "walk3",
+        "walk4",
+        "walk5",
+        "walk6",
+        "walk7"
+      ]
+    }
+  }
+}
