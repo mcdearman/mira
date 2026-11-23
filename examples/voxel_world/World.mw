@@ -244,11 +244,17 @@ fun turned (yaw : Float) (pitch : Float) : (Float, Float, Float, Float) =
 
 fun component (axis : Int) (v : (Float, Float, Float)) : Float =
   let (x, y, z) = v in
-  if axis == 0 then x else if axis == 1 then y else z
+  match axis with
+  | 0 -> x
+  | 1 -> y
+  | _ -> z
 
 fun setComponent (axis : Int) (value : Float) (v : (Float, Float, Float)) : (Float, Float, Float) =
   let (x, y, z) = v in
-  if axis == 0 then (value, y, z) else if axis == 1 then (x, value, z) else (x, y, value)
+  match axis with
+  | 0 -> (value, y, z)
+  | 1 -> (x, value, z)
+  | _ -> (x, y, value)
 
 fun cell (v : (Float, Float, Float)) : (Int, Int, Int) =
   let (x, y, z) = v in

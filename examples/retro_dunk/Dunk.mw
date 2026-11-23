@@ -115,21 +115,22 @@ def passing : Int = 6
 
 -- What is said in the middle of the court, by number.
 fun said (message : Int) : String =
-  if message == 1 then "SWISH!"
-  else if message == 2 then "THREE!"
-  else if message == 3 then "DUNK!"
-  else if message == 4 then "MISS"
-  else if message == 5 then "STOLEN!"
-  else if message == 6 then "SHOT CLOCK"
-  else if message == 7 then "THEY SCORE 2"
-  else if message == 8 then "THEY HIT A 3"
-  else if message == 9 then "STOP!"
-  else if message == 10 then "YOU WIN!"
-  else if message == 11 then "YOU LOSE"
-  else if message == 12 then "YOUR BALL"
-  else if message == 13 then "REBOUND!"
-  else if message == 14 then "PICKED OFF"
-  else ""
+  match message with
+  | 1 -> "SWISH!"
+  | 2 -> "THREE!"
+  | 3 -> "DUNK!"
+  | 4 -> "MISS"
+  | 5 -> "STOLEN!"
+  | 6 -> "SHOT CLOCK"
+  | 7 -> "THEY SCORE 2"
+  | 8 -> "THEY HIT A 3"
+  | 9 -> "STOP!"
+  | 10 -> "YOU WIN!"
+  | 11 -> "YOU LOSE"
+  | 12 -> "YOUR BALL"
+  | 13 -> "REBOUND!"
+  | 14 -> "PICKED OFF"
+  | _ -> ""
 
 -- ---------------------------------------------------------------------------------------
 -- Loading
@@ -258,14 +259,15 @@ fun kit (team : Int) (key : String) : (Int, Int, Int, Int) =
     else ((52, 104, 214), (30, 62, 150), (24, 30, 52))
   in
   let solid = \c -> let (r, g, b) = c in (r, g, b, 255) in
-  if key == "j" then solid jersey
-  else if key == "J" then solid dark
-  else if key == "d" then solid shorts
-  else if key == "n" then (if team == 0 then (250, 244, 224, 255) else (240, 200, 60, 255))
-  else if key == "s" then (if team == 0 then (198, 134, 92, 255) else (122, 78, 50, 255))
-  else if key == "h" then (if team == 0 then (46, 32, 24, 255) else (24, 20, 18, 255))
-  else if key == "k" then (250, 250, 250, 255)
-  else clear
+  match key with
+  | "j" -> solid jersey
+  | "J" -> solid dark
+  | "d" -> solid shorts
+  | "n" -> if team == 0 then (250, 244, 224, 255) else (240, 200, 60, 255)
+  | "s" -> if team == 0 then (198, 134, 92, 255) else (122, 78, 50, 255)
+  | "h" -> if team == 0 then (46, 32, 24, 255) else (24, 20, 18, 255)
+  | "k" -> (250, 250, 250, 255)
+  | _ -> clear
 
 -- The ball: orange, with its seams, and a gleam.
 fun ballColour (x : Int) (y : Int) : (Int, Int, Int, Int) =
@@ -339,46 +341,48 @@ fun backboardColour (x : Int) (y : Int) : (Int, Int, Int, Int) =
 
 -- The letters, three pixels by five.
 fun letterRows (c : String) : [String] =
-  if c == "A" then [".w.", "w.w", "www", "w.w", "w.w"]
-  else if c == "B" then ["ww.", "w.w", "ww.", "w.w", "ww."]
-  else if c == "C" then [".ww", "w..", "w..", "w..", ".ww"]
-  else if c == "D" then ["ww.", "w.w", "w.w", "w.w", "ww."]
-  else if c == "E" then ["www", "w..", "ww.", "w..", "www"]
-  else if c == "F" then ["www", "w..", "ww.", "w..", "w.."]
-  else if c == "G" then [".ww", "w..", "w.w", "w.w", ".ww"]
-  else if c == "H" then ["w.w", "w.w", "www", "w.w", "w.w"]
-  else if c == "I" then ["www", ".w.", ".w.", ".w.", "www"]
-  else if c == "J" then ["..w", "..w", "..w", "w.w", ".w."]
-  else if c == "K" then ["w.w", "w.w", "ww.", "w.w", "w.w"]
-  else if c == "L" then ["w..", "w..", "w..", "w..", "www"]
-  else if c == "M" then ["w.w", "www", "www", "w.w", "w.w"]
-  else if c == "N" then ["ww.", "w.w", "w.w", "w.w", "w.w"]
-  else if c == "O" or c == "0" then ["www", "w.w", "w.w", "w.w", "www"]
-  else if c == "P" then ["ww.", "w.w", "ww.", "w..", "w.."]
-  else if c == "Q" then [".w.", "w.w", "w.w", "ww.", ".ww"]
-  else if c == "R" then ["ww.", "w.w", "ww.", "w.w", "w.w"]
-  else if c == "S" then [".ww", "w..", ".w.", "..w", "ww."]
-  else if c == "T" then ["www", ".w.", ".w.", ".w.", ".w."]
-  else if c == "U" then ["w.w", "w.w", "w.w", "w.w", "www"]
-  else if c == "V" then ["w.w", "w.w", "w.w", "w.w", ".w."]
-  else if c == "W" then ["w.w", "w.w", "www", "www", "w.w"]
-  else if c == "X" then ["w.w", "w.w", ".w.", "w.w", "w.w"]
-  else if c == "Y" then ["w.w", "w.w", ".w.", ".w.", ".w."]
-  else if c == "Z" then ["www", "..w", ".w.", "w..", "www"]
-  else if c == "1" then [".w.", "ww.", ".w.", ".w.", "www"]
-  else if c == "2" then ["www", "..w", "www", "w..", "www"]
-  else if c == "3" then ["www", "..w", "www", "..w", "www"]
-  else if c == "4" then ["w.w", "w.w", "www", "..w", "..w"]
-  else if c == "5" then ["www", "w..", "www", "..w", "www"]
-  else if c == "6" then ["www", "w..", "www", "w.w", "www"]
-  else if c == "7" then ["www", "..w", ".w.", ".w.", ".w."]
-  else if c == "8" then ["www", "w.w", "www", "w.w", "www"]
-  else if c == "9" then ["www", "w.w", "www", "..w", "www"]
-  else if c == "-" then ["...", "...", "www", "...", "..."]
-  else if c == "!" then [".w.", ".w.", ".w.", "...", ".w."]
-  else if c == ":" then ["...", ".w.", "...", ".w.", "..."]
-  else if c == "." then ["...", "...", "...", "...", ".w."]
-  else []
+  match c with
+  | "A" -> [".w.", "w.w", "www", "w.w", "w.w"]
+  | "B" -> ["ww.", "w.w", "ww.", "w.w", "ww."]
+  | "C" -> [".ww", "w..", "w..", "w..", ".ww"]
+  | "D" -> ["ww.", "w.w", "w.w", "w.w", "ww."]
+  | "E" -> ["www", "w..", "ww.", "w..", "www"]
+  | "F" -> ["www", "w..", "ww.", "w..", "w.."]
+  | "G" -> [".ww", "w..", "w.w", "w.w", ".ww"]
+  | "H" -> ["w.w", "w.w", "www", "w.w", "w.w"]
+  | "I" -> ["www", ".w.", ".w.", ".w.", "www"]
+  | "J" -> ["..w", "..w", "..w", "w.w", ".w."]
+  | "K" -> ["w.w", "w.w", "ww.", "w.w", "w.w"]
+  | "L" -> ["w..", "w..", "w..", "w..", "www"]
+  | "M" -> ["w.w", "www", "www", "w.w", "w.w"]
+  | "N" -> ["ww.", "w.w", "w.w", "w.w", "w.w"]
+  | "O" -> ["www", "w.w", "w.w", "w.w", "www"]
+  | "0" -> ["www", "w.w", "w.w", "w.w", "www"]
+  | "P" -> ["ww.", "w.w", "ww.", "w..", "w.."]
+  | "Q" -> [".w.", "w.w", "w.w", "ww.", ".ww"]
+  | "R" -> ["ww.", "w.w", "ww.", "w.w", "w.w"]
+  | "S" -> [".ww", "w..", ".w.", "..w", "ww."]
+  | "T" -> ["www", ".w.", ".w.", ".w.", ".w."]
+  | "U" -> ["w.w", "w.w", "w.w", "w.w", "www"]
+  | "V" -> ["w.w", "w.w", "w.w", "w.w", ".w."]
+  | "W" -> ["w.w", "w.w", "www", "www", "w.w"]
+  | "X" -> ["w.w", "w.w", ".w.", "w.w", "w.w"]
+  | "Y" -> ["w.w", "w.w", ".w.", ".w.", ".w."]
+  | "Z" -> ["www", "..w", ".w.", "w..", "www"]
+  | "1" -> [".w.", "ww.", ".w.", ".w.", "www"]
+  | "2" -> ["www", "..w", "www", "w..", "www"]
+  | "3" -> ["www", "..w", "www", "..w", "www"]
+  | "4" -> ["w.w", "w.w", "www", "..w", "..w"]
+  | "5" -> ["www", "w..", "www", "..w", "www"]
+  | "6" -> ["www", "w..", "www", "w.w", "www"]
+  | "7" -> ["www", "..w", ".w.", ".w.", ".w."]
+  | "8" -> ["www", "w.w", "www", "w.w", "www"]
+  | "9" -> ["www", "w.w", "www", "..w", "www"]
+  | "-" -> ["...", "...", "www", "...", "..."]
+  | "!" -> [".w.", ".w.", ".w.", "...", ".w."]
+  | ":" -> ["...", ".w.", "...", ".w.", "..."]
+  | "." -> ["...", "...", "...", "...", ".w."]
+  | _ -> []
 
 def alphabet : String = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-!:."
 
@@ -883,24 +887,26 @@ fun moveBall (sys : M.System) : () ! Process =
   let u3 = seti sys dotShownI dot in
   M.forEachIn2 sys 1 (\entity kind tr ->
     let k = F.round (M.readFloat32 kind 0) in
-    if k == 0 then
-      -- Higher is further up the screen and larger, as if seen from the stands.
+    match k with
+    -- Higher is further up the screen and larger, as if seen from the stands.
+    | 0 ->
       (let size = 0.42 +. bh *. 0.05 in
        let u = M.setTranslation tr (bx, 1.0 +. bh *. 0.1, bz -. bh *. 0.35) in
        M.setScale tr (size, 1.0, size))
-    else if k == 1 then
+    | 1 ->
       (let u = M.setTranslation tr (bx, 0.2, bz) in
        M.setScale tr (0.25, 1.0, 0.5))
-    else if k == 2 then
+    | 2 ->
       (let u = M.setTranslation tr (mx, 1.5, mz -. 1.0) in
        M.setScale tr (0.3, 1.0, 0.52))
-    else if k == 3 then
+    | 3 ->
       (let u = M.setTranslation tr (gx, 1.6, gz) in
        M.setScale tr (1.5, 1.0, 0.3))
-    else if k == 4 then
+    | 4 ->
       (let u = M.setTranslation tr (gx, 1.7, gz +. 0.7 -. filled /. 2.0) in
        M.setScale tr (if filled >. 0.01 then filled else 0.01, 1.0, 0.18))
-    else
+    -- The aiming dots, from 5 up.
+    | _ ->
       (let along = toFloat (k - 4) /. toFloat dots in
        let last = k - 4 == dots in
        let u1 = M.setTranslation tr (if aiming then (bx +. (ax -. bx) *. along, 1.45, bz +. (az -. bz) *. along) else (0.0, 1.45, 99.0)) in
