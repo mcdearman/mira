@@ -890,24 +890,24 @@ fun moveBall (sys : M.System) : () ! Process =
     match k with
     -- Higher is further up the screen and larger, as if seen from the stands.
     | 0 ->
-      (let size = 0.42 +. bh *. 0.05 in
-       let u = M.setTranslation tr (bx, 1.0 +. bh *. 0.1, bz -. bh *. 0.35) in
+      (let size = 0.42 + bh * 0.05 in
+       let u = M.setTranslation tr (bx, 1.0 + bh * 0.1, bz - bh * 0.35) in
        M.setScale tr (size, 1.0, size))
     | 1 ->
       (let u = M.setTranslation tr (bx, 0.2, bz) in
        M.setScale tr (0.25, 1.0, 0.5))
     | 2 ->
-      (let u = M.setTranslation tr (mx, 1.5, mz -. 1.0) in
+      (let u = M.setTranslation tr (mx, 1.5, mz - 1.0) in
        M.setScale tr (0.3, 1.0, 0.52))
     | 3 ->
       (let u = M.setTranslation tr (gx, 1.6, gz) in
        M.setScale tr (1.5, 1.0, 0.3))
     | 4 ->
-      (let u = M.setTranslation tr (gx, 1.7, gz +. 0.7 -. filled /. 2.0) in
-       M.setScale tr (if filled >. 0.01 then filled else 0.01, 1.0, 0.18))
+      (let u = M.setTranslation tr (gx, 1.7, gz + 0.7 - filled / 2.0) in
+       M.setScale tr (if filled > 0.01 then filled else 0.01, 1.0, 0.18))
     -- The aiming dots, from 5 up.
     | _ ->
-      (let along = toFloat (k - 4) /. toFloat dots in
+      (let along = toFloat (k - 4) / toFloat dots in
        let last = k - 4 == dots in
        let u1 = M.setTranslation tr (if aiming then (bx + (ax - bx) * along, 1.45, bz + (az - bz) * along) else (0.0, 1.45, 99.0)) in
        let u2 = if recolour then M.setTextures sys entity dot 0 0 else () in
