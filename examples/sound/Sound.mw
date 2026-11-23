@@ -55,7 +55,7 @@ fun sound_setup (s : Int) (user : Int) : () ! Process =
   let u11 = M.setListener sys eye in
   -- A sun, tipped down a little.
   let sun = M.spawn sys in
-  let u12 = M.insertTransform sys sun transform (0.0, 0.0, 0.0) (0.0 -. 0.38, 0.0, 0.0, 0.92) one in
+  let u12 = M.insertTransform sys sun transform (0.0, 0.0, 0.0) (-0.38, 0.0, 0.0, 0.92) one in
   M.setLight sys sun 3.0
 
 -- Each note is played when its time comes.
@@ -65,7 +65,7 @@ fun sound_tune (s : Int) (user : Int) : () ! Process =
   let played = M.pointer (M.kept sys 2) in
   let next = M.readInt32 played in
   let now = M.elapsedSeconds sys in
-  if next < len scale and 0.5 +. toFloat next *. 0.25 <= now then
+  if next < len scale and 0.5 + toFloat next * 0.25 <= now then
     let note = M.soundTone sys (noteAt next) 0.22 in
     let voice = M.playSound sys note 0.5 in
     M.writeInt32 played (next + 1)
@@ -80,4 +80,4 @@ fun sound_circle (s : Int) (user : Int) : () ! Process =
   let now = M.elapsedSeconds sys in
   M.forEach2 sys (\e t h ->
     let speed = M.readFloat32 h 0 in
-    M.setTranslation t (F.cos (now *. speed) *. circle, 1.0, F.sin (now *. speed) *. circle))
+    M.setTranslation t (F.cos (now * speed) * circle, 1.0, F.sin (now * speed) * circle))

@@ -340,12 +340,12 @@ fun scene_observe (s : Int) (user : Int) : () ! Process =
         | M.Contact a b point normal impulse -> if a == ball or b == ball then n + 1 else n)
     in
     let u3 = M.writeInt32At report 0 (M.readInt32At report 0 + touches) in
-    let speed = (match M.velocity sys e with | Just (x, y, z) -> F.abs y | None -> 0.0 -. 1.0) in
+    let speed = (match M.velocity sys e with | Just (x, y, z) -> F.abs y | None -> -1.0) in
     let u4 = M.writeFloat32 report 1 speed in
     let ray =
-      (match M.raycast sys (0.0, 10.0, 0.0) (0.0, 0.0 -. 3.0, 0.0) 100.0 with
-       | Just (M.RayHit hit point normal distance) -> if hit == ball then distance else 0.0 -. 1.0
-       | None -> 0.0 -. 1.0)
+      (match M.raycast sys (0.0, 10.0, 0.0) (0.0, -3.0, 0.0) 100.0 with
+       | Just (M.RayHit hit point normal distance) -> if hit == ball then distance else -1.0
+       | None -> -1.0)
     in
     let u5 = M.writeFloat32 report 2 ray in
     if M.keyPressed sys M.keyEnter then M.applyImpulse sys e (0.0, 20.0, 0.0) else ())
@@ -1776,7 +1776,7 @@ fun maker_setup (s : Int) (user : Int) : () ! Process =
   let u5 = M.setTextures sys sprite tile 0 0 in
   let u6 = M.setAlphaCutoff sys sprite 0.5 in
   -- A tenth of a second of a rising saw.
-  let samples = map (\i -> toFloat (i % 100) /. 50.0 -. 1.0) (range 0 4800) in
+  let samples = map (\i -> toFloat (i % 100) / 50.0 - 1.0) (range 0 4800) in
   let buzz = M.createSound sys "maker.buzz" 48000 1 samples in
   let u7 = say sys "maker.same_sound" (buzz != 0 and buzz == M.createSound sys "maker.buzz" 48000 1 samples) in
   let u8 = say sys "maker.three_channels" (M.createSound sys "maker.odd" 48000 3 samples == 0) in
@@ -2037,7 +2037,7 @@ fun counter_step (s : Int) (user : Int) : () ! Process =
   let loads = M.readInt32 (M.pointer (M.kept sys 2)) in
   M.forEach2 sys (\e t c ->
     let (x, y, z) = M.translation t in
-    let u1 = M.setTranslation t (x +. step, y, toFloat loads) in
+    let u1 = M.setTranslation t (x + step, y, toFloat loads) in
     M.writeInt32 c (M.readInt32 c + 1))
 "#;
 
@@ -2122,7 +2122,7 @@ fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
 fun gives_up (s : Int) (user : Int) : () ! Process =
   let sys = M.system s user in
   -- Nought, from the clock, so that nothing knows it is nought before the game runs.
-  let nought = floor (M.elapsedSeconds sys *. 0.0) in
+  let nought = floor (M.elapsedSeconds sys * 0.0) in
   M.setSignalNumber sys "gives.ratio" (toFloat (100 / nought))
 "#,
     )
