@@ -2907,3 +2907,135 @@ fn retro_dunk_is_aimed_with_the_mouse() {
     throw(&mut app, &|_| (0.0, -5.4));
     assert_eq!(said(&app, "dunk.phase"), 2.0, "a shot");
 }
+
+/// Nine Greens' script loaded into an app with what it needs, a frame a thirtieth of a
+/// second, and its first frame run.
+fn nine_greens(name: &str) -> (Workspace, App) {
+    use crate::{
+        assets::Assets,
+        audio::SilentAudioPlugin,
+        input::InputPlugin,
+        render::{Image, Mesh},
+        time::Time,
+    };
+    let workspace = Workspace::new(name);
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/nine_greens/Greens.mw");
+    std::fs::copy(script, workspace.dir.join("Greens.mw")).unwrap();
+    let mut app = app();
+    app.add_plugins(InputPlugin).add_plugins(SilentAudioPlugin).init_resource::<Assets<Mesh>>().init_resource::<Assets<Image>>();
+    app.load_scripts(&workspace.dir).unwrap();
+    assert!(app.script_problems().next().is_none(), "{:?}", app.script_problems().next());
+    app.world.resource_mut::<Time>().set_fixed_step(Some(std::time::Duration::from_secs_f64(1.0 / 30.0)));
+    app.update();
+    (workspace, app)
+}
+
+/// Nine Greens plays a round of nine holes by itself, two players taking turns: every
+/// hole is played, every player holes out or picks up on each, and the card is kept.
+#[test]
+fn nine_greens_plays_a_round_from_its_script() {
+    use crate::signal::Signals;
+    if !have_meadowboot() {
+        return;
+    }
+    let (_workspace, mut app) = nine_greens("nine-greens");
+    app.world.resource_mut::<Signals>().set("greens.autoplay", 1.0);
+    let said = |app: &App, what: &str| app.world.resource::<Signals>().number(what);
+    let (mut phases, mut holes, mut turns) = (std::collections::BTreeSet::new(), std::collections::BTreeSet::new(), std::collections::BTreeSet::new());
+    let mut frames = 0;
+    let mut totals = (0.0, 0.0);
+    while said(&app, "greens.rounds") < 1.0 {
+        assert!(frames < 60_000, "no round was finished in {frames} frames: holes {holes:?}, phases {phases:?}");
+        app.update();
+        frames += 1;
+        phases.insert(said(&app, "greens.phase") as i32);
+        if said(&app, "greens.phase") != 0.0 {
+            holes.insert(said(&app, "greens.hole") as i32);
+            turns.insert(said(&app, "greens.turn") as i32);
+            let now = (said(&app, "greens.total.0"), said(&app, "greens.total.1"));
+            assert!(now.0 >= totals.0 && now.1 >= totals.1, "a total went down: {now:?} after {totals:?}");
+            totals = now;
+        }
+    }
+    assert_eq!(said(&app, "greens.players"), 2.0);
+    assert_eq!(holes, (1..=9).collect(), "every hole was played");
+    assert_eq!(turns, [0, 1].into(), "both players had turns");
+    for phase in [1, 2, 3, 4, 5] {
+        assert!(phases.contains(&phase), "phase {phase} never came: {phases:?}");
+    }
+    // At least a stroke a hole, and at most seven.
+    for total in [totals.0, totals.1] {
+        assert!((9.0..=63.0).contains(&total), "{totals:?}");
+    }
+}
+
+/// Nine Greens putted with the mouse, alone: let go where the drag began, nothing is hit; a
+/// drag back sends the ball the other way, as hard as it is long; and a putt of the right
+/// length at the cup drops, and the hole is done.
+#[test]
+fn nine_greens_is_putted_with_the_mouse() {
+    use crate::{
+        input::{InjectedInput, KeyCode, MouseButton, Played},
+        render::PointerSight,
+        signal::Signals,
+    };
+    if !have_meadowboot() {
+        return;
+    }
+    let (_workspace, mut app) = nine_greens("nine-greens-putt");
+    let said = |app: &App, what: &str| app.world.resource::<Signals>().number(what);
+    let point = |app: &mut App, (x, z): (f32, f32)| app.world.insert_resource(PointerSight(Some((Vec3::new(x, 20.0, z), Vec3::NEG_Y))));
+    // The button pressed with the pointer at `from`, moved to `to` and let go there.
+    let drag = |app: &mut App, from: (f32, f32), to: (f32, f32)| {
+        point(app, from);
+        app.world.resource_mut::<InjectedInput>().play(Played::Button(MouseButton::Left, true));
+        app.update();
+        for step in 1..=10 {
+            let t = step as f32 / 10.0;
+            point(app, (from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t));
+            app.update();
+        }
+        app.world.resource_mut::<InjectedInput>().play(Played::Button(MouseButton::Left, false));
+        app.update();
+        app.update();
+    };
+    let settle = |app: &mut App| {
+        for _ in 0..600 {
+            if said(app, "greens.phase") == 1.0 || said(app, "greens.phase") >= 4.0 {
+                return;
+            }
+            app.update();
+        }
+        panic!("the ball never came to rest");
+    };
+
+    app.world.resource_mut::<InjectedInput>().play(Played::Key(KeyCode::Digit1, true));
+    app.update();
+    app.world.resource_mut::<InjectedInput>().play(Played::Key(KeyCode::Digit1, false));
+    for _ in 0..30 {
+        app.update();
+    }
+    assert_eq!((said(&app, "greens.phase"), said(&app, "greens.players"), said(&app, "greens.hole")), (1.0, 1.0, 1.0), "one player, on the first hole");
+    let tee = (said(&app, "greens.ball.x"), said(&app, "greens.ball.z"));
+
+    drag(&mut app, (1.0, 3.0), (1.02, 3.01));
+    assert_eq!((said(&app, "greens.phase"), said(&app, "greens.strokes")), (1.0, 0.0), "let go where it began, nothing is hit");
+
+    // Drawn back toward the tee's end, 1.2 metres: up the hole, about half as hard as can be.
+    drag(&mut app, (0.5, 2.0), (0.5, 3.2));
+    assert_eq!((said(&app, "greens.phase"), said(&app, "greens.strokes")), (2.0, 1.0), "a putt");
+    settle(&mut app);
+    let (x, z) = (said(&app, "greens.ball.x") as f32, said(&app, "greens.ball.z") as f32);
+    assert!(x.abs() < 0.05 && f64::from(z) < tee.1 - 4.0, "it went up the hole: {x}, {z} from {tee:?}");
+
+    // At the cup, as hard as gets it half a metre past: in.
+    let cup = (0.0f32, -4.4f32);
+    let (dx, dz) = (cup.0 - x, cup.1 - z);
+    let reach = (dx * dx + dz * dz).sqrt();
+    let speed = (2.0 * 1.1 * (reach + 0.5)).sqrt();
+    let pull = (speed - 0.3) / 6.7 * 2.4;
+    drag(&mut app, (0.0, 0.0), (-dx / reach * pull, -dz / reach * pull));
+    settle(&mut app);
+    assert_eq!(said(&app, "greens.total.0"), 2.0, "in, in two");
+    assert_eq!(said(&app, "greens.phase"), 4.0, "the card, everyone being in");
+}

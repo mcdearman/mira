@@ -46,6 +46,17 @@ pass; or hold the left mouse button, aim at the rim or a teammate, and let go. E
 it, the court, the players and the sounds, is made in its script,
 [`examples/retro_dunk/Dunk.mw`](examples/retro_dunk/Dunk.mw).
 
+```
+cargo run --release --bin mira-play -- examples/nine_greens
+```
+
+Nine Greens is mini golf for one to four players taking turns at one screen: nine holes of
+banks, posts, sand, water, a tilted green and turning bars, and nothing but putting. Press 1
+to 4 for how many play. On your turn, hold the left mouse button (or a finger) anywhere and
+drag back, away from where the ball is to go, and let go; or turn with A and D and hold Space.
+The lowest total wins, and the best round played alone is kept. The holes, letters and sounds
+are all made in [`examples/nine_greens/Greens.mw`](examples/nine_greens/Greens.mw).
+
 ## Demos
 
 ```sh
