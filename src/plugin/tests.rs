@@ -2056,6 +2056,37 @@ fn have_meadowboot() -> bool {
     false
 }
 
+/// A Meadow script built again with nothing changed builds: MeadowBoot leaves the library
+/// as it was, older than the build, and that one is taken. (Once, only one written during
+/// the build was, so a game failed to start the second time it was played.)
+#[test]
+fn a_meadow_script_unchanged_builds_again() {
+    if !have_meadowboot() {
+        return;
+    }
+    let workspace = Workspace::new("meadow-again");
+    let source = workspace.dir.join("Counter.mw");
+    std::fs::write(&source, MEADOW_COUNTER.replace("STEP", "1.0")).unwrap();
+    let out = workspace.dir.join("out");
+    let first = super::scripts::build_meadow("counter", &source, &out).expect("built");
+    // As if it were built an hour ago, as it is when a game is played again another time.
+    fn age(folder: &Path) {
+        for entry in std::fs::read_dir(folder).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                age(&path);
+            } else if path.extension().is_some_and(|ends| ends == std::env::consts::DLL_EXTENSION) {
+                let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+                std::fs::File::options().write(true).open(&path).unwrap().set_modified(hour_ago).unwrap();
+            }
+        }
+    }
+    age(&out.join("meadow"));
+    let second = super::scripts::build_meadow("counter", &source, &out).expect("built again, nothing changed");
+    assert_eq!(first, second);
+    assert!(second.exists());
+}
+
 #[test]
 fn a_meadow_script_is_built_loaded_and_kept_built() {
     if !have_meadowboot() {

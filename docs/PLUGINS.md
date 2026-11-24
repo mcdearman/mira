@@ -61,7 +61,9 @@ Three exported functions:
   are plain bytes.
 - **Find a component** someone else defined with `component_lookup`, such as the engine's
   `mira.Transform`. It reports the size and alignment so the plugin can check its own
-  definition matches.
+  definition matches. The engine also gives `mira.NotShadowCaster`, a marker of no bytes
+  (insert it with any value) that keeps a mesh out of the sun's shadows: words and panels
+  hung in front of the camera, say. It is there only when the app draws.
 - **Get persistent state** with `state`: a zeroed block of memory that survives reloads.
 - **Add a system** with `system_add`: a function, the stage it runs in, and its *terms*.
 
@@ -497,6 +499,7 @@ mouse, `cursorGrabbed` says whether it is held, and `quit` ends the game after t
 ## What the interface does not cover yet
 
 Plugins cannot yet play a model's animations, draw text or UI, use joints or character
-controllers, or see any engine component other than `mira.Transform`. Point and spot lights don't exist in the engine yet. Queries have no
+controllers, or see any engine component other than `mira.Transform` and
+`mira.NotShadowCaster`. Point and spot lights don't exist in the engine yet. Queries have no
 optional terms or change filters. A plugin cannot be removed while the app runs. The table of functions is
 versioned and carries its own size, so these can be added without breaking existing plugins.

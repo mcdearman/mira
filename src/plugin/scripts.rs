@@ -148,7 +148,6 @@ pub fn build_meadow(name: &str, source: &Path, out: &Path) -> Result<PathBuf, St
     written(&package.join("src").join("Main.mw"), &text)?;
 
     let boot = std::env::var_os("MIRA_MEADOWBOOT").map_or_else(|| PathBuf::from("meadowboot"), PathBuf::from);
-    let began = std::time::SystemTime::now();
     let output = Command::new(&boot)
         .arg("build")
         .arg(&package)
@@ -159,7 +158,8 @@ pub fn build_meadow(name: &str, source: &Path, out: &Path) -> Result<PathBuf, St
         return Err(String::from_utf8_lossy(&said).trim().to_owned());
     }
     // Where MeadowBoot puts the library: named after the package, or as `program` before it
-    // learnt to. The one it has just written is the one wanted.
+    // learnt to. The newer is the one wanted. It need not be newer than this build: with
+    // nothing changed, MeadowBoot leaves the library as it was, or copies it with its time.
     let silo = |within: &Path| within.join("native").join("silo");
     let candidates = [
         silo(&package.join("target").join("debug")).join(library_file_name(&title)),
@@ -168,7 +168,6 @@ pub fn build_meadow(name: &str, source: &Path, out: &Path) -> Result<PathBuf, St
     let made = candidates
         .iter()
         .filter_map(|path| Some((std::fs::metadata(path).ok()?.modified().ok()?, path)))
-        .filter(|(when, _)| *when >= began - std::time::Duration::from_secs(1))
         .max_by_key(|(when, _)| *when)
         .map(|(_, path)| path.clone())
         .ok_or_else(|| format!("MeadowBoot said it built {name} and no library was found where it puts one"))?;

@@ -294,9 +294,14 @@ fun mira_meadow_run (s : Int) (user : Int) : () ! Process =
 @pub fun forEach (sys : System) (count : Int) (body : Int -> [Ptr] -> () ! { Process | e }) : () ! { Process | e } =
   visiting sys count (\entity found -> body entity (map (\i -> pointerAt found i) (range 0 count)))
 
+-- Room for the pointers the engine writes for each entity: never less than for 32, so that
+-- a count smaller than the query has (`foldIn1` on a query that reads one component and
+-- writes another, say) cannot have it write past the end.
+fun pointerRoom (count : Int) : Int = 8 * max 32 count
+
 -- Each entity the system visits, with the buffer the engine wrote its components' pointers to.
 fun visiting sys count body =
-  Ffi.withBuffer 8 (\e -> Ffi.withBuffer (8 * max 1 count) (\found -> visit sys e found body))
+  Ffi.withBuffer 8 (\e -> Ffi.withBuffer (pointerRoom count) (\found -> visit sys e found body))
 
 -- The same, for a system with no component to read or write, one, two or three: each pointer
 -- is handed over by itself.
@@ -353,7 +358,7 @@ fun visit sys e found body =
 -- Query `q` from its start, with the buffer the engine writes each entity's pointers to.
 fun folding sys q count start body =
   let u = callUnit sys 16 [Arg.Int q] in
-  Ffi.withBuffer 8 (\e -> Ffi.withBuffer (8 * max 1 count) (\found -> foldVisit sys q e found start body))
+  Ffi.withBuffer 8 (\e -> Ffi.withBuffer (pointerRoom count) (\found -> foldVisit sys q e found start body))
 
 fun foldVisit sys q e found so body =
   if call sys 14 [Arg.Int q, Arg.Ptr e, Arg.Ptr found] % 256 == 0 then so
@@ -854,7 +859,7 @@ fun known (block : Int) : Maybe Int =
 -- The pointers to an entity's components, as query `q` of the system would give them, if
 -- it matches the query.
 @pub fun getIn (sys : System) (q : Int) (entity : Int) (count : Int) : Maybe [Ptr] ! { Process | e } =
-  Ffi.withBuffer (8 * max 1 count) (\found ->
+  Ffi.withBuffer (pointerRoom count) (\found ->
     if call sys 15 [Arg.Int q, Arg.Int entity, Arg.Ptr found] % 256 == 0 then None
     else Just (map (\i -> pointerAt found i) (range 0 count)))
 
