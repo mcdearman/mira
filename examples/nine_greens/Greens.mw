@@ -1,5 +1,5 @@
 -- Nine Greens: mini golf for one to four players taking turns at one screen, over nine
--- holes of banks, posts, sand, water, a tilted green and turning bars. Nothing but putting:
+-- holes of banks, bumpers, sand, water, a tilted green and turning bars. Nothing but putting:
 -- no power-ups. The lowest total wins.
 --
 -- > cargo run --bin mira-play -- examples/nine_greens
@@ -30,12 +30,17 @@ def holes : Int = 9
 def ballR : Float = 0.1
 def cupR : Float = 0.17
 def wallT : Float = 0.16
-def wallH : Float = 0.22
+def wallH : Float = 0.24
+-- The grass round about, this far below the green.
+def groundY : Float = -0.9
 -- How fast a rolling ball slows, on the green and in sand, in metres a second each second.
 def greenDrag : Float = 1.1
 def sandDrag : Float = 4.2
--- How much of its speed into a wall a ball keeps coming off it.
-def bounce : Float = 0.72
+-- How much of its speed into a wall a ball keeps coming off it; and a bumper (a round
+-- post) sends it back as fast as it came, and kicks it this much harder besides.
+def bounce : Float = 0.88
+def bumperSpring : Float = 1.0
+def bumperKick : Float = 2.2
 -- The softest and hardest putts, and how far back a drag is for the hardest: across the
 -- screen, in half its height, so that a thumb on a phone reaches it before the edge.
 def slowest : Float = 0.3
@@ -50,7 +55,7 @@ def dropSpeed : Float = 2.6
 def mostStrokes : Int = 7
 -- The camera: its field of view, and how far down it looks while a hole is played.
 def fov : Float = 0.9
-def pitch : Float = 0.95
+def pitch : Float = 0.8
 -- Words and panels on the screen hang this far in front of the camera; half the screen's
 -- height there is hudDepth × tan (fov / 2).
 def hudDepth : Float = 0.5
@@ -104,6 +109,8 @@ def clackI : Int = 91
 def plopI : Int = 92
 def splashI : Int = 93
 def cheerI : Int = 94
+def bumpI : Int = 95
+def cupI : Int = 88
 
 -- The fractional ones: the clocks, the aim, the camera...
 def timerF : Int = 0
@@ -126,6 +133,8 @@ def pressSXF : Int = 18
 def pressSYF : Int = 19
 -- ...and each player's ball: where it is, how fast it goes, and where it was last hit from.
 def ballsF : Int = 20
+-- When each bumper was last hit.
+def bumpedF : Int = 52
 
 -- The phases.
 def title : Int = 0
@@ -416,8 +425,8 @@ fun step (h : Int) (now : Float) (dt : Float) (ball : (Float, Float, Float, Floa
   let k = if left <=. 0.0 then 0.0 else left /. speed in
   let moved = (x +. ux *. k *. dt, z +. uz *. k *. dt, ux *. k, uz *. k) in
   let still = \px pz -> (0.0, 0.0) in
-  let walled = offAll (moved, 0.0) (walls h) (\b w -> off b w still (ballR +. wallT /. 2.0)) in
-  let posted = offAll walled (posts h) (\b post -> let (px, pz, r) = post in off b (px, pz, px, pz) still (ballR +. r)) in
+  let walled = offAll (moved, 0.0) (walls h) (\b w -> off b w still (ballR +. wallT /. 2.0) bounce 0.0) in
+  let posted = offAll walled (posts h) (\b post -> let (px, pz, r) = post in off b (px, pz, px, pz) still (ballR +. r) bumperSpring bumperKick) in
   let (turned, hit) = offAll posted (spinners h) (\b sp -> offSpinner b sp now) in
   let (fx, fz, fvx, fvz) = turned in
   let (cx, cz) = cup h in
@@ -436,8 +445,9 @@ fun slopeAt (h : Int) (x : Float) (z : Float) : (Float, Float) =
   | None -> (0.0, 0.0)
 
 -- The ball off a segment (a post is one of no length) that may be moving: pushed back out
--- to `reach` of it, and bounced if it was going into it. And how hard it went in.
-fun off (ball : (Float, Float, Float, Float)) (seg : (Float, Float, Float, Float)) (moving : Float -> Float -> (Float, Float)) (reach : Float) : ((Float, Float, Float, Float), Float) =
+-- to `reach` of it, and bounced if it was going into it, keeping `spring` of its speed into
+-- it and kicked `kick` faster away. And how hard it went in.
+fun off (ball : (Float, Float, Float, Float)) (seg : (Float, Float, Float, Float)) (moving : Float -> Float -> (Float, Float)) (reach : Float) (spring : Float) (kick : Float) : ((Float, Float, Float, Float), Float) =
   let (x, z, vx, vz) = ball in
   let (ax, az, bx, bz) = seg in
   let dx = bx -. ax in
@@ -458,7 +468,9 @@ fun off (ball : (Float, Float, Float, Float)) (seg : (Float, Float, Float, Float
     let x2 = px +. nx *. reach in
     let z2 = pz +. nz *. reach in
     if into >=. 0.0 then ((x2, z2, vx, vz), 0.0)
-    else ((x2, z2, vx -. (1.0 +. bounce) *. into *. nx, vz -. (1.0 +. bounce) *. into *. nz), 0.0 -. into)
+    else
+      let push = kick -. (1.0 +. spring) *. into in
+      ((x2, z2, vx +. push *. nx, vz +. push *. nz), 0.0 -. into)
 
 -- The ball off each of some pieces in turn, and the hardest it hit one.
 fun offAll (start : ((Float, Float, Float, Float), Float)) (pieces : [a]) (hitOf : (Float, Float, Float, Float) -> a -> ((Float, Float, Float, Float), Float)) : ((Float, Float, Float, Float), Float) =
@@ -470,8 +482,8 @@ fun offSpinner (ball : (Float, Float, Float, Float)) (sp : (Float, Float, Float,
   let a = speed *. now in
   let (ex, ez) = (F.cos a *. half, F.sin a *. half) in
   let sweep = \px pz -> (0.0 -. speed *. (pz -. sz), speed *. (px -. sx)) in
-  let (b1, hit1) = off ball (sx -. ex, sz -. ez, sx +. ex, sz +. ez) sweep (ballR +. barT /. 2.0) in
-  let (b2, hit2) = off b1 (sx, sz, sx, sz) (\px pz -> (0.0, 0.0)) (ballR +. hubR) in
+  let (b1, hit1) = off ball (sx -. ex, sz -. ez, sx +. ex, sz +. ez) sweep (ballR +. barT /. 2.0) bounce 0.0 in
+  let (b2, hit2) = off b1 (sx, sz, sx, sz) (\px pz -> (0.0, 0.0)) (ballR +. hubR) bounce 0.0 in
   (b2, fmax hit1 hit2)
 
 -- So many steps.
@@ -505,59 +517,88 @@ fun fromMiddle (size : Int) (x : Int) (y : Int) : Float =
 fun discColour (x : Int) (y : Int) : (Int, Int, Int, Int) = if fromMiddle 32 x y <. 15.5 then white else clear
 fun ringColour (x : Int) (y : Int) : (Int, Int, Int, Int) = let d = fromMiddle 32 x y in if d <. 15.5 and d >. 11.5 then white else clear
 
+-- The cup as the camera sees into it, the camera toward the bottom of the picture: the
+-- white lining of its far side, its dark bottom, and a bright lip round its rim.
+fun cupColour (x : Int) (y : Int) : (Int, Int, Int, Int) =
+  let rim = fromMiddle 64 x y in
+  let dx = toFloat x +. 0.5 -. 32.0 in
+  let dy = toFloat y +. 0.5 -. 50.0 in
+  let toBottom = F.sqrt (dx *. dx +. dy *. dy) in
+  if rim >=. 31.0 then clear
+  else if rim >=. 29.0 then (250, 250, 244, 255)
+  else if toBottom <. 31.0 then (8, 10, 9, 255)
+  else
+    -- Down the lining: lit at the lip, darker deeper.
+    let deep = fclamp 0.0 1.0 ((31.0 -. (toBottom -. 31.0)) /. 31.0) in
+    let v = floor (235.0 -. 150.0 *. deep *. deep) in
+    (v, v, v - 8, 255)
+
 -- An arrow head, its point at the top, to show which way the ground falls.
 fun chevronColour (x : Int) (y : Int) : (Int, Int, Int, Int) =
   let d = F.abs (toFloat x +. 0.5 -. 8.0) in
   let rise = toFloat y -. 2.0 -. d in
   if d <. 7.0 and rise >=. 0.0 and rise <. 3.5 then white else clear
 
--- The letters, three pixels by five.
+-- The letters, five pixels by seven.
 fun letterRows (c : String) : [String] =
   match c with
-  | "A" -> [".w.", "w.w", "www", "w.w", "w.w"]
-  | "B" -> ["ww.", "w.w", "ww.", "w.w", "ww."]
-  | "C" -> [".ww", "w..", "w..", "w..", ".ww"]
-  | "D" -> ["ww.", "w.w", "w.w", "w.w", "ww."]
-  | "E" -> ["www", "w..", "ww.", "w..", "www"]
-  | "F" -> ["www", "w..", "ww.", "w..", "w.."]
-  | "G" -> [".ww", "w..", "w.w", "w.w", ".ww"]
-  | "H" -> ["w.w", "w.w", "www", "w.w", "w.w"]
-  | "I" -> ["www", ".w.", ".w.", ".w.", "www"]
-  | "J" -> ["..w", "..w", "..w", "w.w", ".w."]
-  | "K" -> ["w.w", "w.w", "ww.", "w.w", "w.w"]
-  | "L" -> ["w..", "w..", "w..", "w..", "www"]
-  | "M" -> ["w.w", "www", "www", "w.w", "w.w"]
-  | "N" -> ["ww.", "w.w", "w.w", "w.w", "w.w"]
-  | "O" -> ["www", "w.w", "w.w", "w.w", "www"]
-  | "0" -> ["www", "w.w", "w.w", "w.w", "www"]
-  | "P" -> ["ww.", "w.w", "ww.", "w..", "w.."]
-  | "Q" -> [".w.", "w.w", "w.w", "ww.", ".ww"]
-  | "R" -> ["ww.", "w.w", "ww.", "w.w", "w.w"]
-  | "S" -> [".ww", "w..", ".w.", "..w", "ww."]
-  | "T" -> ["www", ".w.", ".w.", ".w.", ".w."]
-  | "U" -> ["w.w", "w.w", "w.w", "w.w", "www"]
-  | "V" -> ["w.w", "w.w", "w.w", "w.w", ".w."]
-  | "W" -> ["w.w", "w.w", "www", "www", "w.w"]
-  | "X" -> ["w.w", "w.w", ".w.", "w.w", "w.w"]
-  | "Y" -> ["w.w", "w.w", ".w.", ".w.", ".w."]
-  | "Z" -> ["www", "..w", ".w.", "w..", "www"]
-  | "1" -> [".w.", "ww.", ".w.", ".w.", "www"]
-  | "2" -> ["www", "..w", "www", "w..", "www"]
-  | "3" -> ["www", "..w", "www", "..w", "www"]
-  | "4" -> ["w.w", "w.w", "www", "..w", "..w"]
-  | "5" -> ["www", "w..", "www", "..w", "www"]
-  | "6" -> ["www", "w..", "www", "w.w", "www"]
-  | "7" -> ["www", "..w", "..w", "..w", "..w"]
-  | "8" -> ["www", "w.w", "www", "w.w", "www"]
-  | "9" -> ["www", "w.w", "www", "..w", "www"]
-  | "-" -> ["...", "...", "www", "...", "..."]
-  | "+" -> ["...", ".w.", "www", ".w.", "..."]
-  | "!" -> [".w.", ".w.", ".w.", "...", ".w."]
-  | "?" -> ["ww.", "..w", ".w.", "...", ".w."]
-  | ":" -> ["...", ".w.", "...", ".w.", "..."]
-  | "." -> ["...", "...", "...", "...", ".w."]
-  | "," -> ["...", "...", "...", ".w.", "w.."]
+  | "A" -> [".www.", "w...w", "w...w", "wwwww", "w...w", "w...w", "w...w"]
+  | "B" -> ["wwww.", "w...w", "w...w", "wwww.", "w...w", "w...w", "wwww."]
+  | "C" -> [".www.", "w...w", "w....", "w....", "w....", "w...w", ".www."]
+  | "D" -> ["wwww.", "w...w", "w...w", "w...w", "w...w", "w...w", "wwww."]
+  | "E" -> ["wwwww", "w....", "w....", "wwww.", "w....", "w....", "wwwww"]
+  | "F" -> ["wwwww", "w....", "w....", "wwww.", "w....", "w....", "w...."]
+  | "G" -> [".www.", "w...w", "w....", "w.www", "w...w", "w...w", ".wwww"]
+  | "H" -> ["w...w", "w...w", "w...w", "wwwww", "w...w", "w...w", "w...w"]
+  | "I" -> [".www.", "..w..", "..w..", "..w..", "..w..", "..w..", ".www."]
+  | "J" -> ["..www", "...w.", "...w.", "...w.", "...w.", "w..w.", ".ww.."]
+  | "K" -> ["w...w", "w..w.", "w.w..", "ww...", "w.w..", "w..w.", "w...w"]
+  | "L" -> ["w....", "w....", "w....", "w....", "w....", "w....", "wwwww"]
+  | "M" -> ["w...w", "ww.ww", "w.w.w", "w.w.w", "w...w", "w...w", "w...w"]
+  | "N" -> ["w...w", "w...w", "ww..w", "w.w.w", "w..ww", "w...w", "w...w"]
+  | "O" -> [".www.", "w...w", "w...w", "w...w", "w...w", "w...w", ".www."]
+  | "P" -> ["wwww.", "w...w", "w...w", "wwww.", "w....", "w....", "w...."]
+  | "Q" -> [".www.", "w...w", "w...w", "w...w", "w.w.w", "w..w.", ".ww.w"]
+  | "R" -> ["wwww.", "w...w", "w...w", "wwww.", "w.w..", "w..w.", "w...w"]
+  | "S" -> [".wwww", "w....", "w....", ".www.", "....w", "....w", "wwww."]
+  | "T" -> ["wwwww", "..w..", "..w..", "..w..", "..w..", "..w..", "..w.."]
+  | "U" -> ["w...w", "w...w", "w...w", "w...w", "w...w", "w...w", ".www."]
+  | "V" -> ["w...w", "w...w", "w...w", "w...w", "w...w", ".w.w.", "..w.."]
+  | "W" -> ["w...w", "w...w", "w...w", "w.w.w", "w.w.w", "w.w.w", ".w.w."]
+  | "X" -> ["w...w", "w...w", ".w.w.", "..w..", ".w.w.", "w...w", "w...w"]
+  | "Y" -> ["w...w", "w...w", ".w.w.", "..w..", "..w..", "..w..", "..w.."]
+  | "Z" -> ["wwwww", "....w", "...w.", "..w..", ".w...", "w....", "wwwww"]
+  | "0" -> [".www.", "w...w", "w..ww", "w.w.w", "ww..w", "w...w", ".www."]
+  | "1" -> ["..w..", ".ww..", "..w..", "..w..", "..w..", "..w..", ".www."]
+  | "2" -> [".www.", "w...w", "....w", "...w.", "..w..", ".w...", "wwwww"]
+  | "3" -> ["wwwww", "...w.", "..w..", "...w.", "....w", "w...w", ".www."]
+  | "4" -> ["...w.", "..ww.", ".w.w.", "w..w.", "wwwww", "...w.", "...w."]
+  | "5" -> ["wwwww", "w....", "wwww.", "....w", "....w", "w...w", ".www."]
+  | "6" -> ["..ww.", ".w...", "w....", "wwww.", "w...w", "w...w", ".www."]
+  | "7" -> ["wwwww", "....w", "...w.", "..w..", ".w...", ".w...", ".w..."]
+  | "8" -> [".www.", "w...w", "w...w", ".www.", "w...w", "w...w", ".www."]
+  | "9" -> [".www.", "w...w", "w...w", ".wwww", "....w", "...w.", ".ww.."]
+  | "-" -> [".....", ".....", ".....", ".www.", ".....", ".....", "....."]
+  | "+" -> [".....", "..w..", "..w..", "wwwww", "..w..", "..w..", "....."]
+  | "!" -> ["..w..", "..w..", "..w..", "..w..", "..w..", ".....", "..w.."]
+  | "?" -> [".www.", "w...w", "....w", "...w.", "..w..", ".....", "..w.."]
+  | ":" -> [".....", ".ww..", ".ww..", ".....", ".ww..", ".ww..", "....."]
+  | "." -> [".....", ".....", ".....", ".....", ".....", ".ww..", ".ww.."]
+  | "," -> [".....", ".....", ".....", ".....", ".ww..", "..w..", ".w..."]
   | _ -> []
+
+-- A letter's picture: each of its pixels four across, with a clear pixel's width all round
+-- so that nothing at one edge shows at the other, smoothed where it is drawn.
+def letterScale : Int = 4
+
+fun letterPicture (key : String) : [Int] =
+  let cells = map S.chars (letterRows key) in
+  generated (7 * letterScale) (9 * letterScale) (\x y ->
+    let col = x / letterScale - 1 in
+    let row = y / letterScale - 1 in
+    if col < 0 or col > 4 or row < 0 or row > 6 then clear
+    else if C.toString (V.getOr (C.fromCode 46) (V.getOr [] cells row) col) == "w" then white
+    else clear)
 
 def alphabet : String = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-+!?:.,"
 
@@ -612,7 +653,8 @@ fun greens_setup (s : Int) (user : Int) : () ! Process =
   let i5 = seti sys stripesI (M.createImage sys "greens.stripes" 1 8 (generated 1 8 (\x y -> if y % 2 == 0 then (255, 255, 255, 255) else (222, 236, 222, 255))) M.imagePixelated) in
   let i3 = seti sys chevronI (M.createImage sys "greens.chevron" 16 16 (generated 16 16 chevronColour) M.imagePixelated) in
   let letters = M.pointer (M.kept sys glyphsAt) in
-  let i4 = V.forEach (\c -> let key = C.toString c in M.writeInt32At letters (C.code c - 32) (M.createImage sys ("greens.letter." ++ key) 3 5 (drawn (letterRows key) ink) M.imagePixelated)) (S.chars alphabet) in
+  let i4 = V.forEach (\c -> let key = C.toString c in M.writeInt32At letters (C.code c - 32) (M.createImage sys ("greens.letter5." ++ key) (7 * letterScale) (9 * letterScale) (letterPicture key) M.imageLinear)) (S.chars alphabet) in
+  let i6 = seti sys cupI (M.createImage sys "greens.cup" 64 64 (generated 64 64 cupColour) M.imageLinear) in
 
   -- Sounds: the putter's tock, a wall's knock, the cup, the water, and a cheer.
   let w1 = seti sys puttI (M.createSound sys "greens.putt" rate 1 (made 0.12 (\t i -> tone 1350.0 t *. F.exp (0.0 -. t *. 55.0) *. 0.6 +. noise i *. F.exp (0.0 -. t *. 160.0) *. 0.3))) in
@@ -620,10 +662,11 @@ fun greens_setup (s : Int) (user : Int) : () ! Process =
   let w3 = seti sys plopI (M.createSound sys "greens.plop" rate 1 (made 0.4 (\t i -> F.sin (F.tau *. (560.0 *. t -. 700.0 *. t *. t)) *. F.exp (0.0 -. t *. 9.0) *. 0.55 +. (if t >. 0.18 then noise i *. F.exp (0.0 -. (t -. 0.18) *. 30.0) *. 0.25 else 0.0)))) in
   let w4 = seti sys splashI (M.createSound sys "greens.splash" rate 1 (made 0.7 (\t i -> noise i *. fmin 1.0 (t *. 30.0) *. F.exp (0.0 -. t *. 5.0) *. 0.5))) in
   let w5 = seti sys cheerI (M.createSound sys "greens.cheer" rate 1 (made 1.4 (\t i -> noise i *. F.sin (F.pi *. t /. 1.4) *. 0.3))) in
+  let w6 = seti sys bumpI (M.createSound sys "greens.bump" rate 1 (made 0.3 (\t i -> F.sin (F.tau *. (260.0 *. t +. 1500.0 *. t *. t)) *. F.exp (0.0 -. t *. 11.0) *. 0.5))) in
 
   -- The grass round the holes, and the sun.
   let field = M.spawn sys in
-  let f1 = M.insertTransform sys field transform (0.0, -0.2, 0.0) M.unturned (400.0, 1.0, 400.0) in
+  let f1 = M.insertTransform sys field transform (0.0, groundY, 0.0) M.unturned (400.0, 1.0, 400.0) in
   let f2 = M.setMesh sys field (geti sys planeI) in
   let f3 = M.setMaterial sys field (0.05, 0.17, 0.05, 1.0) (0.0, 0.0, 0.0) 0.95 0.0 in
   let sun = M.spawn sys in
@@ -677,40 +720,61 @@ fun build (sys : M.System) (h : Int) : () ! Process =
   let u2 = seti sys builtI h in
   let cube = geti sys cubeI in
   let cylinder = geti sys cylinderI in
+  let sphere = geti sys sphereI in
   let plane = geti sys planeI in
   let green = (0.1, 0.46, 0.13) in
-  -- The green, a slab a fifth of a metre thick, its top at nought, mown in stripes.
+  -- The green, a slab a fifth of a metre thick, its top at nought, mown in stripes, on a
+  -- bank of earth standing up out of the grass.
   let u3 = V.forEach (\r ->
       let (x0, z0, x1, z1) = r in
       let e = piece sys cube ((x0 +. x1) /. 2.0, -0.1, (z0 +. z1) /. 2.0) M.unturned (x1 -. x0, 0.2, z1 -. z0) green 0.9 [0.0, 0.0, 0.0, 0.0] in
+      let bank = piece sys cube ((x0 +. x1) /. 2.0, (groundY -. 0.2) /. 2.0, (z0 +. z1) /. 2.0) M.unturned (x1 -. x0 +. wallT, 0.0 -. 0.2 -. groundY, z1 -. z0 +. wallT) (0.36, 0.23, 0.13) 0.95 [0.0, 0.0, 0.0, 0.0] in
       M.setTextures sys e (geti sys stripesI) 0 0) (floors h) in
-  -- The walls, each a little longer than its length so that corners close.
+  -- The walls, each a little longer than its length so that corners close, down to the
+  -- bank, and capped.
   let u4 = V.forEach (\w ->
       let (ax, az, bx, bz) = w in
       let length = apart (ax, az) (bx, bz) in
-      let e = piece sys cube ((ax +. bx) /. 2.0, wallH /. 2.0, (az +. bz) /. 2.0) (yaw (F.atan2 (bz -. az) (bx -. ax))) (length +. wallT, wallH, wallT) (0.42, 0.22, 0.1) 0.6 [0.0, 0.0, 0.0, 0.0] in
+      let turn = yaw (F.atan2 (bz -. az) (bx -. ax)) in
+      let (mx, mz) = ((ax +. bx) /. 2.0, (az +. bz) /. 2.0) in
+      let e = piece sys cube (mx, (wallH -. 0.2) /. 2.0, mz) turn (length +. wallT, wallH +. 0.2, wallT) (0.5, 0.27, 0.12) 0.6 [0.0, 0.0, 0.0, 0.0] in
+      let cap = piece sys cube (mx, wallH +. 0.02, mz) turn (length +. wallT +. 0.03, 0.04, wallT +. 0.04) (0.93, 0.87, 0.72) 0.5 [0.0, 0.0, 0.0, 0.0] in
       ()) (walls h) in
-  let u5 = V.forEach (\post -> let (x, z, r) = post in let e = piece sys cylinder (x, 0.0, z) M.unturned (r, 0.3, r) (0.85, 0.2, 0.18) 0.5 [0.0, 0.0, 0.0, 0.0] in ()) (posts h) in
+  -- Bumpers: red, capped white, swelling when hit.
+  let u5 = V.forEach (\i ->
+      let (x, z, r) = V.getOr (0.0, 0.0, 0.0) (posts h) i in
+      let e = piece sys cylinder (x, 0.0, z) M.unturned (r, 0.3, r) (0.9, 0.16, 0.14) 0.35 [3.0, toFloat i, r, 0.3] in
+      let cap = piece sys cylinder (x, 0.3, z) M.unturned (r *. 0.8, 0.05, r *. 0.8) (0.97, 0.95, 0.9) 0.3 [3.0, toFloat i, r *. 0.8, 0.05] in
+      let ring = piece sys cylinder (x, 0.0, z) M.unturned (r *. 1.12, 0.06, r *. 1.12) (0.97, 0.95, 0.9) 0.3 [3.0, toFloat i, r *. 1.12, 0.06] in
+      setf sys (bumpedF + i) (0.0 -. 10.0)) (range 0 (len (posts h))) in
   let u6 = V.forEach (\r -> let (x0, z0, x1, z1) = r in let e = piece sys cube ((x0 +. x1) /. 2.0, -0.006, (z0 +. z1) /. 2.0) M.unturned (x1 -. x0, 0.02, z1 -. z0) (0.88, 0.77, 0.52) 1.0 [0.0, 0.0, 0.0, 0.0] in ()) (sand h) in
   let u7 = V.forEach (\r -> let (x0, z0, x1, z1) = r in let e = piece sys cube ((x0 +. x1) /. 2.0, -0.004, (z0 +. z1) /. 2.0) M.unturned (x1 -. x0, 0.02, z1 -. z0) (0.1, 0.36, 0.7) 0.08 [0.0, 0.0, 0.0, 0.0] in ()) (water h) in
-  -- Arrows on tilted ground, a metre apart, pointing the way it falls.
-  let u8 = V.forEach (\sl ->
-      let (x0, z0, x1, z1, ax, az) = sl in
-      let across = floor (x1 -. x0) in
-      let along = floor (z1 -. z0) in
-      V.forEach (\cell ->
-          let x = x0 +. 0.5 +. toFloat (cell % across) in
-          let z = z0 +. 0.5 +. toFloat (cell / across) in
-          let e = piece sys plane (x, 0.004, z) (yaw (F.atan2 az ax)) (0.6, 1.0, 0.6) (0.42, 0.78, 0.36) 0.9 [0.0, 0.0, 0.0, 0.0] in
-          let v1 = M.setTextures sys e (geti sys chevronI) 0 0 in
-          M.setAlphaCutoff sys e 0.5)
-        (range 0 (across * along))) (slopes h) in
+  -- Wind over tilted ground, blowing the way it pushes: arrows drifting along a metre
+  -- apart, and streaks of air going by.
+  let u8 = V.forEach (\k ->
+      let (alongN, acrossN) = windCells h k in
+      let v1 = V.forEach (\cell ->
+          let e = piece sys plane (0.0, -50.0, 0.0) M.unturned (0.6, 1.0, 0.6) (0.5, 0.85, 0.42) 0.9 [6.0, toFloat k, toFloat (cell % alongN), toFloat (cell / alongN)] in
+          let w1 = M.setTextures sys e (geti sys chevronI) 0 0 in
+          let w2 = M.setAlphaCutoff sys e 0.5 in
+          unshadow sys e)
+        (range 0 (alongN * acrossN)) in
+      V.forEach (\j ->
+          let e = piece sys cube (0.0, -50.0, 0.0) M.unturned (0.6, 0.012, 0.03) (1.0, 1.0, 1.0) 0.5 [4.0, toFloat k, frac (toFloat j *. 0.618), (toFloat j +. 0.5) /. toFloat windStreaks] in
+          let w1 = M.setMaterial sys e (0.9, 0.95, 1.0, 1.0) (0.5, 0.55, 0.6) 0.5 0.0 in
+          unshadow sys e)
+        (range 0 windStreaks)) (range 0 (len (slopes h))) in
+  -- Trees round about, clear of the course.
+  let u10 = V.forEach (\t -> let (x, z, size) = t in
+      let trunk = piece sys cylinder (x, groundY, z) M.unturned (0.08 *. size, 0.75 *. size, 0.08 *. size) (0.36, 0.22, 0.12) 0.9 [0.0, 0.0, 0.0, 0.0] in
+      let crown = piece sys sphere (x, groundY +. 1.15 *. size, z) M.unturned (0.6 *. size, 0.7 *. size, 0.6 *. size) (0.08 +. 0.04 *. size, 0.3 +. 0.06 *. size, 0.1) 0.9 [0.0, 0.0, 0.0, 0.0] in
+      ()) (trees h) in
   -- The tee, and the cup with its flag.
   let (tx, tz) = tee h in
   let u9 = piece sys cube (tx, -0.008, tz) M.unturned (1.1, 0.02, 0.7) (0.1, 0.4, 0.15) 0.9 [0.0, 0.0, 0.0, 0.0] in
   let (cx, cz) = cup h in
-  let hole = piece sys plane (cx, 0.006, cz) M.unturned (cupR *. 2.1, 1.0, cupR *. 2.1) (0.02, 0.03, 0.02) 1.0 [0.0, 0.0, 0.0, 0.0] in
-  let v1 = M.setTextures sys hole (geti sys discI) 0 0 in
+  let hole = piece sys plane (cx, 0.006, cz) M.unturned (cupR *. 2.1, 1.0, cupR *. 2.1) (1.0, 1.0, 1.0) 1.0 [5.0, cx, cz, 0.0] in
+  let v1 = M.setTextures sys hole (geti sys cupI) 0 0 in
   let v2 = M.setAlphaCutoff sys hole 0.5 in
   let pole = piece sys cylinder (cx, 0.0, cz) M.unturned (0.018, 1.1, 0.018) (0.95, 0.95, 0.92) 0.4 [0.0, 0.0, 0.0, 0.0] in
   let flag = piece sys cube (cx +. 0.22, 0.95, cz) M.unturned (0.42, 0.26, 0.012) (0.95, 0.85, 0.15) 0.6 [2.0, cx, cz, 0.0] in
@@ -721,6 +785,46 @@ fun build (sys : M.System) (h : Int) : () ! Process =
       let bar = piece sys cube (sx, 0.13, sz) M.unturned (half *. 2.0, 0.24, barT) (0.95, 0.93, 0.88) 0.5 [1.0, toFloat i, 0.0, 0.0] in
       ())
     (range 0 (len (spinners h)))
+
+-- How many drifting arrows a tilted piece of ground has, along the way it pushes and across.
+fun windCells (h : Int) (k : Int) : (Int, Int) =
+  let (along, across, dx, dz, cx, cz) = windWay h k in
+  (max 1 (floor along), max 1 (floor across))
+
+def windStreaks : Int = 9
+
+-- A tilted piece of ground as the wind over it sees it: how long it is the way it pushes,
+-- how wide across, that way, and its middle.
+fun windWay (h : Int) (k : Int) : (Float, Float, Float, Float, Float, Float) =
+  let (x0, z0, x1, z1, ax, az) = V.getOr (0.0, 0.0, 0.0, 0.0, 1.0, 0.0) (slopes h) k in
+  let n = fmax 0.0001 (F.sqrt (ax *. ax +. az *. az)) in
+  let (dx, dz) = (ax /. n, az /. n) in
+  let along = fmax 0.1 (F.abs dx *. (x1 -. x0) +. F.abs dz *. (z1 -. z0)) in
+  let across = fmax 0.1 (F.abs dz *. (x1 -. x0) +. F.abs dx *. (z1 -. z0)) in
+  (along, across, dx, dz, (x0 +. x1) /. 2.0, (z0 +. z1) /. 2.0)
+
+-- How hard a tilted piece of ground pushes.
+fun windStrength (h : Int) (k : Int) : Float =
+  let (x0, z0, x1, z1, ax, az) = V.getOr (0.0, 0.0, 0.0, 0.0, 0.0, 0.0) (slopes h) k in
+  F.sqrt (ax *. ax +. az *. az)
+
+fun frac (x : Float) : Float = x -. toFloat (floor x)
+
+-- Trees on either side of a hole and beyond its cup, a little way off, of sizes that vary.
+fun trees (h : Int) : [(Float, Float, Float)] =
+  let rects = floors h in
+  let x0 = V.foldl (\m r -> let (a, b, c, d) = r in fmin m a) 100.0 rects in
+  let x1 = V.foldl (\m r -> let (a, b, c, d) = r in fmax m c) (-100.0) rects in
+  let z0 = V.foldl (\m r -> let (a, b, c, d) = r in fmin m b) 100.0 rects in
+  let z1 = V.foldl (\m r -> let (a, b, c, d) = r in fmax m d) (-100.0) rects in
+  let rows = floor ((z1 -. z0) /. 2.4) + 1 in
+  let jitter = \i -> (noise (i * 7919 + h * 104729) +. 1.0) /. 2.0 in
+  let sides = concatMap (\i ->
+      let z = z0 +. toFloat i *. 2.4 +. jitter i *. 0.8 in
+      [(x0 -. 1.7 -. jitter (i + 50) *. 1.6, z, 0.8 +. 0.5 *. jitter (i + 90)),
+       (x1 +. 1.7 +. jitter (i + 150) *. 1.6, z, 0.8 +. 0.5 *. jitter (i + 190))]) (range 0 rows) in
+  let beyond = map (\i -> (x0 +. (x1 -. x0) *. (toFloat i +. 0.5) /. 3.0 +. jitter (i + 250) -. 0.5, z0 -. 2.0 -. jitter (i + 290) *. 1.2, 0.9 +. 0.5 *. jitter (i + 330))) (range 0 3) in
+  V.append sides beyond
 
 -- A piece of the hole: a mesh at a place, turned and sized, of a colour.
 fun piece (sys : M.System) (mesh : Int) (at : (Float, Float, Float)) (turn : (Float, Float, Float, Float)) (size : (Float, Float, Float)) (colour : (Float, Float, Float)) (rough : Float) (kind : [Float]) : Int ! Process =
@@ -1101,6 +1205,8 @@ fun showBalls (sys : M.System) : () ! Process =
 -- The bars turning, and the flag stirring.
 fun showCourse (sys : M.System) (now : Float) : () ! Process =
   let h = geti sys holeI in
+  -- Not while the pieces are another hole's, the next not yet built.
+  if geti sys builtI != h then () else
   M.forEachIn2 sys 1 (\entity piece tr ->
     match F.round (M.readFloat32 piece 0) with
     | 1 ->
@@ -1110,7 +1216,45 @@ fun showCourse (sys : M.System) (now : Float) : () ! Process =
         (let a = 0.25 *. F.sin (now *. 2.3) +. 0.08 *. F.sin (now *. 5.1) in
          let u = M.setRotation tr (yaw a) in
          M.setTranslation tr (M.readFloat32 piece 1 +. F.cos a *. 0.22, 0.95, M.readFloat32 piece 2 +. F.sin a *. 0.22))
+    | 3 -> showBumper sys h now piece tr
+    | 4 ->
+        -- A streak of wind: across the ground the way it pushes, longest midway.
+        (let k = F.round (M.readFloat32 piece 1) in
+         let (along, across, dx, dz, cx, cz) = windWay h k in
+         let t = frac (now *. (0.5 +. 2.0 *. windStrength h k) /. along +. M.readFloat32 piece 2) in
+         let u = (t -. 0.5) *. along in
+         let v = (M.readFloat32 piece 3 -. 0.5) *. across in
+         let v1 = M.setRotation tr (yaw (F.atan2 dz dx)) in
+         let v2 = M.setScale tr (0.05 +. 0.8 *. F.sin (F.pi *. t), 0.012, 0.03) in
+         M.setTranslation tr (cx +. dx *. u -. dz *. v, 0.05, cz +. dz *. u +. dx *. v))
+    | 5 ->
+        -- The cup turned so that the camera sees into it.
+        (let (cx, cz) = (M.readFloat32 piece 1, M.readFloat32 piece 2) in
+         M.setRotation tr (yaw (F.atan2 (cz -. getf sys (eyeXF + 2)) (cx -. getf sys eyeXF))))
+    | 6 ->
+        -- An arrow drifting the way the ground pushes, small where it comes in and goes out.
+        (let k = F.round (M.readFloat32 piece 1) in
+         let (along, across, dx, dz, cx, cz) = windWay h k in
+         let (alongN, acrossN) = windCells h k in
+         let step = along /. toFloat alongN in
+         let u = frac ((M.readFloat32 piece 2 +. now *. 0.6 *. windStrength h k) /. toFloat alongN) *. along in
+         let v = ((M.readFloat32 piece 3 +. 0.5) /. toFloat acrossN -. 0.5) *. across in
+         let size = 0.6 *. fclamp 0.0 1.0 (fmin u (along -. u) /. (step *. 0.5)) in
+         let v1 = M.setRotation tr (yaw (F.atan2 dz dx)) in
+         let v2 = M.setScale tr (size, 1.0, size) in
+         M.setTranslation tr (cx +. dx *. (u -. along /. 2.0) -. dz *. v, 0.004, cz +. dz *. (u -. along /. 2.0) +. dx *. v))
     | _ -> ())
+
+-- A bumper swells as a rolling ball hits it, and rings.
+fun showBumper (sys : M.System) (h : Int) (now : Float) (piece : Ptr) (tr : Ptr) : () ! Process =
+  let i = F.round (M.readFloat32 piece 1) in
+  let (px, pz, r) = V.getOr (0.0, 0.0, 0.0) (posts h) i in
+  let (bx, bz, vx, vz) = ballOf sys (geti sys turnI) in
+  let hitting = geti sys phaseI == rolling and apart (bx, bz) (px, pz) <. ballR +. r +. 0.03 and vx *. vx +. vz *. vz >. 0.16 in
+  let u = if hitting and now -. getf sys (bumpedF + i) >. 0.3 then (let v = setf sys (bumpedF + i) now in sound sys bumpI 0.8 (0.9 +. 0.2 *. noise (floor (now *. 1000.0)))) else () in
+  let swell = 1.0 +. 0.35 *. F.exp (0.0 -. (now -. getf sys (bumpedF + i)) *. 12.0) in
+  let size = M.readFloat32 piece 2 *. swell in
+  M.setScale tr (size, M.readFloat32 piece 3, size)
 
 -- The dots along the putt being aimed, longer the harder, and the ring under the ball to
 -- play, in its player's colour.
@@ -1202,9 +1346,11 @@ fun screen (sys : M.System) : () ! Process =
 fun mix (k : Int) (words : String) : Int = V.foldl (\a c -> (a * 31 + C.code c) % 1000000007) ((k * 131 + 7) % 1000000007) (S.chars words)
 
 fun write (sys : M.System) (eye : Int) (line : (Float, Float, Float, (Float, Float, Float), String, Int)) : () ! Process =
-  let (x, y, pixel, colour, words, align) = line in
+  let (x, y, size, colour, words, align) = line in
+  -- `size` is a pixel of a letter five high; these are seven high, as tall.
+  let pixel = size *. 5.0 /. 7.0 in
   let chars = S.chars words in
-  let wide = toFloat (len chars * 4 - 1) *. pixel in
+  let wide = toFloat (len chars * 6 - 1) *. pixel in
   let left =
     match align with
     | 1 -> x -. wide /. 2.0
@@ -1218,7 +1364,7 @@ fun write (sys : M.System) (eye : Int) (line : (Float, Float, Float, (Float, Flo
       else
         let image = M.readInt32At letters (code - 32) in
         if image == 0 then ()
-        else hang sys eye image (left +. (toFloat (i * 4) +. 1.5) *. pixel, y -. 2.5 *. pixel) (3.0 *. pixel, 5.0 *. pixel) hudDepth colour)
+        else hang sys eye image (left +. (toFloat (i * 6) +. 2.5) *. pixel, y -. 3.5 *. pixel) (7.0 *. pixel, 9.0 *. pixel) hudDepth colour)
     (range 0 (len chars))
 
 -- A flat glowing picture (or a plain panel, with no picture) in front of the camera, so
