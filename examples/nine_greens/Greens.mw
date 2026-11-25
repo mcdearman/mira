@@ -7,10 +7,12 @@
 -- Press 1 to 4, or click a number, for how many play. On your turn, hold the left mouse
 -- button on your ball and drag back, away from where it is to go: the dots show the line
 -- and how hard. Let go to putt, or let go where you began to take it back. Held anywhere
--- else and dragged across, the view turns about the hole. Or turn with A and D (or the
--- arrows), hold Space, and let go when the dots are long enough. On a phone, a finger does
--- what the mouse does. A ball in the water goes back to where it was hit from, a stroke
--- added; seven strokes is the most a hole takes.
+-- else and dragged, the view turns about the hole and tilts; so does a drag with the right
+-- button, anywhere. The aim sways while it is held, more the harder the putt: let go when
+-- it is on line. Or turn with A and D (or the arrows), tilt with W and S, hold Space, and
+-- let go when the dots are long enough. On a phone, a finger does what the mouse does. A
+-- ball in the water goes back to where it was hit from, a stroke added; seven strokes is the
+-- most a hole takes.
 --
 -- Everything seen and heard is made here, from code: the holes from boxes and cylinders,
 -- the letters pixel by pixel, the sounds sample by sample.
@@ -31,6 +33,8 @@ def ballR : Float = 0.1
 def cupR : Float = 0.17
 def wallT : Float = 0.16
 def wallH : Float = 0.24
+-- The water's top, a little below the green's.
+def waterY : Float = -0.1
 -- The grass round about, this far below the green.
 def groundY : Float = -0.9
 -- How fast a rolling ball slows, on the green and in sand, in metres a second each second.
@@ -40,7 +44,7 @@ def sandDrag : Float = 4.2
 -- post) sends it back as fast as it came, and kicks it this much harder besides.
 def bounce : Float = 0.88
 def bumperSpring : Float = 1.0
-def bumperKick : Float = 2.2
+def bumperKick : Float = 3.5
 -- The softest and hardest putts, and how far back a drag is for the hardest: across the
 -- screen, in half its height, so that a thumb on a phone reaches it before the edge.
 def slowest : Float = 0.3
@@ -50,6 +54,16 @@ def fullPull : Float = 0.5
 -- how far the view turns for a drag across half the screen's height.
 def grabReach : Float = 0.2
 def turnRate : Float = 0.8
+-- How far the view tilts for a drag up or down half the screen's height, and how far it
+-- may: from nearly level to nearly straight down.
+def tiltRate : Float = 0.7
+def lowest : Float = 0.3
+def highest : Float = 1.4
+-- The aim sways while a putt is held, more the harder it is: so far either way at the
+-- softest and the hardest, and so fast.
+def swaySoft : Float = 0.025
+def swayHard : Float = 0.135
+def swaySpeed : Float = 2.6
 -- A ball over the cup slower than this drops.
 def dropSpeed : Float = 2.6
 def mostStrokes : Int = 7
@@ -90,6 +104,9 @@ def builtI : Int = 9
 def chargingI : Int = 10
 def dotsForI : Int = 11
 def newBestI : Int = 12
+-- What became of the last ball to stop: 0 nothing, 1 in the cup, 2 in the water, 3 off the
+-- course; shown going there while play waits.
+def dropKindI : Int = 13
 -- ...each player's strokes on this hole, and whether they are in...
 def strokesI : Int = 20
 def inI : Int = 24
@@ -135,6 +152,14 @@ def pressSYF : Int = 19
 def ballsF : Int = 20
 -- When each bumper was last hit.
 def bumpedF : Int = 52
+-- How far the view has tilted since it was last moved, where a drag was up the screen, when
+-- and where the last ball went in, and how far down the camera looks.
+def tiltF : Int = 58
+def lastSYF : Int = 59
+def dropF : Int = 60
+def dropXF : Int = 61
+def dropZF : Int = 62
+def pitchF : Int = 63
 
 -- The phases.
 def title : Int = 0
@@ -327,6 +352,9 @@ fun mira_plugin_load (api : Int) (app : Int) : Int32 ! Process =
         M.bindAxis p "turn" "KeyA" "KeyD",
         M.bindAxis p "turn" "ArrowLeft" "ArrowRight",
         M.bindAction p "charge" "Space",
+        -- The view: dragged with the right button held, or tilted with W and S.
+        M.bindAction p "look" "MouseRight",
+        M.bindAxis p "tilt" "KeyS" "KeyW",
         M.bindAction p "on" "Enter",
         M.bindAction p "one" "Digit1",
         M.bindAction p "two" "Digit2",
@@ -413,8 +441,8 @@ def facing : (Float, Float, Float, Float) = (0.5, 0.5, 0.5, 0.5)
 
 -- One step: slowed by the ground, pulled by any tilt, off walls, posts and bars, and into
 -- the cup, the water or off the course. What happened: 0 nothing, 1 in the cup, 2 in the
--- water, 3 off the course; and how hard it hit anything.
-fun step (h : Int) (now : Float) (dt : Float) (ball : (Float, Float, Float, Float)) : ((Float, Float, Float, Float), Int, Float) =
+-- water, 3 off the course; how hard it hit anything; and which bumper it hit, if one.
+fun step (h : Int) (now : Float) (dt : Float) (ball : (Float, Float, Float, Float)) : ((Float, Float, Float, Float), Int, Float, Int) =
   let (x, z, vx, vz) = ball in
   let (sx, sz) = slopeAt h x z in
   let ux = vx +. sx *. dt in
@@ -426,18 +454,23 @@ fun step (h : Int) (now : Float) (dt : Float) (ball : (Float, Float, Float, Floa
   let moved = (x +. ux *. k *. dt, z +. uz *. k *. dt, ux *. k, uz *. k) in
   let still = \px pz -> (0.0, 0.0) in
   let walled = offAll (moved, 0.0) (walls h) (\b w -> off b w still (ballR +. wallT /. 2.0) bounce 0.0) in
-  let posted = offAll walled (posts h) (\b post -> let (px, pz, r) = post in off b (px, pz, px, pz) still (ballR +. r) bumperSpring bumperKick) in
+  let (posted, bumped) = V.foldl (\so i ->
+      let (sofar, found) = so in
+      let (b, most) = sofar in
+      let (px, pz, r) = V.getOr (0.0, 0.0, 0.0) (posts h) i in
+      let (nb, hit) = off b (px, pz, px, pz) still (ballR +. r) bumperSpring bumperKick in
+      ((nb, fmax hit most), if hit >. 0.0 then i else found)) (walled, 0 - 1) (range 0 (len (posts h))) in
   let (turned, hit) = offAll posted (spinners h) (\b sp -> offSpinner b sp now) in
   let (fx, fz, fvx, fvz) = turned in
   let (cx, cz) = cup h in
   let toCup = apart (fx, fz) (cx, cz) in
   let fast = F.sqrt (fvx *. fvx +. fvz *. fvz) in
-  if toCup <. cupR and fast <. dropSpeed then ((cx, cz, 0.0, 0.0), 1, hit)
-  else if inside (water h) fx fz then (turned, 2, hit)
-  else if not (inside (floors h) fx fz) then (turned, 3, hit)
+  if toCup <. cupR and fast <. dropSpeed then ((cx, cz, 0.0, 0.0), 1, hit, bumped)
+  else if inside (water h) fx fz then (turned, 2, hit, bumped)
+  else if not (inside (floors h) fx fz) then (turned, 3, hit, bumped)
   -- Too fast to drop: over the lip, slowed and drawn a little toward the middle.
-  else if toCup <. cupR then ((fx, fz, fvx *. 0.97 +. (cx -. fx) *. 0.5, fvz *. 0.97 +. (cz -. fz) *. 0.5), 0, hit)
-  else (turned, 0, hit)
+  else if toCup <. cupR then ((fx, fz, fvx *. 0.97 +. (cx -. fx) *. 0.5, fvz *. 0.97 +. (cz -. fz) *. 0.5), 0, hit, bumped)
+  else (turned, 0, hit, bumped)
 
 fun slopeAt (h : Int) (x : Float) (z : Float) : (Float, Float) =
   match V.find (\s -> let (x0, z0, x1, z1, ax, az) = s in inside [(x0, z0, x1, z1)] x z) (slopes h) with
@@ -487,12 +520,13 @@ fun offSpinner (ball : (Float, Float, Float, Float)) (sp : (Float, Float, Float,
   (b2, fmax hit1 hit2)
 
 -- So many steps.
-fun steps (h : Int) (now : Float) (dt : Float) (n : Int) (ball : (Float, Float, Float, Float)) (most : Float) : ((Float, Float, Float, Float), Int, Float) =
-  if n <= 0 then (ball, 0, most)
+fun steps (h : Int) (now : Float) (dt : Float) (n : Int) (ball : (Float, Float, Float, Float)) (most : Float) (bumpedSoFar : Int) : ((Float, Float, Float, Float), Int, Float, Int) =
+  if n <= 0 then (ball, 0, most, bumpedSoFar)
   else
-    let (next, event, hit) = step h now dt ball in
+    let (next, event, hit, bumped) = step h now dt ball in
     let harder = fmax hit most in
-    if event != 0 then (next, event, harder) else steps h (now +. dt) dt (n - 1) next harder
+    let anyBumped = if bumped >= 0 then bumped else bumpedSoFar in
+    if event != 0 then (next, event, harder, anyBumped) else steps h (now +. dt) dt (n - 1) next harder anyBumped
 
 -- ---------------------------------------------------------------------------------------
 -- Pictures, worked out from code
@@ -680,6 +714,7 @@ fun greens_setup (s : Int) (user : Int) : () ! Process =
   let c2 = M.setCameraWith sys eye fov 0.05 True in
   let c3 = M.insertFloats sys eye (M.kept sys eyeAt) [0.0] in
   let c4 = setf sys (eyeXF + 1) 14.0 in
+  let c6 = setf sys pitchF pitch in
   let c5 = setf sys (lookXF + 2) (-0.02) in
 
   -- The four balls, kept out of sight until played, and the aiming dots and ring.
@@ -692,19 +727,22 @@ fun greens_setup (s : Int) (user : Int) : () ! Process =
       M.insertFloats sys entity (M.kept sys ballAt) [toFloat p]) (range 0 4) in
   let d = V.forEach (\i ->
       let entity = M.spawn sys in
-      let ringed = i == dots in
+      -- After the ring: a splash, six drops and two rings.
+      let ringed = i == dots or i > dots + 6 in
       let v1 = M.insertTransform sys entity transform (0.0, -50.0, 0.0) M.unturned (0.05, 0.05, 0.05) in
       let v2 = M.setMesh sys entity (if ringed then geti sys planeI else geti sys sphereI) in
       let v3 = M.setMaterial sys entity (0.0, 0.0, 0.0, 1.0) (1.4, 1.4, 1.4) 1.0 0.0 in
       let v4 = if ringed then (let w = M.setTextures sys entity (geti sys ringI) 0 0 in M.setAlphaCutoff sys entity 0.5) else () in
       let v5 = unshadow sys entity in
-      M.insertFloats sys entity (M.kept sys dotAt) [toFloat i]) (range 0 (dots + 1)) in
+      M.insertFloats sys entity (M.kept sys dotAt) [toFloat i]) (range 0 (dots + 9)) in
 
   -- The best round played alone, so far.
   let best = (match M.readGameText sys game "best.txt" with | Just text -> (match S.toInt (S.trim text) with | Just n -> n | None -> 0) | None -> 0) in
   let r1 = seti sys bestI best in
   -- Whether the game plays itself, for trying it unwatched.
-  M.defineTruth sys "greens.autoplay" False
+  let t1 = M.defineTruth sys "greens.autoplay" False in
+  -- Whether the aim is held still, not swaying, for trying putts exactly.
+  M.defineTruth sys "greens.steady" False
 
 fun unshadow (sys : M.System) (entity : Int) : () ! Process =
   let marker = M.kept sys unshadowedAt in
@@ -727,9 +765,18 @@ fun build (sys : M.System) (h : Int) : () ! Process =
   -- bank of earth standing up out of the grass.
   let u3 = V.forEach (\r ->
       let (x0, z0, x1, z1) = r in
-      let e = piece sys cube ((x0 +. x1) /. 2.0, -0.1, (z0 +. z1) /. 2.0) M.unturned (x1 -. x0, 0.2, z1 -. z0) green 0.9 [0.0, 0.0, 0.0, 0.0] in
       let bank = piece sys cube ((x0 +. x1) /. 2.0, (groundY -. 0.2) /. 2.0, (z0 +. z1) /. 2.0) M.unturned (x1 -. x0 +. wallT, 0.0 -. 0.2 -. groundY, z1 -. z0 +. wallT) (0.36, 0.23, 0.13) 0.95 [0.0, 0.0, 0.0, 0.0] in
-      M.setTextures sys e (geti sys stripesI) 0 0) (floors h) in
+      ()) (floors h) in
+  -- The green round the water, which lies lower: mown in stripes half a metre wide, the
+  -- same wherever the green is cut.
+  let (gr, gg, gb) = green in
+  let u3b = V.forEach (\r ->
+      let (x0, z0, x1, z1) = r in
+      let e = piece sys cube ((x0 +. x1) /. 2.0, -0.1, (z0 +. z1) /. 2.0) M.unturned (x1 -. x0, 0.2, z1 -. z0) (gr *. 0.87, gg *. 0.92, gb *. 0.87) 0.9 [0.0, 0.0, 0.0, 0.0] in
+      V.forEach (\band ->
+          let (a, b) = band in
+          let s = piece sys plane ((a +. b) /. 2.0, 0.0015, (z0 +. z1) /. 2.0) M.unturned (b -. a, 1.0, z1 -. z0) green 0.9 [0.0, 0.0, 0.0, 0.0] in
+          ()) (mown x0 x1)) (without (floors h) (water h)) in
   -- The walls, each a little longer than its length so that corners close, down to the
   -- bank, and capped.
   let u4 = V.forEach (\w ->
@@ -748,7 +795,24 @@ fun build (sys : M.System) (h : Int) : () ! Process =
       let ring = piece sys cylinder (x, 0.0, z) M.unturned (r *. 1.12, 0.06, r *. 1.12) (0.97, 0.95, 0.9) 0.3 [3.0, toFloat i, r *. 1.12, 0.06] in
       setf sys (bumpedF + i) (0.0 -. 10.0)) (range 0 (len (posts h))) in
   let u6 = V.forEach (\r -> let (x0, z0, x1, z1) = r in let e = piece sys cube ((x0 +. x1) /. 2.0, -0.006, (z0 +. z1) /. 2.0) M.unturned (x1 -. x0, 0.02, z1 -. z0) (0.88, 0.77, 0.52) 1.0 [0.0, 0.0, 0.0, 0.0] in ()) (sand h) in
-  let u7 = V.forEach (\r -> let (x0, z0, x1, z1) = r in let e = piece sys cube ((x0 +. x1) /. 2.0, -0.004, (z0 +. z1) /. 2.0) M.unturned (x1 -. x0, 0.02, z1 -. z0) (0.1, 0.36, 0.7) 0.08 [0.0, 0.0, 0.0, 0.0] in ()) (water h) in
+  -- Water: deep and glassy, white along its banks, rippling and glinting.
+  let u7 = V.forEach (\k ->
+      let (x0, z0, x1, z1) = V.getOr (0.0, 0.0, 0.0, 0.0) (water h) k in
+      let (mx, mz) = ((x0 +. x1) /. 2.0, (z0 +. z1) /. 2.0) in
+      let body = piece sys cube (mx, (waterY -. 0.2) /. 2.0, mz) M.unturned (x1 -. x0, waterY +. 0.2, z1 -. z0) (0.12, 0.45, 0.7) 0.05 [0.0, 0.0, 0.0, 0.0] in
+      -- Deeper, darker, away from the banks.
+      let deep = piece sys cube (mx, waterY +. 0.0005, mz) M.unturned (fmax 0.05 (x1 -. x0 -. 0.3), 0.002, fmax 0.05 (z1 -. z0 -. 0.3)) (0.03, 0.2, 0.46) 0.05 [0.0, 0.0, 0.0, 0.0] in
+      let v0 = unshadow sys deep in
+      let foam = [(mx, z0, x1 -. x0, 0.05), (mx, z1, x1 -. x0, 0.05), (x0, mz, 0.05, z1 -. z0), (x1, mz, 0.05, z1 -. z0)] in
+      let v1 = V.forEach (\f -> let (fx, fz, w, d) = f in let e = piece sys cube (fx, waterY, fz) M.unturned (w, 0.01, d) (0.8, 0.92, 1.0) 0.5 [0.0, 0.0, 0.0, 0.0] in unshadow sys e) foam in
+      let v2 = V.forEach (\j ->
+          let e = piece sys plane (0.0, -50.0, 0.0) M.unturned (0.3, 1.0, 0.3) (0.4, 0.68, 0.92) 0.2 [7.0, toFloat k, toFloat j, 0.0] in
+          let w1 = M.setTextures sys e (geti sys ringI) 0 0 in
+          let w2 = M.setAlphaCutoff sys e 0.5 in
+          unshadow sys e) (range 0 ripples) in
+      V.forEach (\j ->
+          let e = piece sys cube (0.0, -50.0, 0.0) M.unturned (0.4, 0.008, 0.035) (0.75, 0.9, 1.0) 0.2 [8.0, toFloat k, toFloat j, 0.0] in
+          unshadow sys e) (range 0 glints)) (range 0 (len (water h))) in
   -- Wind over tilted ground, blowing the way it pushes: arrows drifting along a metre
   -- apart, and streaks of air going by.
   let u8 = V.forEach (\k ->
@@ -771,7 +835,7 @@ fun build (sys : M.System) (h : Int) : () ! Process =
       ()) (trees h) in
   -- The tee, and the cup with its flag.
   let (tx, tz) = tee h in
-  let u9 = piece sys cube (tx, -0.008, tz) M.unturned (1.1, 0.02, 0.7) (0.1, 0.4, 0.15) 0.9 [0.0, 0.0, 0.0, 0.0] in
+  let u9 = piece sys cube (tx, -0.006, tz) M.unturned (1.1, 0.02, 0.7) (0.1, 0.4, 0.15) 0.9 [0.0, 0.0, 0.0, 0.0] in
   let (cx, cz) = cup h in
   let hole = piece sys plane (cx, 0.006, cz) M.unturned (cupR *. 2.1, 1.0, cupR *. 2.1) (1.0, 1.0, 1.0) 1.0 [5.0, cx, cz, 0.0] in
   let v1 = M.setTextures sys hole (geti sys cupI) 0 0 in
@@ -785,6 +849,29 @@ fun build (sys : M.System) (h : Int) : () ! Process =
       let bar = piece sys cube (sx, 0.13, sz) M.unturned (half *. 2.0, 0.24, barT) (0.95, 0.93, 0.88) 0.5 [1.0, toFloat i, 0.0, 0.0] in
       ())
     (range 0 (len (spinners h)))
+
+-- Rectangles with others taken out of them: what is left, in rectangles.
+fun without (rects : [(Float, Float, Float, Float)]) (holes : [(Float, Float, Float, Float)]) : [(Float, Float, Float, Float)] =
+  V.foldl (\left hole -> concatMap (\r -> cut r hole) left) rects holes
+
+fun cut (r : (Float, Float, Float, Float)) (hole : (Float, Float, Float, Float)) : [(Float, Float, Float, Float)] =
+  let (x0, z0, x1, z1) = r in
+  let (a0, b0, a1, b1) = hole in
+  let (ix0, iz0, ix1, iz1) = (fmax x0 a0, fmax z0 b0, fmin x1 a1, fmin z1 b1) in
+  if ix0 >=. ix1 or iz0 >=. iz1 then [r]
+  else V.filter (\q -> let (q0, w0, q1, w1) = q in q1 -. q0 >. 0.001 and w1 -. w0 >. 0.001)
+    [(x0, z0, x1, iz0), (x0, iz1, x1, z1), (x0, iz0, ix0, iz1), (ix1, iz0, x1, iz1)]
+
+-- The light stripes of mown green between x0 and x1: every other half metre.
+fun mown (x0 : Float) (x1 : Float) : [(Float, Float)] =
+  let first = floor (x0 /. 0.5) - 1 in
+  let last = floor (x1 /. 0.5) + 1 in
+  V.filter (\band -> let (a, b) = band in b -. a >. 0.001)
+    (map (\k -> (fmax x0 (toFloat k *. 0.5), fmin x1 (toFloat k *. 0.5 +. 0.5)))
+      (V.filter (\k -> k % 2 == 0) (range first (last + 1))))
+
+def ripples : Int = 5
+def glints : Int = 7
 
 -- How many drifting arrows a tilted piece of ground has, along the way it pushes and across.
 fun windCells (h : Int) (k : Int) : (Int, Int) =
@@ -861,7 +948,7 @@ fun greens_play (s : Int) (user : Int) : () ! Process =
     | 5 -> if timer <. 0.0 or goOn sys auto then toTitle sys else ()
     | _ -> ()
   in
-  let u5 = showBalls sys in
+  let u5 = showBalls sys now in
   let u6 = showCourse sys now in
   let u7 = showDots sys now in
   let u8 = moveEye sys dt in
@@ -944,6 +1031,7 @@ fun startTurn (sys : M.System) (p : Int) : () ! Process =
   let u4 = setf sys chargeF 0.0 in
   let u5 = seti sys aimingI 0 in
   let u6 = seti sys chargingI 0 in
+  let u7 = seti sys dropKindI 0 in
   begin sys aiming 0.8
 
 -- A turn being aimed: the ball held and dragged back with the mouse or a finger, or turned
@@ -954,13 +1042,20 @@ fun onAim (sys : M.System) (dt : Float) (auto : Bool) : () ! Process =
   else
     let held = M.actionHeld sys "aim" in
     let holding = geti sys aimingI in
-    if M.actionPressed sys "aim" then press sys p
+    if M.actionPressed sys "look" then beginView sys 3
+    else if M.actionPressed sys "aim" then press sys p
     else if holding == 1 and held then drag sys
     else if holding == 1 then
       (let u = seti sys aimingI 0 in
-       if getf sys powerF >=. 0.04 then putt sys p (getf sys angleF) (getf sys powerF) else setf sys powerF 0.0)
-    else if holding == 2 then turnView sys held
+       if getf sys powerF >=. 0.04 then putt sys p (getf sys angleF +. sway sys) (getf sys powerF) else setf sys powerF 0.0)
+    else if holding >= 2 then turnView sys
     else keys sys dt p
+
+-- How far the aim has swayed from where it is held, now: the putt goes where it points when
+-- it is let go.
+fun sway (sys : M.System) : Float ! Process =
+  if M.signalIsTrue sys "greens.steady" then 0.0
+  else (swaySoft +. (swayHard -. swaySoft) *. getf sys powerF) *. F.sin (getf sys nowF *. swaySpeed)
 
 -- Pressed: on the ball to play, it is taken hold of; anywhere else, the view.
 fun press (sys : M.System) (p : Int) : () ! Process =
@@ -975,10 +1070,19 @@ fun press (sys : M.System) (p : Int) : () ! Process =
          let u4 = setf sys pressSXF sx in
          let u5 = setf sys pressSYF sy in
          setf sys powerF 0.0)
-      else
-        (let u1 = seti sys aimingI 2 in
-         setf sys lastSXF sx)
+      else viewFrom sys 2 sx sy
   | None -> ()
+
+-- The view taken hold of, by the left button or a finger (2) or the right button (3).
+fun beginView (sys : M.System) (mode : Int) : () ! Process =
+  match M.pointerOnGround sys ballR with
+  | Just (x, y, z) -> (let (sx, sy) = onScreen sys (x, y, z) in viewFrom sys mode sx sy)
+  | None -> ()
+
+fun viewFrom (sys : M.System) (mode : Int) (sx : Float) (sy : Float) : () ! Process =
+  let u1 = seti sys aimingI mode in
+  let u2 = setf sys lastSXF sx in
+  setf sys lastSYF sy
 
 -- The drag so far: back from where it began, the way the ball will go on the green, and
 -- how hard by how far across the screen.
@@ -994,19 +1098,16 @@ fun drag (sys : M.System) : () ! Process =
 
 -- While a ball rolls, the view can be turned too.
 fun onLook (sys : M.System) : () ! Process =
-  if M.actionPressed sys "aim" then
-    (match M.pointerOnGround sys ballR with
-     | Just (x, y, z) ->
-         (let (sx, sy) = onScreen sys (x, y, z) in
-          let u = seti sys aimingI 2 in
-          setf sys lastSXF sx)
-     | None -> ())
-  else if geti sys aimingI == 2 then turnView sys (M.actionHeld sys "aim")
+  if M.actionPressed sys "look" then beginView sys 3
+  else if M.actionPressed sys "aim" then beginView sys 2
+  else if geti sys aimingI >= 2 then turnView sys
   else ()
 
 -- The view turned about the hole as far as the pointer has gone across the screen since
--- the frame before: the ground under it goes with it.
-fun turnView (sys : M.System) (held : Bool) : () ! Process =
+-- the frame before, and tilted as far as it has gone up or down it: the ground under it
+-- goes with it. Until the button or finger holding it lets go.
+fun turnView (sys : M.System) : () ! Process =
+  let held = if geti sys aimingI == 3 then M.actionHeld sys "look" else M.actionHeld sys "aim" in
   if not held then seti sys aimingI 0
   else
     match M.pointerOnGround sys ballR with
@@ -1015,8 +1116,17 @@ fun turnView (sys : M.System) (held : Bool) : () ! Process =
         let turn = (getf sys lastSXF -. sx) *. turnRate in
         let u1 = setf sys lastSXF sx in
         let u2 = setf sys yawF (getf sys yawF +. turn) in
-        setf sys turnF (getf sys turnF +. turn)
+        let u3 = setf sys turnF (getf sys turnF +. turn) in
+        let u4 = tiltBy sys ((getf sys lastSYF -. sy) *. tiltRate) in
+        setf sys lastSYF sy
     | None -> ()
+
+-- The camera looking further down (or less far), within bounds.
+fun tiltBy (sys : M.System) (by : Float) : () ! Process =
+  let was = getf sys pitchF in
+  let now = fclamp lowest highest (was +. by) in
+  let u = setf sys pitchF now in
+  setf sys tiltF (getf sys tiltF +. now -. was)
 
 -- Where a point is on the screen, as the camera sees it now: across and up from the
 -- middle, in half the screen's height.
@@ -1038,6 +1148,7 @@ fun onScreen (sys : M.System) (at : (Float, Float, Float)) : (Float, Float) ! Pr
 -- putt goes when it is let go.
 fun keys (sys : M.System) (dt : Float) (p : Int) : () ! Process =
   let u1 = setf sys angleF (getf sys angleF +. M.actionValue sys "turn" *. 1.5 *. dt) in
+  let u0 = tiltBy sys (M.actionValue sys "tilt" *. 0.9 *. dt) in
   let held = M.actionHeld sys "charge" in
   if held then
     (let charge = getf sys chargeF +. dt /. 1.3 in
@@ -1048,7 +1159,7 @@ fun keys (sys : M.System) (dt : Float) (p : Int) : () ! Process =
   else if geti sys chargingI == 1 then
     (let u2 = seti sys chargingI 0 in
      let u3 = setf sys chargeF 0.0 in
-     if getf sys powerF >=. 0.04 then putt sys p (getf sys angleF) (getf sys powerF) else setf sys powerF 0.0)
+     if getf sys powerF >=. 0.04 then putt sys p (getf sys angleF +. sway sys) (getf sys powerF) else setf sys powerF 0.0)
   else ()
 
 -- Playing itself: at the hole, or the way round to it, hard enough to get a little past.
@@ -1077,9 +1188,13 @@ fun onRoll (sys : M.System) (dt : Float) (now : Float) : () ! Process =
   let (x, z, vx, vz) = ball in
   let speed = F.sqrt (vx *. vx +. vz *. vz) in
   let n = max 1 (min 24 (F.ceil (speed *. dt /. 0.025))) in
-  let (next, event, hit) = steps h (now -. dt) (dt /. toFloat n) n ball 0.0 in
+  let (next, event, hit, bumped) = steps h (now -. dt) (dt /. toFloat n) n ball 0.0 (0 - 1) in
   let u1 = setBall sys p next in
-  let u2 = if hit >. 0.35 then sound sys clackI (fmin 1.0 (hit /. 4.0)) (0.9 +. 0.2 *. fmin 1.0 (hit /. 5.0)) else () in
+  -- A bumper rings, and swells; anything else knocks.
+  let u2 =
+    if bumped >= 0 then (let v = setf sys (bumpedF + bumped) now in sound sys bumpI 1.0 (0.92 +. 0.16 *. F.abs (noise (floor (now *. 1000.0)))))
+    else if hit >. 0.35 then sound sys clackI (fmin 1.0 (hit /. 4.0)) (0.9 +. 0.2 *. fmin 1.0 (hit /. 5.0))
+    else () in
   let rolled = getf sys rollF +. dt in
   let u3 = setf sys rollF rolled in
   let (nx, nz, nvx, nvz) = next in
@@ -1090,6 +1205,8 @@ fun onRoll (sys : M.System) (dt : Float) (now : Float) : () ! Process =
   | _ -> if (nvx == 0.0 and nvz == 0.0) or rolled >. 30.0 then stopped sys p else ()
 
 fun holed (sys : M.System) (p : Int) : () ! Process =
+  let (x, z, vx, vz) = ballOf sys p in
+  let d = dropping sys 1 x z in
   let strokes = geti sys (strokesI + p) in
   let u1 = seti sys (inI + p) 1 in
   let u2 = seti sys (scoresI + p * holes + geti sys holeI) strokes in
@@ -1100,12 +1217,20 @@ fun holed (sys : M.System) (p : Int) : () ! Process =
 
 -- In the water or off the course: back to where it was hit from, a stroke added.
 fun lost (sys : M.System) (p : Int) (why : Int) : () ! Process =
+  let (x, z, vx, vz) = ballOf sys p in
+  let d = dropping sys why x z in
   let (fx, fz) = fromOf sys p in
   let u1 = setBall sys p (fx, fz, 0.0, 0.0) in
   let u2 = seti sys (strokesI + p) (geti sys (strokesI + p) + 1) in
   let u3 = if why == 2 then sound sys splashI 0.7 1.0 else sound sys clackI 0.5 0.7 in
   let u4 = say sys why 1.5 in
   if geti sys (strokesI + p) >= mostStrokes then pickUp sys p else begin sys pause 1.5
+
+fun dropping (sys : M.System) (kind : Int) (x : Float) (z : Float) : () ! Process =
+  let u1 = seti sys dropKindI kind in
+  let u2 = setf sys dropF (getf sys nowF) in
+  let u3 = setf sys dropXF x in
+  setf sys dropZF z
 
 fun stopped (sys : M.System) (p : Int) : () ! Process =
   let (x, z, vx, vz) = ballOf sys p in
@@ -1193,14 +1318,24 @@ fun winner (sys : M.System) : String ! Process =
 -- What is seen
 
 -- The balls where they are; one in the cup, or not played, out of sight.
-fun showBalls (sys : M.System) : () ! Process =
+fun showBalls (sys : M.System) (now : Float) : () ! Process =
   let phase = geti sys phaseI in
   let n = geti sys playersI in
+  let kind = geti sys dropKindI in
   M.forEachIn2 sys 0 (\entity which tr ->
     let p = F.round (M.readFloat32 which 0) in
     let (x, z, vx, vz) = ballOf sys p in
-    let shown = phase != title and p < n and geti sys (inI + p) == 0 in
-    M.setTranslation tr (if shown then (x, ballR, z) else (0.0, -50.0, 0.0)))
+    let going = p == geti sys turnI and kind != 0 and phase == pause in
+    let shown = phase != title and p < n and (geti sys (inI + p) == 0 or going) in
+    M.setTranslation tr (if not shown then (0.0, -50.0, 0.0) else if going then goingIn sys kind (now -. getf sys dropF) else (x, ballR, z)))
+
+-- The last ball going where it went: down into the cup, under the water, or off the bank.
+fun goingIn (sys : M.System) (kind : Int) (t : Float) : (Float, Float, Float) ! Process =
+  let (x, z) = (getf sys dropXF, getf sys dropZF) in
+  match kind with
+  | 1 -> (x, ballR -. 0.36 *. fmin 1.0 (t *. t /. 0.1), z)
+  | 2 -> (x, ballR -. 0.45 *. fmin 1.0 (t /. 0.6), z)
+  | _ -> (x, fmax (groundY +. ballR) (ballR -. 4.9 *. t *. t), z)
 
 -- The bars turning, and the flag stirring.
 fun showCourse (sys : M.System) (now : Float) : () ! Process =
@@ -1243,16 +1378,35 @@ fun showCourse (sys : M.System) (now : Float) : () ! Process =
          let v1 = M.setRotation tr (yaw (F.atan2 dz dx)) in
          let v2 = M.setScale tr (size, 1.0, size) in
          M.setTranslation tr (cx +. dx *. (u -. along /. 2.0) -. dz *. v, 0.004, cz +. dz *. (u -. along /. 2.0) +. dx *. v))
+    | 7 ->
+        -- A ripple: spreading from somewhere new on the water each time round.
+        (let k = F.round (M.readFloat32 piece 1) in
+         let j = F.round (M.readFloat32 piece 2) in
+         let (x0, z0, x1, z1) = V.getOr (0.0, 0.0, 0.0, 0.0) (water h) k in
+         let clock = now /. 2.2 +. toFloat j /. toFloat ripples in
+         let round = floor clock in
+         let t = frac clock in
+         let at = \salt span -> 0.2 +. (noise (round * 7919 + j * 131 + k * 17 + salt) +. 1.0) /. 2.0 *. fmax 0.0 (span -. 0.4) in
+         let size = 0.08 +. 0.7 *. t in
+         let v1 = M.setScale tr (size, 1.0, size) in
+         M.setTranslation tr (if t <. 0.8 then (x0 +. at 0 (x1 -. x0), waterY +. 0.003, z0 +. at 5003 (z1 -. z0)) else (0.0, -50.0, 0.0)))
+    | 8 ->
+        -- A glint of light on the water, drifting and swelling.
+        (let k = F.round (M.readFloat32 piece 1) in
+         let j = F.round (M.readFloat32 piece 2) in
+         let (x0, z0, x1, z1) = V.getOr (0.0, 0.0, 0.0, 0.0) (water h) k in
+         let t = frac (now *. 0.12 +. toFloat j *. 0.381) in
+         let x = x0 +. 0.15 +. t *. fmax 0.0 (x1 -. x0 -. 0.3) in
+         let z = z0 +. (toFloat j +. 0.5) /. toFloat glints *. (z1 -. z0) +. 0.08 *. F.sin (now *. 1.3 +. toFloat j) in
+         let v1 = M.setScale tr (0.05 +. 0.35 *. F.sin (F.pi *. t), 0.008, 0.035) in
+         M.setTranslation tr (x, waterY +. 0.004, z))
     | _ -> ())
 
--- A bumper swells as a rolling ball hits it, and rings.
+-- A bumper swells when a rolling ball has hit it.
 fun showBumper (sys : M.System) (h : Int) (now : Float) (piece : Ptr) (tr : Ptr) : () ! Process =
   let i = F.round (M.readFloat32 piece 1) in
   let (px, pz, r) = V.getOr (0.0, 0.0, 0.0) (posts h) i in
-  let (bx, bz, vx, vz) = ballOf sys (geti sys turnI) in
-  let hitting = geti sys phaseI == rolling and apart (bx, bz) (px, pz) <. ballR +. r +. 0.03 and vx *. vx +. vz *. vz >. 0.16 in
-  let u = if hitting and now -. getf sys (bumpedF + i) >. 0.3 then (let v = setf sys (bumpedF + i) now in sound sys bumpI 0.8 (0.9 +. 0.2 *. noise (floor (now *. 1000.0)))) else () in
-  let swell = 1.0 +. 0.35 *. F.exp (0.0 -. (now -. getf sys (bumpedF + i)) *. 12.0) in
+  let swell = 1.0 +. 0.5 *. F.exp (0.0 -. (now -. getf sys (bumpedF + i)) *. 10.0) in
   let size = M.readFloat32 piece 2 *. swell in
   M.setScale tr (size, M.readFloat32 piece 3, size)
 
@@ -1262,9 +1416,11 @@ fun showDots (sys : M.System) (now : Float) : () ! Process =
   let phase = geti sys phaseI in
   let p = geti sys turnI in
   let (bx, bz) = spotOf sys p in
-  let a = getf sys angleF in
+  let a = getf sys angleF +. sway sys in
   let power = getf sys powerF in
   let reach = 0.3 +. 2.4 *. fmax 0.12 power in
+  let splashing = geti sys dropKindI == 2 and phase == pause in
+  let t = now -. getf sys dropF in
   let aimed = phase == aiming and not (M.signalIsTrue sys "greens.autoplay") in
   let recolour = geti sys dotsForI != p + 1 in
   let u = seti sys dotsForI (p + 1) in
@@ -1277,11 +1433,27 @@ fun showDots (sys : M.System) (now : Float) : () ! Process =
        let size = 0.44 +. 0.05 *. F.sin (now *. 5.0) in
        let v2 = M.setScale tr (size, 1.0, size) in
        M.setTranslation tr (if phase == aiming or phase == rolling then (bx, 0.012, bz) else (0.0, -50.0, 0.0)))
+    else if i > dots then splash sys (i - dots - 1) splashing t tr
     else
       (let along = 0.18 +. reach *. toFloat (i + 1) /. toFloat dots in
        let size = if i == dots - 1 then 0.055 else 0.032 in
        let v2 = M.setScale tr (size, size, size) in
        M.setTranslation tr (if aimed then (bx +. F.cos a *. along, ballR, bz +. F.sin a *. along) else (0.0, -50.0, 0.0))))
+
+-- A splash where a ball went into the water: drops thrown up and out, and rings spreading.
+fun splash (sys : M.System) (j : Int) (on : Bool) (t : Float) (tr : Ptr) : () ! Process =
+  let (x, z) = (getf sys dropXF, getf sys dropZF) in
+  if j < 6 then
+    (let a = toFloat j *. F.tau /. 6.0 +. 0.4 in
+     let out = 0.8 *. t in
+     let y = waterY +. 2.6 *. t -. 4.9 *. t *. t in
+     let v = M.setScale tr (0.05, 0.05, 0.05) in
+     M.setTranslation tr (if on and y >. waterY then (x +. F.cos a *. out, y, z +. F.sin a *. out) else (0.0, -50.0, 0.0)))
+  else
+    (let since = t -. toFloat (j - 6) *. 0.18 in
+     let size = 0.2 +. 1.1 *. since in
+     let v = M.setScale tr (size, 1.0, size) in
+     M.setTranslation tr (if on and since >. 0.0 and since <. 0.8 then (x, waterY +. 0.004, z) else (0.0, -50.0, 0.0)))
 
 -- The camera: over the course looking down at the title; else behind the ball to play,
 -- from whichever way round it has been turned, looking a quarter of the way from it to the
@@ -1297,9 +1469,10 @@ fun moveEye (sys : M.System) (dt : Float) : () ! Process =
        let mx = bx +. (cx -. bx) *. 0.25 in
        let mz = bz +. (cz -. bz) *. 0.25 in
        let back = fclamp 4.5 16.0 (2.5 +. 1.2 *. apart (bx, bz) (cx, cz)) in
-       let flat = back *. F.cos pitch in
+       let down = getf sys pitchF in
+       let flat = back *. F.cos down in
        let yaw = getf sys yawF in
-       ((mx +. flat *. F.sin yaw, back *. F.sin pitch, mz +. flat *. F.cos yaw), (mx, 0.0, mz)))
+       ((mx +. flat *. F.sin yaw, back *. F.sin down, mz +. flat *. F.cos yaw), (mx, 0.0, mz)))
   in
   let k = 1.0 -. F.exp (0.0 -. dt *. 2.5) in
   let glide = \at goal -> let (ax, ay, az) = at in let (gx, gy, gz) = goal in (ax +. (gx -. ax) *. k, ay +. (gy -. ay) *. k, az +. (gz -. az) *. k) in
@@ -1307,7 +1480,15 @@ fun moveEye (sys : M.System) (dt : Float) : () ! Process =
   let (ox, oy, oz) = (getf sys eyeXF -. lx0, getf sys (eyeXF + 1), getf sys (eyeXF + 2) -. lz0) in
   let t = getf sys turnF in
   let u0 = setf sys turnF 0.0 in
-  let turned = (lx0 +. ox *. F.cos t +. oz *. F.sin t, oy, lz0 +. oz *. F.cos t -. ox *. F.sin t) in
+  let (rx, rz) = (ox *. F.cos t +. oz *. F.sin t, oz *. F.cos t -. ox *. F.sin t) in
+  -- Tilted about the point looked at, as far as it was this frame.
+  let tilt = getf sys tiltF in
+  let u7 = setf sys tiltF 0.0 in
+  let flat0 = fmax 0.001 (F.sqrt (rx *. rx +. rz *. rz)) in
+  let up0 = oy -. ly0 in
+  let far = F.sqrt (flat0 *. flat0 +. up0 *. up0) in
+  let rise = F.atan2 up0 flat0 +. tilt in
+  let turned = (lx0 +. rx /. flat0 *. far *. F.cos rise, ly0 +. far *. F.sin rise, lz0 +. rz /. flat0 *. far *. F.cos rise) in
   let eye = glide turned goalEye in
   let look = glide (lx0, ly0, lz0) goalLook in
   let (ex, ey, ez) = eye in
@@ -1435,8 +1616,9 @@ fun playScreen (sys : M.System) : ([(Float, Float, Float, (Float, Float, Float),
   let first = h == 0 and strokes == 0 and geti sys phaseI == aiming in
   let hint = [
       (0.0, 0.3, 0.011, ink1, (if first then "HOLD THE BALL, DRAG BACK, LET GO TO PUTT" else ""), 1),
-      (0.0, 0.2, 0.01, dim, (if first then "DRAG ANYWHERE ELSE TO TURN THE VIEW" else ""), 1),
-      (0.0, 0.1, 0.01, dim, (if first then "OR TURN WITH A AND D, HOLD SPACE" else ""), 1)
+      (0.0, 0.2, 0.01, dim, (if first then "DRAG ELSEWHERE, OR WITH THE RIGHT BUTTON, TO LOOK ROUND" else ""), 1),
+      (0.0, 0.1, 0.01, dim, (if first then "OR AIM WITH A AND D, HOLD SPACE; TILT WITH W AND S" else ""), 1),
+      (0.0, 0.0, 0.01, dim, (if first then "THE AIM SWAYS: LET GO WHEN IT IS ON LINE" else ""), 1)
     ]
   in
   (V.concat [top, scores, middle, hint], [(0.0, 0.9, 4.0, 0.24, shade), (0.0, -0.87, 4.0, 0.16, shade)])
@@ -1493,4 +1675,5 @@ fun signals (sys : M.System) : () ! Process =
   let u7 = M.setSignalNumber sys "greens.ball.x" x in
   let u8 = M.setSignalNumber sys "greens.ball.z" z in
   let u9 = M.setSignalNumber sys "greens.power" (if geti sys phaseI == aiming then getf sys powerF else 0.0) in
+  let u10 = M.setSignalNumber sys "greens.sway" (sway sys) in
   V.forEach (\q -> M.setSignalNumber sys "greens.total.${q}" (toFloat (totalOf sys q))) (range 0 4)

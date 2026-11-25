@@ -2970,9 +2970,10 @@ fn nine_greens_plays_a_round_from_its_script() {
 }
 
 /// Nine Greens putted with the mouse, alone: a drag that begins off the ball turns the view
-/// and hits nothing; let go where the drag began, nothing is hit; a drag back from the ball
-/// sends it the other way, as hard as the drag is long on the screen; and a putt of the right
-/// length at the cup drops, and the hole is done.
+/// and hits nothing, and one with the right button tilts it; held on the ball, the aim
+/// sways; let go where the drag began, nothing is hit; held still (as a test may hold it),
+/// a drag back from the ball sends it the other way, as hard as the drag is long on the
+/// screen; and a putt of the right length at the cup drops, and the hole is done.
 #[test]
 fn nine_greens_is_putted_with_the_mouse() {
     use crate::{
@@ -3057,6 +3058,44 @@ fn nine_greens_is_putted_with_the_mouse() {
     assert_eq!((said(&app, "greens.phase"), said(&app, "greens.strokes")), (1.0, 0.0), "a drag off the ball hits nothing");
     assert!((after.x - before.x).abs() > 1.0, "the view turned: {before} to {after}");
     wait(&mut app, 30);
+
+    // With the right button, up the screen: the view tilts, lower, and nothing is hit.
+    let before = eye(&mut app).translation;
+    point(&mut app, (tee.0, tee.1 - 1.0));
+    app.world.resource_mut::<InjectedInput>().play(Played::Button(MouseButton::Right, true));
+    app.update();
+    for step in 1..=10 {
+        point(&mut app, (tee.0, tee.1 - 1.0 - 0.3 * step as f32));
+        app.update();
+    }
+    app.world.resource_mut::<InjectedInput>().play(Played::Button(MouseButton::Right, false));
+    app.update();
+    app.update();
+    let after = eye(&mut app).translation;
+    assert_eq!((said(&app, "greens.phase"), said(&app, "greens.strokes")), (1.0, 0.0), "a drag with the right button hits nothing");
+    assert!(after.y < before.y - 0.5, "the view tilted lower: {before} to {after}");
+    wait(&mut app, 30);
+
+    // Held on the ball and drawn back, the aim sways while it is held; brought back to where
+    // it began and let go, nothing is hit.
+    point(&mut app, tee);
+    app.world.resource_mut::<InjectedInput>().play(Played::Button(MouseButton::Left, true));
+    app.update();
+    point(&mut app, (tee.0, tee.1 + 0.5));
+    let mut sways = Vec::new();
+    for _ in 0..60 {
+        app.update();
+        sways.push(said(&app, "greens.sway"));
+    }
+    point(&mut app, tee);
+    app.update();
+    app.world.resource_mut::<InjectedInput>().play(Played::Button(MouseButton::Left, false));
+    app.update();
+    app.update();
+    let (least, most) = sways.iter().fold((f64::MAX, f64::MIN), |(l, m), &s| (l.min(s), m.max(s)));
+    assert!(most - least > 0.02, "the aim swayed: {least} to {most}");
+    assert_eq!((said(&app, "greens.phase"), said(&app, "greens.strokes")), (1.0, 0.0), "let go where it began, nothing is hit");
+    app.world.resource_mut::<Signals>().set("greens.steady", 1.0);
 
     drag(&mut app, tee, (tee.0 + 0.02, tee.1 + 0.01));
     assert_eq!((said(&app, "greens.phase"), said(&app, "greens.strokes")), (1.0, 0.0), "let go where it began, nothing is hit");
