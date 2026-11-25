@@ -2969,22 +2969,36 @@ fn nine_greens_plays_a_round_from_its_script() {
     }
 }
 
-/// Nine Greens putted with the mouse, alone: let go where the drag began, nothing is hit; a
-/// drag back sends the ball the other way, as hard as it is long; and a putt of the right
+/// Nine Greens putted with the mouse, alone: a drag that begins off the ball turns the view
+/// and hits nothing; let go where the drag began, nothing is hit; a drag back from the ball
+/// sends it the other way, as hard as the drag is long on the screen; and a putt of the right
 /// length at the cup drops, and the hole is done.
 #[test]
 fn nine_greens_is_putted_with_the_mouse() {
     use crate::{
         input::{InjectedInput, KeyCode, MouseButton, Played},
-        render::PointerSight,
+        render::{Camera, PointerSight},
         signal::Signals,
+        transform::Transform,
     };
     if !have_meadowboot() {
         return;
     }
     let (_workspace, mut app) = nine_greens("nine-greens-putt");
     let said = |app: &App, what: &str| app.world.resource::<Signals>().number(what);
-    let point = |app: &mut App, (x, z): (f32, f32)| app.world.insert_resource(PointerSight(Some((Vec3::new(x, 20.0, z), Vec3::NEG_Y))));
+    let eye = |app: &mut App| *app.world.query::<(&Camera, &Transform)>().iter().next().expect("the game has a camera").1;
+    let ball = |app: &App| (said(app, "greens.ball.x") as f32, said(app, "greens.ball.z") as f32);
+    // The pointer over a spot on the green, as the camera sees it.
+    let point = |app: &mut App, (x, z): (f32, f32)| {
+        let from = eye(app).translation;
+        app.world.insert_resource(PointerSight(Some((from, (Vec3::new(x, 0.1, z) - from).normalize()))));
+    };
+    // Where a spot on the green is on the screen: across and up, in half its height.
+    let on_screen = |app: &mut App, (x, z): (f32, f32)| {
+        let seen = eye(app);
+        let local = seen.rotation.inverse() * (Vec3::new(x, 0.1, z) - seen.translation);
+        glam::Vec2::new(local.x, local.y) / (-local.z * (0.9f32 / 2.0).tan())
+    };
     // The button pressed with the pointer at `from`, moved to `to` and let go there.
     let drag = |app: &mut App, from: (f32, f32), to: (f32, f32)| {
         point(app, from);
@@ -2999,6 +3013,26 @@ fn nine_greens_is_putted_with_the_mouse() {
         app.update();
         app.update();
     };
+    // From the ball, back along (dx, dz) as far as is so hard (of the hardest) on the screen.
+    let pull = |app: &mut App, (dx, dz): (f32, f32), power: f32| {
+        let at = ball(app);
+        let screen = on_screen(app, at);
+        let (mut near, mut far) = (0.0f32, 20.0f32);
+        for _ in 0..40 {
+            let mid = (near + far) / 2.0;
+            if (on_screen(app, (at.0 + dx * mid, at.1 + dz * mid)) - screen).length() < power * 0.5 {
+                near = mid;
+            } else {
+                far = mid;
+            }
+        }
+        drag(app, at, (at.0 + dx * near, at.1 + dz * near));
+    };
+    let wait = |app: &mut App, frames: usize| {
+        for _ in 0..frames {
+            app.update();
+        }
+    };
     let settle = |app: &mut App| {
         for _ in 0..600 {
             if said(app, "greens.phase") == 1.0 || said(app, "greens.phase") >= 4.0 {
@@ -3012,29 +3046,35 @@ fn nine_greens_is_putted_with_the_mouse() {
     app.world.resource_mut::<InjectedInput>().play(Played::Key(KeyCode::Digit1, true));
     app.update();
     app.world.resource_mut::<InjectedInput>().play(Played::Key(KeyCode::Digit1, false));
-    for _ in 0..30 {
-        app.update();
-    }
+    wait(&mut app, 120);
     assert_eq!((said(&app, "greens.phase"), said(&app, "greens.players"), said(&app, "greens.hole")), (1.0, 1.0, 1.0), "one player, on the first hole");
-    let tee = (said(&app, "greens.ball.x"), said(&app, "greens.ball.z"));
+    let tee = ball(&app);
 
-    drag(&mut app, (1.0, 3.0), (1.02, 3.01));
+    // Off the ball and across: the view turns round the hole, and nothing is hit.
+    let before = eye(&mut app).translation;
+    drag(&mut app, (tee.0 + 1.5, tee.1 - 1.5), (tee.0 - 1.5, tee.1 - 1.5));
+    let after = eye(&mut app).translation;
+    assert_eq!((said(&app, "greens.phase"), said(&app, "greens.strokes")), (1.0, 0.0), "a drag off the ball hits nothing");
+    assert!((after.x - before.x).abs() > 1.0, "the view turned: {before} to {after}");
+    wait(&mut app, 30);
+
+    drag(&mut app, tee, (tee.0 + 0.02, tee.1 + 0.01));
     assert_eq!((said(&app, "greens.phase"), said(&app, "greens.strokes")), (1.0, 0.0), "let go where it began, nothing is hit");
 
-    // Drawn back toward the tee's end, 1.2 metres: up the hole, about half as hard as can be.
-    drag(&mut app, (0.5, 2.0), (0.5, 3.2));
+    // Drawn back toward the tee's end: up the hole, half as hard as can be.
+    pull(&mut app, (0.0, 1.0), 0.5);
     assert_eq!((said(&app, "greens.phase"), said(&app, "greens.strokes")), (2.0, 1.0), "a putt");
     settle(&mut app);
-    let (x, z) = (said(&app, "greens.ball.x") as f32, said(&app, "greens.ball.z") as f32);
-    assert!(x.abs() < 0.05 && f64::from(z) < tee.1 - 4.0, "it went up the hole: {x}, {z} from {tee:?}");
+    let (x, z) = ball(&app);
+    assert!(x.abs() < 0.05 && f64::from(z) < tee.1 as f64 - 4.0, "it went up the hole: {x}, {z} from {tee:?}");
+    wait(&mut app, 120);
 
     // At the cup, as hard as gets it half a metre past: in.
     let cup = (0.0f32, -4.4f32);
     let (dx, dz) = (cup.0 - x, cup.1 - z);
     let reach = (dx * dx + dz * dz).sqrt();
     let speed = (2.0 * 1.1 * (reach + 0.5)).sqrt();
-    let pull = (speed - 0.3) / 6.7 * 2.4;
-    drag(&mut app, (0.0, 0.0), (-dx / reach * pull, -dz / reach * pull));
+    pull(&mut app, (-dx / reach, -dz / reach), (speed - 0.3) / 6.7);
     settle(&mut app);
     assert_eq!(said(&app, "greens.total.0"), 2.0, "in, in two");
     assert_eq!(said(&app, "greens.phase"), 4.0, "the card, everyone being in");

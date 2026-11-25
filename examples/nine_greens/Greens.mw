@@ -5,11 +5,12 @@
 -- > cargo run --bin mira-play -- examples/nine_greens
 --
 -- Press 1 to 4, or click a number, for how many play. On your turn, hold the left mouse
--- button anywhere and drag back, away from where the ball is to go: the dots show the line
--- and how hard. Let go to putt, or let go where you began to take it back. Or turn with A
--- and D (or the arrows), hold Space, and let go when the dots are long enough. On a phone,
--- hold a finger down and drag back the same way. A ball in the water goes back to where it
--- was hit from, a stroke added; seven strokes is the most a hole takes.
+-- button on your ball and drag back, away from where it is to go: the dots show the line
+-- and how hard. Let go to putt, or let go where you began to take it back. Held anywhere
+-- else and dragged across, the view turns about the hole. Or turn with A and D (or the
+-- arrows), hold Space, and let go when the dots are long enough. On a phone, a finger does
+-- what the mouse does. A ball in the water goes back to where it was hit from, a stroke
+-- added; seven strokes is the most a hole takes.
 --
 -- Everything seen and heard is made here, from code: the holes from boxes and cylinders,
 -- the letters pixel by pixel, the sounds sample by sample.
@@ -35,10 +36,15 @@ def greenDrag : Float = 1.1
 def sandDrag : Float = 4.2
 -- How much of its speed into a wall a ball keeps coming off it.
 def bounce : Float = 0.72
--- The softest and hardest putts, and how far back a drag is for the hardest.
+-- The softest and hardest putts, and how far back a drag is for the hardest: across the
+-- screen, in half its height, so that a thumb on a phone reaches it before the edge.
 def slowest : Float = 0.3
 def fastest : Float = 7.0
-def fullPull : Float = 2.4
+def fullPull : Float = 0.5
+-- How near the ball, on the screen and in half its height, a press takes hold of it; and
+-- how far the view turns for a drag across half the screen's height.
+def grabReach : Float = 0.2
+def turnRate : Float = 0.8
 -- A ball over the cup slower than this drops.
 def dropSpeed : Float = 2.6
 def mostStrokes : Int = 7
@@ -49,6 +55,8 @@ def pitch : Float = 0.95
 -- height there is hudDepth × tan (fov / 2).
 def hudDepth : Float = 0.5
 def hudScale : Float = 0.24153
+-- tan (fov / 2): the half height of the screen a metre in front of the camera.
+def spread : Float = 0.48306
 def dots : Int = 12
 
 -- What the systems are kept, by place.
@@ -109,6 +117,13 @@ def pressXF : Int = 7
 def pressZF : Int = 8
 def eyeXF : Int = 9
 def lookXF : Int = 12
+-- Which way round the hole the camera looks from, how far it has turned since it was last
+-- moved, and where on the screen a drag was last, or began.
+def yawF : Int = 15
+def turnF : Int = 16
+def lastSXF : Int = 17
+def pressSXF : Int = 18
+def pressSYF : Int = 19
 -- ...and each player's ball: where it is, how fast it goes, and where it was last hit from.
 def ballsF : Int = 20
 
@@ -735,7 +750,7 @@ fun greens_play (s : Int) (user : Int) : () ! Process =
     match phase with
     | 0 -> onTitle sys auto
     | 1 -> onAim sys dt auto
-    | 2 -> onRoll sys dt now
+    | 2 -> (let v = onRoll sys dt now in if auto then () else onLook sys)
     | 3 -> if timer <. 0.0 then nextTurn sys else ()
     | 4 -> if timer <. 0.0 or goOn sys auto then nextHole sys else ()
     | 5 -> if timer <. 0.0 or goOn sys auto then toTitle sys else ()
@@ -810,7 +825,8 @@ fun startHole (sys : M.System) (h : Int) : () ! Process =
       let v2 = setFrom sys p (x, tz) in
       let v3 = seti sys (strokesI + p) 0 in
       seti sys (inI + p) 0) (range 0 4) in
-  let u3 = startTurn sys 0 in
+  let u3 = setf sys yawF 0.0 in
+  let u4 = startTurn sys 0 in
   say sys 5 2.2
 
 -- A player's turn: aimed at the hole to begin with.
@@ -825,37 +841,93 @@ fun startTurn (sys : M.System) (p : Int) : () ! Process =
   let u6 = seti sys chargingI 0 in
   begin sys aiming 0.8
 
--- A turn being aimed: dragged back with the mouse or a finger, or turned and held with keys.
+-- A turn being aimed: the ball held and dragged back with the mouse or a finger, or turned
+-- and held with keys. Held anywhere else, a drag turns the view.
 fun onAim (sys : M.System) (dt : Float) (auto : Bool) : () ! Process =
   let p = geti sys turnI in
   if auto then (if getf sys timerF <. 0.0 then autoPutt sys p else ())
   else
     let held = M.actionHeld sys "aim" in
-    let dragging = geti sys aimingI == 1 in
-    if M.actionPressed sys "aim" then
-      (match M.pointerOnGround sys ballR with
-       | Just (x, y, z) ->
-           (let u1 = seti sys aimingI 1 in
-            let u2 = setf sys pressXF x in
-            let u3 = setf sys pressZF z in
-            setf sys powerF 0.0)
-       | None -> ())
-    else if dragging and held then drag sys
-    else if dragging then
+    let holding = geti sys aimingI in
+    if M.actionPressed sys "aim" then press sys p
+    else if holding == 1 and held then drag sys
+    else if holding == 1 then
       (let u = seti sys aimingI 0 in
        if getf sys powerF >=. 0.04 then putt sys p (getf sys angleF) (getf sys powerF) else setf sys powerF 0.0)
+    else if holding == 2 then turnView sys held
     else keys sys dt p
 
--- The drag so far: back from where it began, the way the ball will go and how hard.
+-- Pressed: on the ball to play, it is taken hold of; anywhere else, the view.
+fun press (sys : M.System) (p : Int) : () ! Process =
+  match M.pointerOnGround sys ballR with
+  | Just (x, y, z) ->
+      let (sx, sy) = onScreen sys (x, y, z) in
+      let (bx, bz) = spotOf sys p in
+      if apart (sx, sy) (onScreen sys (bx, ballR, bz)) <. grabReach then
+        (let u1 = seti sys aimingI 1 in
+         let u2 = setf sys pressXF x in
+         let u3 = setf sys pressZF z in
+         let u4 = setf sys pressSXF sx in
+         let u5 = setf sys pressSYF sy in
+         setf sys powerF 0.0)
+      else
+        (let u1 = seti sys aimingI 2 in
+         setf sys lastSXF sx)
+  | None -> ()
+
+-- The drag so far: back from where it began, the way the ball will go on the green, and
+-- how hard by how far across the screen.
 fun drag (sys : M.System) : () ! Process =
   match M.pointerOnGround sys ballR with
   | Just (x, y, z) ->
       let px = getf sys pressXF -. x in
       let pz = getf sys pressZF -. z in
-      let pulled = F.sqrt (px *. px +. pz *. pz) in
+      let pulled = apart (onScreen sys (x, y, z)) (getf sys pressSXF, getf sys pressSYF) in
       let u = setf sys powerF (fmin 1.0 (pulled /. fullPull)) in
-      if pulled >. 0.02 then setf sys angleF (F.atan2 pz px) else ()
+      if F.sqrt (px *. px +. pz *. pz) >. 0.02 then setf sys angleF (F.atan2 pz px) else ()
   | None -> ()
+
+-- While a ball rolls, the view can be turned too.
+fun onLook (sys : M.System) : () ! Process =
+  if M.actionPressed sys "aim" then
+    (match M.pointerOnGround sys ballR with
+     | Just (x, y, z) ->
+         (let (sx, sy) = onScreen sys (x, y, z) in
+          let u = seti sys aimingI 2 in
+          setf sys lastSXF sx)
+     | None -> ())
+  else if geti sys aimingI == 2 then turnView sys (M.actionHeld sys "aim")
+  else ()
+
+-- The view turned about the hole as far as the pointer has gone across the screen since
+-- the frame before: the ground under it goes with it.
+fun turnView (sys : M.System) (held : Bool) : () ! Process =
+  if not held then seti sys aimingI 0
+  else
+    match M.pointerOnGround sys ballR with
+    | Just (x, y, z) ->
+        let (sx, sy) = onScreen sys (x, y, z) in
+        let turn = (getf sys lastSXF -. sx) *. turnRate in
+        let u1 = setf sys lastSXF sx in
+        let u2 = setf sys yawF (getf sys yawF +. turn) in
+        setf sys turnF (getf sys turnF +. turn)
+    | None -> ()
+
+-- Where a point is on the screen, as the camera sees it now: across and up from the
+-- middle, in half the screen's height.
+fun onScreen (sys : M.System) (at : (Float, Float, Float)) : (Float, Float) ! Process =
+  let (ex, ey, ez) = (getf sys eyeXF, getf sys (eyeXF + 1), getf sys (eyeXF + 2)) in
+  let (fx, fy, fz) = (getf sys lookXF -. ex, getf sys (lookXF + 1) -. ey, getf sys (lookXF + 2) -. ez) in
+  -- Ahead, right (level) and up, as the camera is turned.
+  let fl = F.sqrt (fx *. fx +. fy *. fy +. fz *. fz) in
+  let (rx, rz) = (0.0 -. fz, fx) in
+  let rl = F.sqrt (rx *. rx +. rz *. rz) in
+  let (ux, uy, uz) = (0.0 -. fx *. fy, fx *. fx +. fz *. fz, 0.0 -. fz *. fy) in
+  let ul = F.sqrt (ux *. ux +. uy *. uy +. uz *. uz) in
+  let (x, y, z) = at in
+  let (dx, dy, dz) = (x -. ex, y -. ey, z -. ez) in
+  let ahead = fmax 0.001 ((dx *. fx +. dy *. fy +. dz *. fz) /. fl) *. spread in
+  ((dx *. rx +. dz *. rz) /. rl /. ahead, (dx *. ux +. dy *. uy +. dz *. uz) /. ul /. ahead)
 
 -- Turned with keys, and Space held: how hard rises and falls while it is held, and the
 -- putt goes when it is let go.
@@ -1067,8 +1139,9 @@ fun showDots (sys : M.System) (now : Float) : () ! Process =
        M.setTranslation tr (if aimed then (bx +. F.cos a *. along, ballR, bz +. F.sin a *. along) else (0.0, -50.0, 0.0))))
 
 -- The camera: over the course looking down at the title; else behind the ball to play,
--- looking two fifths of the way from it to the cup, from far enough back to see both above
--- and below the bars on the screen. It glides there.
+-- from whichever way round it has been turned, looking a quarter of the way from it to the
+-- cup, from far enough back to see both above and below the bars on the screen, the ball a
+-- little below the middle (room to drag it back). It glides there, but turns at once.
 fun moveEye (sys : M.System) (dt : Float) : () ! Process =
   let phase = geti sys phaseI in
   let (goalEye, goalLook) =
@@ -1076,15 +1149,22 @@ fun moveEye (sys : M.System) (dt : Float) : () ! Process =
     else
       (let (bx, bz) = spotOf sys (geti sys turnI) in
        let (cx, cz) = cup (geti sys holeI) in
-       let mx = bx +. (cx -. bx) *. 0.4 in
-       let mz = bz +. (cz -. bz) *. 0.4 in
-       let back = fclamp 4.5 16.0 (2.0 +. 1.05 *. apart (bx, bz) (cx, cz)) in
-       ((mx, back *. F.sin pitch, mz +. back *. F.cos pitch), (mx, 0.0, mz)))
+       let mx = bx +. (cx -. bx) *. 0.25 in
+       let mz = bz +. (cz -. bz) *. 0.25 in
+       let back = fclamp 4.5 16.0 (2.5 +. 1.2 *. apart (bx, bz) (cx, cz)) in
+       let flat = back *. F.cos pitch in
+       let yaw = getf sys yawF in
+       ((mx +. flat *. F.sin yaw, back *. F.sin pitch, mz +. flat *. F.cos yaw), (mx, 0.0, mz)))
   in
   let k = 1.0 -. F.exp (0.0 -. dt *. 2.5) in
   let glide = \at goal -> let (ax, ay, az) = at in let (gx, gy, gz) = goal in (ax +. (gx -. ax) *. k, ay +. (gy -. ay) *. k, az +. (gz -. az) *. k) in
-  let eye = glide (getf sys eyeXF, getf sys (eyeXF + 1), getf sys (eyeXF + 2)) goalEye in
-  let look = glide (getf sys lookXF, getf sys (lookXF + 1), getf sys (lookXF + 2)) goalLook in
+  let (lx0, ly0, lz0) = (getf sys lookXF, getf sys (lookXF + 1), getf sys (lookXF + 2)) in
+  let (ox, oy, oz) = (getf sys eyeXF -. lx0, getf sys (eyeXF + 1), getf sys (eyeXF + 2) -. lz0) in
+  let t = getf sys turnF in
+  let u0 = setf sys turnF 0.0 in
+  let turned = (lx0 +. ox *. F.cos t +. oz *. F.sin t, oy, lz0 +. oz *. F.cos t -. ox *. F.sin t) in
+  let eye = glide turned goalEye in
+  let look = glide (lx0, ly0, lz0) goalLook in
   let (ex, ey, ez) = eye in
   let (lx, ly, lz) = look in
   let u1 = setf sys eyeXF ex in
@@ -1203,7 +1283,8 @@ fun playScreen (sys : M.System) : ([(Float, Float, Float, (Float, Float, Float),
   let middle = [(0.0, 0.45, 0.026, gold, message, 1)] in
   let first = h == 0 and strokes == 0 and geti sys phaseI == aiming in
   let hint = [
-      (0.0, 0.2, 0.011, ink1, (if first then "HOLD AND DRAG BACK, LET GO TO PUTT" else ""), 1),
+      (0.0, 0.3, 0.011, ink1, (if first then "HOLD THE BALL, DRAG BACK, LET GO TO PUTT" else ""), 1),
+      (0.0, 0.2, 0.01, dim, (if first then "DRAG ANYWHERE ELSE TO TURN THE VIEW" else ""), 1),
       (0.0, 0.1, 0.01, dim, (if first then "OR TURN WITH A AND D, HOLD SPACE" else ""), 1)
     ]
   in

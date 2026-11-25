@@ -72,7 +72,8 @@ beside it) and builds it for the target. `android/retro_dunk` is the app: the en
 `app.load_bundled_plugin("libDunk.so")`, and cargo-apk's `runtime_libs` carries the
 library for each processor. The Android workflow builds RetroDunk this way, and keeps the
 package (`retro-dunk-apk`). Nine Greens (`android/nine_greens`, `libGreens.so`) is built the
-same way, into `nine-greens-apk`: a putt is a finger held on the green, dragged back and let go.
+same way, into `nine-greens-apk`: a putt is a finger held on the ball, dragged back and let go,
+and a drag anywhere else turns the view.
 
 ## What is not as on a desktop
 

@@ -52,8 +52,9 @@ cargo run --release --bin mira-play -- examples/nine_greens
 
 Nine Greens is mini golf for one to four players taking turns at one screen: nine holes of
 banks, posts, sand, water, a tilted green and turning bars, and nothing but putting. Press 1
-to 4 for how many play. On your turn, hold the left mouse button (or a finger) anywhere and
-drag back, away from where the ball is to go, and let go; or turn with A and D and hold Space.
+to 4 for how many play. On your turn, hold the left mouse button (or a finger) on your ball
+and drag back, away from where it is to go, and let go; or turn with A and D and hold Space.
+Dragged anywhere else, the view turns about the hole.
 The lowest total wins, and the best round played alone is kept. The holes, letters and sounds
 are all made in [`examples/nine_greens/Greens.mw`](examples/nine_greens/Greens.mw).
 
