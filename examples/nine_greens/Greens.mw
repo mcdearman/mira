@@ -1241,7 +1241,7 @@ fun scorecard (sys : M.System) (over : Bool) : ([(Float, Float, Float, (Float, F
   let headline = if over then winner sys else "AFTER HOLE ${h + 1}" in
   let words = [
       (0.0, 0.62, (if over then 0.026 else 0.018), gold, headline, 1),
-      (0.0, -0.72, 0.012, dim, (if over then "CLICK TO PLAY AGAIN" else "CLICK TO GO ON"), 1)
+      (0.0, -0.72, 0.012, dim, (if over then "CLICK OR TAP TO PLAY AGAIN" else "CLICK OR TAP TO GO ON"), 1)
     ]
   in
   (V.concat [words, heading, pars, rows], [(0.0, 0.0, 3.0, 1.8, shade)])
