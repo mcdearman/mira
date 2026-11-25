@@ -637,6 +637,7 @@ fun greens_setup (s : Int) (user : Int) : () ! Process =
   let c2 = M.setCameraWith sys eye fov 0.05 True in
   let c3 = M.insertFloats sys eye (M.kept sys eyeAt) [0.0] in
   let c4 = setf sys (eyeXF + 1) 14.0 in
+  let c5 = setf sys (lookXF + 2) (-0.02) in
 
   -- The four balls, kept out of sight until played, and the aiming dots and ring.
   let b = V.forEach (\p ->
@@ -1191,7 +1192,11 @@ fun screen (sys : M.System) : () ! Process =
     let gone = M.foldIn1 sys 4 [] (\acc entity t -> V.pushBack acc entity) in
     let u2 = V.forEach (\entity -> M.despawn sys entity) gone in
     let eye = M.foldIn2 sys 3 (0 - 1) (\found entity marker tr -> entity) in
-    let u3 = V.forEach (\pn -> let (x, y, w, h, c) = pn in hang sys eye 0 (x, y) (w, h) (hudDepth +. 0.02) c) panels in
+    -- Each panel a little nearer than the one before, so that one laid on another (the
+    -- title's tiles on its backdrop) is always seen in front, never flickering with it.
+    let u3 = V.forEach (\i ->
+        let (x, y, w, h, c) = V.getOr (0.0, 0.0, 0.0, 0.0, shade) panels i in
+        hang sys eye 0 (x, y) (w, h) (hudDepth +. 0.04 -. 0.002 *. toFloat i) c) (range 0 (len panels)) in
     V.forEach (\l -> write sys eye l) lines
 
 fun mix (k : Int) (words : String) : Int = V.foldl (\a c -> (a * 31 + C.code c) % 1000000007) ((k * 131 + 7) % 1000000007) (S.chars words)
