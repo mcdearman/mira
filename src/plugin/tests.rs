@@ -2930,17 +2930,34 @@ fn nine_greens(name: &str) -> (Workspace, App) {
     (workspace, app)
 }
 
-/// Nine Greens plays a round of nine holes by itself, two players taking turns: every
-/// hole is played, every player holes out or picks up on each, and the card is kept.
+/// Nine Greens plays a round of nine holes by itself, two players taking turns, on each of
+/// its courses: the course asked for is the one played, every hole is played, every player
+/// holes out or picks up on each, and the card is kept.
 #[test]
-fn nine_greens_plays_a_round_from_its_script() {
+fn nine_greens_plays_a_round_of_the_meadow() {
+    nine_greens_plays_a_round(0);
+}
+
+#[test]
+fn nine_greens_plays_a_round_of_the_dunes() {
+    nine_greens_plays_a_round(1);
+}
+
+#[test]
+fn nine_greens_plays_a_round_of_the_lagoon() {
+    nine_greens_plays_a_round(2);
+}
+
+fn nine_greens_plays_a_round(course: u8) {
     use crate::signal::Signals;
     if !have_meadowboot() {
         return;
     }
-    let (_workspace, mut app) = nine_greens("nine-greens");
+    let (_workspace, mut app) = nine_greens(&format!("nine-greens-{course}"));
     app.world.resource_mut::<Signals>().set("greens.autoplay", 1.0);
+    app.world.resource_mut::<Signals>().set("greens.course", f64::from(course));
     let said = |app: &App, what: &str| app.world.resource::<Signals>().number(what);
+    let mut played = std::collections::BTreeSet::new();
     let (mut phases, mut holes, mut turns) = (std::collections::BTreeSet::new(), std::collections::BTreeSet::new(), std::collections::BTreeSet::new());
     let mut frames = 0;
     let mut totals = (0.0, 0.0);
@@ -2949,7 +2966,8 @@ fn nine_greens_plays_a_round_from_its_script() {
         app.update();
         frames += 1;
         phases.insert(said(&app, "greens.phase") as i32);
-        if said(&app, "greens.phase") != 0.0 {
+        if (1.0..=5.0).contains(&said(&app, "greens.phase")) {
+            played.insert(said(&app, "greens.course.playing") as i32);
             holes.insert(said(&app, "greens.hole") as i32);
             turns.insert(said(&app, "greens.turn") as i32);
             let now = (said(&app, "greens.total.0"), said(&app, "greens.total.1"));
@@ -2958,9 +2976,10 @@ fn nine_greens_plays_a_round_from_its_script() {
         }
     }
     assert_eq!(said(&app, "greens.players"), 2.0);
+    assert_eq!(played, [i32::from(course)].into(), "the course asked for was played");
     assert_eq!(holes, (1..=9).collect(), "every hole was played");
     assert_eq!(turns, [0, 1].into(), "both players had turns");
-    for phase in [1, 2, 3, 4, 5] {
+    for phase in [1, 2, 3, 4, 5, 6] {
         assert!(phases.contains(&phase), "phase {phase} never came: {phases:?}");
     }
     // At least a stroke a hole, and at most seven.
@@ -3044,9 +3063,14 @@ fn nine_greens_is_putted_with_the_mouse() {
         panic!("the ball never came to rest");
     };
 
-    app.world.resource_mut::<InjectedInput>().play(Played::Key(KeyCode::Digit1, true));
-    app.update();
-    app.world.resource_mut::<InjectedInput>().play(Played::Key(KeyCode::Digit1, false));
+    // One player, then the first course.
+    for _ in 0..2 {
+        app.world.resource_mut::<InjectedInput>().play(Played::Key(KeyCode::Digit1, true));
+        app.update();
+        app.world.resource_mut::<InjectedInput>().play(Played::Key(KeyCode::Digit1, false));
+        app.update();
+        app.update();
+    }
     wait(&mut app, 120);
     assert_eq!((said(&app, "greens.phase"), said(&app, "greens.players"), said(&app, "greens.hole")), (1.0, 1.0, 1.0), "one player, on the first hole");
     let tee = ball(&app);

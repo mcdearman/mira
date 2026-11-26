@@ -1,12 +1,12 @@
--- Nine Greens: mini golf for one to four players taking turns at one screen, over nine
--- holes of banks, bumpers, sand, water, a tilted green and turning bars. Nothing but putting:
--- no power-ups. The lowest total wins.
+-- Nine Greens: mini golf for one to four players taking turns at one screen, on three
+-- courses of nine holes each (a meadow, dunes and a lagoon) of banks, bumpers, sand, water,
+-- wind and turning bars. Nothing but putting: no power-ups. The lowest total wins.
 --
 -- > cargo run --bin mira-play -- examples/nine_greens
 --
--- Press 1 to 4, or click a number, for how many play. On your turn, hold the left mouse
--- button on your ball and drag back, away from where it is to go: the dots show the line
--- and how hard. Let go to putt, or let go where you began to take it back. Held anywhere
+-- Press 1 to 4, or click a number, for how many play, and then 1 to 3 for the course. On
+-- your turn, hold the left mouse button on your ball and drag back, away from where it is
+-- to go: the arrow shows the way, longer and redder the harder. Let go to putt, or let go where you began to take it back. Held anywhere
 -- else and dragged, the view turns about the hole and tilts; so does a drag with the right
 -- button, anywhere. The aim sways while it is held, more the harder the putt: let go when
 -- it is on line. Or turn with A and D (or the arrows), tilt with W and S, hold Space, and
@@ -76,7 +76,7 @@ def hudDepth : Float = 0.5
 def hudScale : Float = 0.24153
 -- tan (fov / 2): the half height of the screen a metre in front of the camera.
 def spread : Float = 0.48306
-def dots : Int = 12
+def dots : Int = 0
 
 -- What the systems are kept, by place.
 def transformAt : Int = 0
@@ -107,6 +107,10 @@ def newBestI : Int = 12
 -- What became of the last ball to stop: 0 nothing, 1 in the cup, 2 in the water, 3 off the
 -- course; shown going there while play waits.
 def dropKindI : Int = 13
+-- The course played, the best round alone on each, and the shade the arrow was last given.
+def courseI : Int = 14
+def bestsI : Int = 15
+def arrowShadeI : Int = 18
 -- ...each player's strokes on this hole, and whether they are in...
 def strokesI : Int = 20
 def inI : Int = 24
@@ -128,6 +132,7 @@ def splashI : Int = 93
 def cheerI : Int = 94
 def bumpI : Int = 95
 def cupI : Int = 88
+def arrowI : Int = 89
 
 -- The fractional ones: the clocks, the aim, the camera...
 def timerF : Int = 0
@@ -168,11 +173,123 @@ def rolling : Int = 2
 def pause : Int = 3
 def card : Int = 4
 def final : Int = 5
+def choose : Int = 6
 
 -- ---------------------------------------------------------------------------------------
 -- The holes. x is across and z along, the tee toward +z; a rectangle is (x0, z0, x1, z1).
 
-fun holeName (h : Int) : String =
+-- ---------------------------------------------------------------------------------------
+-- The courses: nine holes each. A hole of all of them is numbered course × 9 + hole.
+
+def courses : Int = 3
+
+fun courseName (c : Int) : String =
+  match c with
+  | 1 -> "DUNES"
+  | 2 -> "LAGOON"
+  | _ -> "MEADOW"
+
+fun holeName (g : Int) : String =
+  match g / holes with
+  | 1 -> dunesHoleName (g % holes)
+  | 2 -> lagoonHoleName (g % holes)
+  | _ -> meadowHoleName g
+
+fun par (g : Int) : Int =
+  match g / holes with
+  | 1 -> dunesPar (g % holes)
+  | 2 -> lagoonPar (g % holes)
+  | _ -> meadowPar g
+
+fun tee (g : Int) : (Float, Float) =
+  match g / holes with
+  | 1 -> dunesTee (g % holes)
+  | 2 -> lagoonTee (g % holes)
+  | _ -> meadowTee g
+
+fun cup (g : Int) : (Float, Float) =
+  match g / holes with
+  | 1 -> dunesCup (g % holes)
+  | 2 -> lagoonCup (g % holes)
+  | _ -> meadowCup g
+
+fun floors (g : Int) : [(Float, Float, Float, Float)] =
+  match g / holes with
+  | 1 -> dunesFloors (g % holes)
+  | 2 -> lagoonFloors (g % holes)
+  | _ -> meadowFloors g
+
+fun outline (g : Int) : [(Float, Float)] =
+  match g / holes with
+  | 1 -> dunesOutline (g % holes)
+  | 2 -> lagoonOutline (g % holes)
+  | _ -> meadowOutline g
+
+fun inner (g : Int) : [(Float, Float, Float, Float)] =
+  match g / holes with
+  | 1 -> dunesInner (g % holes)
+  | 2 -> lagoonInner (g % holes)
+  | _ -> meadowInner g
+
+fun posts (g : Int) : [(Float, Float, Float)] =
+  match g / holes with
+  | 1 -> dunesPosts (g % holes)
+  | 2 -> lagoonPosts (g % holes)
+  | _ -> meadowPosts g
+
+fun sand (g : Int) : [(Float, Float, Float, Float)] =
+  match g / holes with
+  | 1 -> dunesSand (g % holes)
+  | 2 -> lagoonSand (g % holes)
+  | _ -> meadowSand g
+
+fun water (g : Int) : [(Float, Float, Float, Float)] =
+  match g / holes with
+  | 1 -> dunesWater (g % holes)
+  | 2 -> lagoonWater (g % holes)
+  | _ -> meadowWater g
+
+fun slopes (g : Int) : [(Float, Float, Float, Float, Float, Float)] =
+  match g / holes with
+  | 1 -> dunesSlopes (g % holes)
+  | 2 -> lagoonSlopes (g % holes)
+  | _ -> meadowSlopes g
+
+fun spinners (g : Int) : [(Float, Float, Float, Float)] =
+  match g / holes with
+  | 1 -> dunesSpinners (g % holes)
+  | 2 -> lagoonSpinners (g % holes)
+  | _ -> meadowSpinners g
+
+fun via (g : Int) (at : (Float, Float)) : (Float, Float) =
+  match g / holes with
+  | 1 -> dunesVia (g % holes) at
+  | 2 -> lagoonVia (g % holes) at
+  | _ -> meadowVia g at
+
+-- How each course looks round about: the ground, the banks, the green, and what grows.
+fun groundOf (c : Int) : ((Float, Float, Float), Float) =
+  match c with
+  | 1 -> ((0.74, 0.56, 0.32), 0.95)
+  | 2 -> ((0.03, 0.24, 0.46), 0.08)
+  | _ -> ((0.05, 0.17, 0.05), 0.95)
+
+fun bankOf (c : Int) : (Float, Float, Float) =
+  match c with
+  | 1 -> (0.62, 0.4, 0.22)
+  | 2 -> (0.86, 0.76, 0.52)
+  | _ -> (0.36, 0.23, 0.13)
+
+fun greenOf (c : Int) : (Float, Float, Float) =
+  match c with
+  | 1 -> (0.16, 0.48, 0.16)
+  | 2 -> (0.07, 0.5, 0.22)
+  | _ -> (0.1, 0.46, 0.13)
+
+-- The meadow's holes.
+
+
+fun meadowHoleName (h : Int) : String =
   match h with
   | 0 -> "STRAIGHT START"
   | 1 -> "DOGLEG"
@@ -184,7 +301,7 @@ fun holeName (h : Int) : String =
   | 7 -> "ZIGZAG"
   | _ -> "THE KEEP"
 
-fun par (h : Int) : Int =
+fun meadowPar (h : Int) : Int =
   match h with
   | 0 -> 2
   | 1 -> 3
@@ -196,7 +313,7 @@ fun par (h : Int) : Int =
   | 7 -> 3
   | _ -> 4
 
-fun tee (h : Int) : (Float, Float) =
+fun meadowTee (h : Int) : (Float, Float) =
   match h with
   | 0 -> (0.0, 4.8)
   | 1 -> (0.0, 5.8)
@@ -204,7 +321,7 @@ fun tee (h : Int) : (Float, Float) =
   | 8 -> (0.0, 6.8)
   | _ -> (0.0, 5.8)
 
-fun cup (h : Int) : (Float, Float) =
+fun meadowCup (h : Int) : (Float, Float) =
   match h with
   | 0 -> (0.0, -4.4)
   | 1 -> (6.6, -2.5)
@@ -217,7 +334,7 @@ fun cup (h : Int) : (Float, Float) =
   | _ -> (0.0, -6.1)
 
 -- The green underfoot.
-fun floors (h : Int) : [(Float, Float, Float, Float)] =
+fun meadowFloors (h : Int) : [(Float, Float, Float, Float)] =
   match h with
   | 0 -> [(-1.5, -6.0, 1.5, 6.0)]
   | 1 -> [(-1.5, -4.0, 1.5, 7.0), (1.5, -4.0, 8.0, -1.0)]
@@ -227,7 +344,7 @@ fun floors (h : Int) : [(Float, Float, Float, Float)] =
   | _ -> [(-2.0, -7.0, 2.0, 7.0)]
 
 -- The walls round the edge, corner to corner.
-fun outline (h : Int) : [(Float, Float)] =
+fun meadowOutline (h : Int) : [(Float, Float)] =
   match h with
   | 0 -> box (-1.5) (-6.0) 1.5 6.0
   | 1 -> [(-1.5, 7.0), (1.5, 7.0), (1.5, -1.0), (8.0, -1.0), (8.0, -4.0), (-1.5, -4.0)]
@@ -239,7 +356,7 @@ fun outline (h : Int) : [(Float, Float)] =
 fun box (x0 : Float) (z0 : Float) (x1 : Float) (z1 : Float) : [(Float, Float)] = [(x0, z1), (x1, z1), (x1, z0), (x0, z0)]
 
 -- Walls within, end to end.
-fun inner (h : Int) : [(Float, Float, Float, Float)] =
+fun meadowInner (h : Int) : [(Float, Float, Float, Float)] =
   match h with
   | 1 -> [(-1.5, -2.9, -0.4, -4.0)]
   | 6 -> [(-2.0, -1.0, -0.7, -1.0), (0.7, -1.0, 2.0, -1.0)]
@@ -259,41 +376,281 @@ fun ring (points : [(Float, Float)]) : [(Float, Float, Float, Float)] =
     (range 0 n)
 
 -- Round posts: where, and how wide.
-fun posts (h : Int) : [(Float, Float, Float)] =
+fun meadowPosts (h : Int) : [(Float, Float, Float)] =
   match h with
   | 2 -> [(0.0, 2.2, 0.3), (-1.0, 0.0, 0.25), (1.0, 0.0, 0.25), (0.0, -2.2, 0.3), (-1.3, -4.0, 0.22), (1.3, -4.0, 0.22)]
   | 7 -> [(0.0, 0.3, 0.3)]
   | 8 -> [(-1.6, 2.0, 0.25), (1.6, 2.0, 0.25)]
   | _ -> []
 
-fun sand (h : Int) : [(Float, Float, Float, Float)] =
+fun meadowSand (h : Int) : [(Float, Float, Float, Float)] =
   match h with
   | 3 -> [(-2.0, -1.4, 0.9, 0.6), (-0.9, -4.4, 2.0, -3.2)]
   | _ -> []
 
-fun water (h : Int) : [(Float, Float, Float, Float)] =
+fun meadowWater (h : Int) : [(Float, Float, Float, Float)] =
   match h with
   | 4 -> [(-2.5, -1.0, -0.45, 1.0), (0.45, -1.0, 2.5, 1.0)]
   | _ -> []
 
 -- Ground that tilts: where, and the pull along it.
-fun slopes (h : Int) : [(Float, Float, Float, Float, Float, Float)] =
+fun meadowSlopes (h : Int) : [(Float, Float, Float, Float, Float, Float)] =
   match h with
   | 5 -> [(-2.0, -3.5, 2.0, 3.5, 0.85, 0.0)]
   | _ -> []
 
 -- Bars that turn about their middle: where, how long each way, and how fast.
-fun spinners (h : Int) : [(Float, Float, Float, Float)] =
+fun meadowSpinners (h : Int) : [(Float, Float, Float, Float)] =
   match h with
   | 6 -> [(0.0, -1.0, 0.6, 1.4)]
   | 8 -> [(0.0, -1.5, 1.4, 1.1)]
   | _ -> []
 
+-- The dunes' holes.
+
+fun dunesHoleName (h : Int) : String =
+  match h with
+  | 0 -> "DUNE RUN"
+  | 1 -> "SIDEWINDER"
+  | 2 -> "CACTUS PATCH"
+  | 3 -> "OASIS"
+  | 4 -> "THE CANYON"
+  | 5 -> "TWIN TWISTERS"
+  | 6 -> "DUST BOWL"
+  | 7 -> "SWITCHBACK"
+  | _ -> "MESA"
+
+fun dunesPar (h : Int) : Int =
+  match h with
+  | 0 -> 2
+  | 1 -> 3
+  | 2 -> 3
+  | 3 -> 3
+  | 4 -> 4
+  | 5 -> 3
+  | 6 -> 2
+  | 7 -> 4
+  | _ -> 4
+
+fun dunesTee (h : Int) : (Float, Float) =
+  match h with
+  | 0 -> (0.0, 5.8)
+  | 1 -> (0.0, 5.8)
+  | 2 -> (0.0, 5.8)
+  | 3 -> (0.0, 5.8)
+  | 4 -> (0.0, 6.0)
+  | 5 -> (0.0, 5.8)
+  | 6 -> (0.0, 4.0)
+  | 7 -> (-1.5, 5.0)
+  | _ -> (0.0, 6.8)
+
+fun dunesCup (h : Int) : (Float, Float) =
+  match h with
+  | 0 -> (0.0, -5.6)
+  | 1 -> (1.2, -5.8)
+  | 2 -> (0.0, -5.8)
+  | 3 -> (0.0, -5.6)
+  | 4 -> (5.0, -5.8)
+  | 5 -> (0.0, -5.6)
+  | 6 -> (0.0, -3.0)
+  | 7 -> (1.5, 4.6)
+  | _ -> (0.0, -5.5)
+
+fun dunesFloors (h : Int) : [(Float, Float, Float, Float)] =
+  match h with
+  | 0 -> [(-1.5, -7.0, 1.5, 7.0)]
+  | 1 -> [(-2.0, -7.0, 2.0, 7.0)]
+  | 2 -> [(-2.5, -7.0, 2.5, 7.0)]
+  | 3 -> [(-2.5, -7.0, 2.5, 7.0)]
+  | 4 -> [(-1.5, -1.0, 1.5, 7.0), (1.5, -1.0, 6.5, 2.0), (3.5, -7.0, 6.5, -1.0)]
+  | 5 -> [(-1.5, -7.0, 1.5, 7.0)]
+  | 6 -> [(-3.0, -5.0, 3.0, 5.0)]
+  | 7 -> [(-3.0, -6.0, 3.0, 6.0)]
+  | _ -> [(-3.0, -8.0, 3.0, 8.0)]
+
+fun dunesOutline (h : Int) : [(Float, Float)] =
+  match h with
+  | 0 -> [(-1.5, 7.0), (1.5, 7.0), (1.5, -7.0), (-1.5, -7.0)]
+  | 1 -> [(-2.0, 7.0), (2.0, 7.0), (2.0, -7.0), (-2.0, -7.0)]
+  | 2 -> [(-2.5, 7.0), (2.5, 7.0), (2.5, -7.0), (-2.5, -7.0)]
+  | 3 -> [(-2.5, 7.0), (2.5, 7.0), (2.5, -7.0), (-2.5, -7.0)]
+  | 4 -> [(-1.5, 7.0), (1.5, 7.0), (1.5, 2.0), (6.5, 2.0), (6.5, -7.0), (3.5, -7.0), (3.5, -1.0), (-1.5, -1.0)]
+  | 5 -> [(-1.5, 7.0), (1.5, 7.0), (1.5, -7.0), (-1.5, -7.0)]
+  | 6 -> [(-3.0, 5.0), (3.0, 5.0), (3.0, -5.0), (-3.0, -5.0)]
+  | 7 -> [(-3.0, 6.0), (3.0, 6.0), (3.0, -6.0), (-3.0, -6.0)]
+  | _ -> [(-3.0, 8.0), (3.0, 8.0), (3.0, -8.0), (-3.0, -8.0)]
+
+fun dunesInner (h : Int) : [(Float, Float, Float, Float)] =
+  match h with
+  | 7 -> [(0.0, 6.0, 0.0, -3.0)]
+  | _ -> []
+
+fun dunesPosts (h : Int) : [(Float, Float, Float)] =
+  match h with
+  | 2 -> [(-1.4, 3.0, 0.28), (1.4, 3.0, 0.28), (0.0, 1.5, 0.3), (-1.6, 0.0, 0.25), (1.6, 0.0, 0.25), (0.0, -1.6, 0.3), (-1.0, -3.4, 0.25), (1.0, -3.4, 0.25)]
+  | 8 -> [(-0.85, -4.6, 0.22), (0.85, -4.6, 0.22), (-1.25, -5.6, 0.22), (1.25, -5.6, 0.22), (0.0, -6.6, 0.22)]
+  | _ -> []
+
+fun dunesSand (h : Int) : [(Float, Float, Float, Float)] =
+  match h with
+  | 0 -> [(-1.5, -1.2, 1.5, 0.4)]
+  | 4 -> [(4.6, -4.2, 6.5, -3.2)]
+  | 6 -> [(-3.0, -1.0, -0.6, 0.6), (0.6, -1.0, 3.0, 0.6)]
+  | 8 -> [(-3.0, 2.0, -1.2, 4.5)]
+  | _ -> []
+
+fun dunesWater (h : Int) : [(Float, Float, Float, Float)] =
+  match h with
+  | 3 -> [(-1.2, -2.0, 1.2, 1.0)]
+  | _ -> []
+
+fun dunesSlopes (h : Int) : [(Float, Float, Float, Float, Float, Float)] =
+  match h with
+  | 1 -> [(-2.0, -4.0, 2.0, 4.0, -0.7, 0.0)]
+  | 7 -> [(0.0, -3.0, 3.0, 6.0, 0.0, 0.4)]
+  | 8 -> [(-3.0, -2.0, 3.0, 3.0, 0.35, 0.0)]
+  | _ -> []
+
+fun dunesSpinners (h : Int) : [(Float, Float, Float, Float)] =
+  match h with
+  | 5 -> [(-0.6, 1.5, 0.8, 1.3), (0.6, -2.0, 0.8, -1.6)]
+  | _ -> []
+
+fun dunesVia (h : Int) (at : (Float, Float)) : (Float, Float) =
+  let (x, z) = at in
+  match h with
+  | 3 -> if z >. 1.2 then (1.9, 1.6) else if z >. (-2.2) then (1.9, -2.6) else dunesCup h
+  | 4 -> if z >. 1.6 then (0.0, 0.5) else if x <. 4.2 then (5.0, 0.5) else dunesCup h
+  | 7 -> if x <. 0.0 and z >. (-3.6) then (-1.5, -4.6) else if x <. 0.0 then (1.5, -4.4) else dunesCup h
+  | _ -> dunesCup h
+
+-- The lagoon's holes.
+
+fun lagoonHoleName (h : Int) : String =
+  match h with
+  | 0 -> "SANDBAR"
+  | 1 -> "TWIN BRIDGES"
+  | 2 -> "WHIRLPOOL"
+  | 3 -> "LIGHTHOUSE"
+  | 4 -> "CORAL REEF"
+  | 5 -> "TIDE POOL"
+  | 6 -> "THE HARBOR"
+  | 7 -> "MANGROVES"
+  | _ -> "TREASURE ISLAND"
+
+fun lagoonPar (h : Int) : Int =
+  match h with
+  | 0 -> 2
+  | 1 -> 3
+  | 2 -> 3
+  | 3 -> 3
+  | 4 -> 3
+  | 5 -> 3
+  | 6 -> 4
+  | 7 -> 3
+  | _ -> 4
+
+fun lagoonTee (h : Int) : (Float, Float) =
+  match h with
+  | 0 -> (0.0, 5.8)
+  | 1 -> (0.0, 5.8)
+  | 2 -> (0.0, 5.8)
+  | 3 -> (0.0, 5.8)
+  | 4 -> (0.0, 5.8)
+  | 5 -> (-0.8, 5.8)
+  | 6 -> (1.5, 5.5)
+  | 7 -> (0.0, 5.8)
+  | _ -> (0.0, 6.8)
+
+fun lagoonCup (h : Int) : (Float, Float) =
+  match h with
+  | 0 -> (0.0, -5.6)
+  | 1 -> (0.0, -5.4)
+  | 2 -> (0.0, -5.6)
+  | 3 -> (-5.4, -2.5)
+  | 4 -> (0.0, -5.6)
+  | 5 -> (-0.8, -5.8)
+  | 6 -> (1.5, -5.3)
+  | 7 -> (0.8, -5.8)
+  | _ -> (0.0, -5.5)
+
+fun lagoonFloors (h : Int) : [(Float, Float, Float, Float)] =
+  match h with
+  | 0 -> [(-2.5, -7.0, 2.5, 7.0)]
+  | 1 -> [(-3.0, -7.0, 3.0, 7.0)]
+  | 2 -> [(-2.5, -7.0, 2.5, 7.0)]
+  | 3 -> [(-1.5, -4.0, 1.5, 7.0), (-6.5, -4.0, -1.5, -1.0)]
+  | 4 -> [(-3.0, -7.0, 3.0, 7.0)]
+  | 5 -> [(-2.5, -7.0, 2.5, 7.0)]
+  | 6 -> [(-3.0, -7.0, 3.0, 7.0)]
+  | 7 -> [(-3.0, -7.0, 3.0, 7.0)]
+  | _ -> [(-3.0, -8.0, 3.0, 8.0)]
+
+fun lagoonOutline (h : Int) : [(Float, Float)] =
+  match h with
+  | 0 -> [(-2.5, 7.0), (2.5, 7.0), (2.5, -7.0), (-2.5, -7.0)]
+  | 1 -> [(-3.0, 7.0), (3.0, 7.0), (3.0, -7.0), (-3.0, -7.0)]
+  | 2 -> [(-2.5, 7.0), (2.5, 7.0), (2.5, -7.0), (-2.5, -7.0)]
+  | 3 -> [(-1.5, 7.0), (1.5, 7.0), (1.5, -4.0), (-6.5, -4.0), (-6.5, -1.0), (-1.5, -1.0)]
+  | 4 -> [(-3.0, 7.0), (3.0, 7.0), (3.0, -7.0), (-3.0, -7.0)]
+  | 5 -> [(-2.5, 7.0), (2.5, 7.0), (2.5, -7.0), (-2.5, -7.0)]
+  | 6 -> [(-3.0, 7.0), (3.0, 7.0), (3.0, -7.0), (-3.0, -7.0)]
+  | 7 -> [(-3.0, 7.0), (3.0, 7.0), (3.0, -7.0), (-3.0, -7.0)]
+  | _ -> [(-3.0, 8.0), (3.0, 8.0), (3.0, -8.0), (-3.0, -8.0)]
+
+fun lagoonInner (h : Int) : [(Float, Float, Float, Float)] =
+  match h with
+  | _ -> []
+
+fun lagoonPosts (h : Int) : [(Float, Float, Float)] =
+  match h with
+  | 3 -> [(0.7, -3.3, 0.3)]
+  | 4 -> [(0.0, 2.5, 0.3), (-1.0, 0.5, 0.25), (1.0, 0.8, 0.25), (0.0, -1.5, 0.3), (-1.2, -3.0, 0.25), (1.2, -3.2, 0.25)]
+  | 7 -> [(-1.8, 3.5, 0.2), (0.6, 3.0, 0.2), (2.0, 1.8, 0.2), (-0.8, 1.2, 0.2), (1.2, -0.4, 0.2), (-2.0, -0.8, 0.2), (0.0, -2.2, 0.2), (-1.2, -3.6, 0.2), (1.9, -3.4, 0.2)]
+  | _ -> []
+
+fun lagoonSand (h : Int) : [(Float, Float, Float, Float)] =
+  match h with
+  | 7 -> [(-3.0, -1.8, -1.0, 0.2), (0.4, 1.0, 3.0, 2.6)]
+  | _ -> []
+
+fun lagoonWater (h : Int) : [(Float, Float, Float, Float)] =
+  match h with
+  | 0 -> [(-2.5, -4.0, -1.0, 4.0), (1.0, -4.0, 2.5, 4.0)]
+  | 1 -> [(-3.0, -2.0, -1.8, 0.0), (-1.2, -2.0, 1.2, 0.0), (1.8, -2.0, 3.0, 0.0)]
+  | 2 -> [(-2.5, -2.0, -1.7, 2.0), (1.7, -2.0, 2.5, 2.0)]
+  | 3 -> [(-6.5, -4.0, -3.5, -3.5)]
+  | 4 -> [(-3.0, 1.0, -1.6, 3.0), (1.6, -2.0, 3.0, 0.0)]
+  | 5 -> [(1.2, -4.0, 2.5, 3.0)]
+  | 6 -> [(-1.5, -3.0, 3.0, 3.0)]
+  | 8 -> [(-3.0, -8.0, -1.5, -2.5), (1.5, -8.0, 3.0, -2.5), (-1.5, -4.0, -0.4, -2.5), (0.4, -4.0, 1.5, -2.5), (-1.5, -8.0, 1.5, -7.0)]
+  | _ -> []
+
+fun lagoonSlopes (h : Int) : [(Float, Float, Float, Float, Float, Float)] =
+  match h with
+  | 5 -> [(-2.5, -4.0, 1.2, 3.0, 0.5, 0.0)]
+  | _ -> []
+
+fun lagoonSpinners (h : Int) : [(Float, Float, Float, Float)] =
+  match h with
+  | 2 -> [(0.0, 0.0, 1.3, 1.5)]
+  | 8 -> [(-1.0, -1.6, 1.2, 1.4)]
+  | _ -> []
+
+fun lagoonVia (h : Int) (at : (Float, Float)) : (Float, Float) =
+  let (x, z) = at in
+  match h with
+  | 1 -> if z >. 0.9 then (1.5, 1.2) else if z >. (-2.4) then (1.5, -2.6) else lagoonCup h
+  | 2 -> if z >. 2.3 then (1.45, 2.6) else if z >. (-2.2) then (1.55, -2.4) else lagoonCup h
+  | 3 -> if x >. (-1.2) and z >. (-2.0) then (0.0, -2.4) else lagoonCup h
+  | 6 -> if x >. (-1.6) and z >. 3.0 then (-2.2, 3.6) else if z >. (-3.2) then (-2.2, -3.6) else lagoonCup h
+  | _ -> lagoonCup h
+
 def hubR : Float = 0.16
 def barT : Float = 0.14
 
 -- Where the game, playing itself, aims from a place: the cup, or a way round to it.
-fun via (h : Int) (at : (Float, Float)) : (Float, Float) =
+fun meadowVia (h : Int) (at : (Float, Float)) : (Float, Float) =
   let (x, z) = at in
   match h with
   | 1 -> if z >. (-1.0) then (0.0, -2.6) else cup h
@@ -409,6 +766,9 @@ fun setFrom (sys : M.System) (p : Int) (at : (Float, Float)) : () ! Process =
   let (x, z) = at in
   let u = setf sys (b + 4) x in
   setf sys (b + 5) z
+
+-- The hole played, of all the courses' holes.
+fun holeAt (sys : M.System) : Int ! Process = geti sys courseI * holes + geti sys holeI
 
 fun scoreOf (sys : M.System) (p : Int) (h : Int) : Int ! Process = geti sys (scoresI + p * holes + h)
 
@@ -567,6 +927,11 @@ fun cupColour (x : Int) (y : Int) : (Int, Int, Int, Int) =
     let v = floor (235.0 -. 150.0 *. deep *. deep) in
     (v, v, v - 8, 255)
 
+-- The head of the arrow aimed: a wedge, its point at the top.
+fun arrowColour (x : Int) (y : Int) : (Int, Int, Int, Int) =
+  let half = (toFloat y +. 0.5) *. 0.5 in
+  if y >= 2 and y < 30 and F.abs (toFloat x +. 0.5 -. 16.0) <. half then white else clear
+
 -- An arrow head, its point at the top, to show which way the ground falls.
 fun chevronColour (x : Int) (y : Int) : (Int, Int, Int, Int) =
   let d = F.abs (toFloat x +. 0.5 -. 8.0) in
@@ -689,6 +1054,7 @@ fun greens_setup (s : Int) (user : Int) : () ! Process =
   let letters = M.pointer (M.kept sys glyphsAt) in
   let i4 = V.forEach (\c -> let key = C.toString c in M.writeInt32At letters (C.code c - 32) (M.createImage sys ("greens.letter5." ++ key) (7 * letterScale) (9 * letterScale) (letterPicture key) M.imageLinear)) (S.chars alphabet) in
   let i6 = seti sys cupI (M.createImage sys "greens.cup" 64 64 (generated 64 64 cupColour) M.imageLinear) in
+  let i7 = seti sys arrowI (M.createImage sys "greens.arrow" 32 32 (generated 32 32 arrowColour) M.imageLinear) in
 
   -- Sounds: the putter's tock, a wall's knock, the cup, the water, and a cheer.
   let w1 = seti sys puttI (M.createSound sys "greens.putt" rate 1 (made 0.12 (\t i -> tone 1350.0 t *. F.exp (0.0 -. t *. 55.0) *. 0.6 +. noise i *. F.exp (0.0 -. t *. 160.0) *. 0.3))) in
@@ -698,11 +1064,7 @@ fun greens_setup (s : Int) (user : Int) : () ! Process =
   let w5 = seti sys cheerI (M.createSound sys "greens.cheer" rate 1 (made 1.4 (\t i -> noise i *. F.sin (F.pi *. t /. 1.4) *. 0.3))) in
   let w6 = seti sys bumpI (M.createSound sys "greens.bump" rate 1 (made 0.3 (\t i -> F.sin (F.tau *. (260.0 *. t +. 1500.0 *. t *. t)) *. F.exp (0.0 -. t *. 11.0) *. 0.5))) in
 
-  -- The grass round the holes, and the sun.
-  let field = M.spawn sys in
-  let f1 = M.insertTransform sys field transform (0.0, groundY, 0.0) M.unturned (400.0, 1.0, 400.0) in
-  let f2 = M.setMesh sys field (geti sys planeI) in
-  let f3 = M.setMaterial sys field (0.05, 0.17, 0.05, 1.0) (0.0, 0.0, 0.0) 0.95 0.0 in
+  -- The sun.
   let sun = M.spawn sys in
   let l1 = M.insertTransform sys sun transform (0.0, 0.0, 0.0) (M.lookingAt (0.0, 0.0, 0.0) (-0.35, -1.0, -0.6)) (1.0, 1.0, 1.0) in
   let l2 = M.setLightWith sys sun (1.0, 0.96, 0.88) 2.2 True in
@@ -727,18 +1089,23 @@ fun greens_setup (s : Int) (user : Int) : () ! Process =
       M.insertFloats sys entity (M.kept sys ballAt) [toFloat p]) (range 0 4) in
   let d = V.forEach (\i ->
       let entity = M.spawn sys in
-      -- After the ring: a splash, six drops and two rings.
-      let ringed = i == dots or i > dots + 6 in
+      -- The ring under the ball; a splash, six drops and two rings; and the arrow aimed,
+      -- its shaft and its head.
+      let ringed = i == dots or (i > dots + 6 and i <= dots + 8) in
+      let flat = ringed or i > dots + 8 in
       let v1 = M.insertTransform sys entity transform (0.0, -50.0, 0.0) M.unturned (0.05, 0.05, 0.05) in
-      let v2 = M.setMesh sys entity (if ringed then geti sys planeI else geti sys sphereI) in
+      let v2 = M.setMesh sys entity (if flat then geti sys planeI else geti sys sphereI) in
       let v3 = M.setMaterial sys entity (0.0, 0.0, 0.0, 1.0) (1.4, 1.4, 1.4) 1.0 0.0 in
       let v4 = if ringed then (let w = M.setTextures sys entity (geti sys ringI) 0 0 in M.setAlphaCutoff sys entity 0.5) else () in
+      let v6 = if i == dots + 10 then (let w = M.setTextures sys entity (geti sys arrowI) 0 0 in M.setAlphaCutoff sys entity 0.5) else () in
       let v5 = unshadow sys entity in
-      M.insertFloats sys entity (M.kept sys dotAt) [toFloat i]) (range 0 (dots + 9)) in
+      M.insertFloats sys entity (M.kept sys dotAt) [toFloat i]) (range 0 (dots + 11)) in
 
   -- The best round played alone, so far.
-  let best = (match M.readGameText sys game "best.txt" with | Just text -> (match S.toInt (S.trim text) with | Just n -> n | None -> 0) | None -> 0) in
-  let r1 = seti sys bestI best in
+  let r1 = V.forEach (\c ->
+      let best = (match M.readGameText sys game (bestFile c) with | Just text -> (match S.toInt (S.trim text) with | Just n -> n | None -> 0) | None -> 0) in
+      seti sys (bestsI + c) best) (range 0 courses) in
+  let r2 = M.defineNumber sys "greens.course" 0.0 in
   -- Whether the game plays itself, for trying it unwatched.
   let t1 = M.defineTruth sys "greens.autoplay" False in
   -- Whether the aim is held still, not swaying, for trying putts exactly.
@@ -760,12 +1127,16 @@ fun build (sys : M.System) (h : Int) : () ! Process =
   let cylinder = geti sys cylinderI in
   let sphere = geti sys sphereI in
   let plane = geti sys planeI in
-  let green = (0.1, 0.46, 0.13) in
+  let c = h / holes in
+  let green = greenOf c in
+  -- The ground round about.
+  let (ground, shine) = groundOf c in
+  let u0 = piece sys plane (0.0, groundY, 0.0) M.unturned (400.0, 1.0, 400.0) ground shine [0.0, 0.0, 0.0, 0.0] in
   -- The green, a slab a fifth of a metre thick, its top at nought, mown in stripes, on a
   -- bank of earth standing up out of the grass.
   let u3 = V.forEach (\r ->
       let (x0, z0, x1, z1) = r in
-      let bank = piece sys cube ((x0 +. x1) /. 2.0, (groundY -. 0.2) /. 2.0, (z0 +. z1) /. 2.0) M.unturned (x1 -. x0 +. wallT, 0.0 -. 0.2 -. groundY, z1 -. z0 +. wallT) (0.36, 0.23, 0.13) 0.95 [0.0, 0.0, 0.0, 0.0] in
+      let bank = piece sys cube ((x0 +. x1) /. 2.0, (groundY -. 0.2) /. 2.0, (z0 +. z1) /. 2.0) M.unturned (x1 -. x0 +. wallT, 0.0 -. 0.2 -. groundY, z1 -. z0 +. wallT) (bankOf c) 0.95 [0.0, 0.0, 0.0, 0.0] in
       ()) (floors h) in
   -- The green round the water, which lies lower: mown in stripes half a metre wide, the
   -- same wherever the green is cut.
@@ -828,11 +1199,36 @@ fun build (sys : M.System) (h : Int) : () ! Process =
           let w1 = M.setMaterial sys e (0.9, 0.95, 1.0, 1.0) (0.5, 0.55, 0.6) 0.5 0.0 in
           unshadow sys e)
         (range 0 windStreaks)) (range 0 (len (slopes h))) in
-  -- Trees round about, clear of the course.
-  let u10 = V.forEach (\t -> let (x, z, size) = t in
-      let trunk = piece sys cylinder (x, groundY, z) M.unturned (0.08 *. size, 0.75 *. size, 0.08 *. size) (0.36, 0.22, 0.12) 0.9 [0.0, 0.0, 0.0, 0.0] in
-      let crown = piece sys sphere (x, groundY +. 1.15 *. size, z) M.unturned (0.6 *. size, 0.7 *. size, 0.6 *. size) (0.08 +. 0.04 *. size, 0.3 +. 0.06 *. size, 0.1) 0.9 [0.0, 0.0, 0.0, 0.0] in
-      ()) (trees h) in
+  -- What grows round about, clear of the course: trees in the meadow, cacti and rocks in
+  -- the dunes, palms on islets in the lagoon.
+  let spots = trees h in
+  let u10 = V.forEach (\i -> let (x, z, size) = V.getOr (0.0, 0.0, 1.0) spots i in
+      match c with
+      | 1 ->
+          (if i % 3 == 0 then
+             (let rock = piece sys sphere (x, groundY, z) M.unturned (0.55 *. size, 0.32 *. size, 0.45 *. size) (0.6, 0.42, 0.28) 0.9 [0.0, 0.0, 0.0, 0.0] in ())
+           else
+             (let cactus = (0.22, 0.48, 0.2) in
+              let stem = piece sys cylinder (x, groundY, z) M.unturned (0.13 *. size, 1.15 *. size, 0.13 *. size) cactus 0.8 [0.0, 0.0, 0.0, 0.0] in
+              let reach = piece sys cube (x +. 0.16 *. size, groundY +. 0.5 *. size, z) M.unturned (0.3 *. size, 0.1 *. size, 0.1 *. size) cactus 0.8 [0.0, 0.0, 0.0, 0.0] in
+              let arm = piece sys cylinder (x +. 0.28 *. size, groundY +. 0.45 *. size, z) M.unturned (0.08 *. size, 0.45 *. size, 0.08 *. size) cactus 0.8 [0.0, 0.0, 0.0, 0.0] in
+              let other = piece sys cylinder (x -. 0.24 *. size, groundY +. 0.65 *. size, z) M.unturned (0.07 *. size, 0.35 *. size, 0.07 *. size) cactus 0.8 [0.0, 0.0, 0.0, 0.0] in
+              let reach2 = piece sys cube (x -. 0.13 *. size, groundY +. 0.7 *. size, z) M.unturned (0.24 *. size, 0.09 *. size, 0.09 *. size) cactus 0.8 [0.0, 0.0, 0.0, 0.0] in
+              ()))
+      | 2 ->
+          (let islet = piece sys cylinder (x, groundY -. 0.1, z) M.unturned (0.7 *. size, 0.18, 0.7 *. size) (0.88, 0.78, 0.55) 0.95 [0.0, 0.0, 0.0, 0.0] in
+           let top = groundY +. 1.7 *. size in
+           let trunk = piece sys cylinder (x, groundY, z) M.unturned (0.06 *. size, 1.7 *. size, 0.06 *. size) (0.55, 0.4, 0.24) 0.9 [0.0, 0.0, 0.0, 0.0] in
+           let frond = (0.12, 0.46, 0.14) in
+           let f1 = piece sys sphere (x, top, z) M.unturned (0.85 *. size, 0.12 *. size, 0.22 *. size) frond 0.8 [0.0, 0.0, 0.0, 0.0] in
+           let f2 = piece sys sphere (x, top, z) M.unturned (0.22 *. size, 0.12 *. size, 0.85 *. size) frond 0.8 [0.0, 0.0, 0.0, 0.0] in
+           let f3 = piece sys sphere (x, top, z) (yaw 0.785) (0.75 *. size, 0.1 *. size, 0.2 *. size) frond 0.8 [0.0, 0.0, 0.0, 0.0] in
+           let f4 = piece sys sphere (x, top, z) (yaw (-0.785)) (0.75 *. size, 0.1 *. size, 0.2 *. size) frond 0.8 [0.0, 0.0, 0.0, 0.0] in
+           ())
+      | _ ->
+          (let trunk = piece sys cylinder (x, groundY, z) M.unturned (0.08 *. size, 0.75 *. size, 0.08 *. size) (0.36, 0.22, 0.12) 0.9 [0.0, 0.0, 0.0, 0.0] in
+           let crown = piece sys sphere (x, groundY +. 1.15 *. size, z) M.unturned (0.6 *. size, 0.7 *. size, 0.6 *. size) (0.08 +. 0.04 *. size, 0.3 +. 0.06 *. size, 0.1) 0.9 [0.0, 0.0, 0.0, 0.0] in
+           ())) (range 0 (len spots)) in
   -- The tee, and the cup with its flag.
   let (tx, tz) = tee h in
   let u9 = piece sys cube (tx, -0.006, tz) M.unturned (1.1, 0.02, 0.7) (0.1, 0.4, 0.15) 0.9 [0.0, 0.0, 0.0, 0.0] in
@@ -936,11 +1332,12 @@ fun greens_play (s : Int) (user : Int) : () ! Process =
   let timer = getf sys timerF -. dt in
   let u1 = setf sys timerF timer in
   let u2 = setf sys sayF (getf sys sayF -. dt) in
-  let u3 = if geti sys builtI != geti sys holeI then build sys (geti sys holeI) else () in
+  let u3 = if geti sys builtI != holeAt sys then build sys (holeAt sys) else () in
   let phase = geti sys phaseI in
   let u4 =
     match phase with
     | 0 -> onTitle sys auto
+    | 6 -> onChoose sys auto
     | 1 -> onAim sys dt auto
     | 2 -> (let v = onRoll sys dt now in if auto then () else onLook sys)
     | 3 -> if timer <. 0.0 then nextTurn sys else ()
@@ -983,7 +1380,32 @@ fun onTitle (sys : M.System) (auto : Bool) : () ! Process =
     else if M.actionPressed sys "aim" then tileUnder sys
     else 0
   in
-  if chosen > 0 then startRound sys chosen else ()
+  if chosen > 0 then (let u = seti sys playersI chosen in begin sys choose 0.6) else ()
+
+-- Which course: by key, or the one clicked. Playing itself, the one greens.course names.
+fun onChoose (sys : M.System) (auto : Bool) : () ! Process =
+  let chosen =
+    if auto then (if getf sys timerF <. 0.0 then 1 + max 0 (min (courses - 1) (F.round (M.signal sys "greens.course"))) else 0)
+    else if M.actionPressed sys "one" then 1
+    else if M.actionPressed sys "two" then 2
+    else if M.actionPressed sys "three" then 3
+    else if M.actionPressed sys "aim" then courseUnder sys
+    else 0
+  in
+  if chosen > 0 then (let u = seti sys courseI (chosen - 1) in startRound sys (geti sys playersI)) else ()
+
+-- Where the courses are on the screen, and which is under the pointer, or 0.
+fun courseX (c : Int) : Float = (toFloat c -. 1.0) *. 0.95
+def courseY : Float = -0.1
+
+fun courseUnder (sys : M.System) : Int ! Process =
+  let (ex, ey, ez) = (getf sys eyeXF, getf sys (eyeXF + 1), getf sys (eyeXF + 2)) in
+  match M.pointerOnGround sys (ey -. hudDepth) with
+  | Just (x, y, z) ->
+      let sx = (x -. ex) /. hudScale in
+      let sy = (ez -. z) /. hudScale in
+      V.getOr 0 (map (\c -> c + 1) (V.filter (\c -> F.abs (sx -. courseX c) <. 0.43 and F.abs (sy -. courseY) <. 0.33) (range 0 courses))) 0
+  | None -> 0
 
 -- Where the title's numbers are on the screen.
 fun tileX (n : Int) : Float = toFloat n *. 0.5 -. 1.25
@@ -1010,7 +1432,7 @@ fun startRound (sys : M.System) (players : Int) : () ! Process =
 fun startHole (sys : M.System) (h : Int) : () ! Process =
   let n = geti sys playersI in
   let u1 = seti sys holeI h in
-  let (tx, tz) = tee h in
+  let (tx, tz) = tee (holeAt sys) in
   let u2 = V.forEach (\p ->
       let x = tx +. (toFloat p -. toFloat (n - 1) /. 2.0) *. 0.26 in
       let v1 = setBall sys p (x, tz, 0.0, 0.0) in
@@ -1025,7 +1447,7 @@ fun startHole (sys : M.System) (h : Int) : () ! Process =
 fun startTurn (sys : M.System) (p : Int) : () ! Process =
   let u1 = seti sys turnI p in
   let (bx, bz) = spotOf sys p in
-  let (vx, vz) = via (geti sys holeI) (bx, bz) in
+  let (vx, vz) = via (holeAt sys) (bx, bz) in
   let u2 = setf sys angleF (F.atan2 (vz -. bz) (vx -. bx)) in
   let u3 = setf sys powerF 0.0 in
   let u4 = setf sys chargeF 0.0 in
@@ -1165,7 +1587,7 @@ fun keys (sys : M.System) (dt : Float) (p : Int) : () ! Process =
 -- Playing itself: at the hole, or the way round to it, hard enough to get a little past.
 fun autoPutt (sys : M.System) (p : Int) : () ! Process =
   let (bx, bz) = spotOf sys p in
-  let (tx, tz) = via (geti sys holeI) (bx, bz) in
+  let (tx, tz) = via (holeAt sys) (bx, bz) in
   let speed = F.sqrt (2.0 *. greenDrag *. (apart (bx, bz) (tx, tz) +. 0.5)) in
   putt sys p (F.atan2 (tz -. bz) (tx -. bx)) (fclamp 0.0 1.0 ((speed -. slowest) /. (fastest -. slowest)))
 
@@ -1183,7 +1605,7 @@ fun putt (sys : M.System) (p : Int) (angle : Float) (power : Float) : () ! Proce
 -- The ball rolling, in steps short enough not to pass through a wall.
 fun onRoll (sys : M.System) (dt : Float) (now : Float) : () ! Process =
   let p = geti sys turnI in
-  let h = geti sys holeI in
+  let h = holeAt sys in
   let ball = ballOf sys p in
   let (x, z, vx, vz) = ball in
   let speed = F.sqrt (vx *. vx +. vz *. vz) in
@@ -1263,12 +1685,16 @@ fun nextHole (sys : M.System) : () ! Process =
 fun finish (sys : M.System) : () ! Process =
   let n = geti sys playersI in
   let total = totalOf sys 0 in
-  let best = geti sys bestI in
+  let c = geti sys courseI in
+  let best = geti sys (bestsI + c) in
   let better = n == 1 and (best == 0 or total < best) in
-  let u1 = if better then (let v1 = seti sys bestI total in let v2 = seti sys newBestI 1 in let w = M.writeGameText sys game "best.txt" "${total}" in ()) else () in
+  let u1 = if better then (let v1 = seti sys (bestsI + c) total in let v2 = seti sys newBestI 1 in let w = M.writeGameText sys game (bestFile c) "${total}" in ()) else () in
   let u2 = seti sys roundsI (geti sys roundsI + 1) in
   let u3 = sound sys cheerI 0.7 1.0 in
   begin sys final (if M.signalIsTrue sys "greens.autoplay" then 1.0 else 20.0)
+
+-- Where the best round on a course is kept: the meadow's where the one course's was.
+fun bestFile (c : Int) : String = if c == 0 then "best.txt" else "best-${c}.txt"
 
 fun toTitle (sys : M.System) : () ! Process =
   let u1 = seti sys holeI 0 in
@@ -1282,11 +1708,11 @@ fun said (sys : M.System) : String ! Process =
   let who = if geti sys playersI > 1 then name p ++ " " else "" in
   let h = geti sys holeI in
   match geti sys messageI with
-  | 1 -> who ++ scoreWord (geti sys (strokesI + p)) (par h)
+  | 1 -> who ++ scoreWord (geti sys (strokesI + p)) (par (holeAt sys))
   | 2 -> "SPLASH! +1"
   | 3 -> "OUT! +1"
   | 4 -> who ++ "PICKS UP"
-  | 5 -> "HOLE ${h + 1}: ${holeName h}"
+  | 5 -> "HOLE ${h + 1}: ${holeName (holeAt sys)}"
   | 6 -> name p ++ " TO PLAY"
   | _ -> ""
 
@@ -1339,7 +1765,7 @@ fun goingIn (sys : M.System) (kind : Int) (t : Float) : (Float, Float, Float) ! 
 
 -- The bars turning, and the flag stirring.
 fun showCourse (sys : M.System) (now : Float) : () ! Process =
-  let h = geti sys holeI in
+  let h = holeAt sys in
   -- Not while the pieces are another hole's, the next not yet built.
   if geti sys builtI != h then () else
   M.forEachIn2 sys 1 (\entity piece tr ->
@@ -1424,6 +1850,11 @@ fun showDots (sys : M.System) (now : Float) : () ! Process =
   let aimed = phase == aiming and not (M.signalIsTrue sys "greens.autoplay") in
   let recolour = geti sys dotsForI != p + 1 in
   let u = seti sys dotsForI (p + 1) in
+  -- The arrow's colour, green to gold to red as the putt is harder, in steps.
+  let shade = floor (fclamp 0.0 1.0 power *. 8.0) in
+  let reshade = geti sys arrowShadeI != shade + 1 in
+  let u2 = seti sys arrowShadeI (shade + 1) in
+  let length = 0.15 +. 2.2 *. fclamp 0.0 1.0 power in
   let (r, g, b) = colourOf p in
   M.forEachIn2 sys 2 (\entity which tr ->
     let i = F.round (M.readFloat32 which 0) in
@@ -1433,12 +1864,21 @@ fun showDots (sys : M.System) (now : Float) : () ! Process =
        let size = 0.44 +. 0.05 *. F.sin (now *. 5.0) in
        let v2 = M.setScale tr (size, 1.0, size) in
        M.setTranslation tr (if phase == aiming or phase == rolling then (bx, 0.012, bz) else (0.0, -50.0, 0.0)))
-    else if i > dots then splash sys (i - dots - 1) splashing t tr
-    else
-      (let along = 0.18 +. reach *. toFloat (i + 1) /. toFloat dots in
-       let size = if i == dots - 1 then 0.055 else 0.032 in
-       let v2 = M.setScale tr (size, size, size) in
-       M.setTranslation tr (if aimed then (bx +. F.cos a *. along, ballR, bz +. F.sin a *. along) else (0.0, -50.0, 0.0))))
+    else if i > dots + 8 then
+      -- The arrow: from the ball the way it will go, longer the harder.
+      (let (r, g, b) = arrowShade (toFloat shade /. 8.0) in
+       let head = i == dots + 10 in
+       let v1 = if reshade then (let w1 = M.setMaterial sys entity (0.0, 0.0, 0.0, 1.0) (r, g, b) 1.0 0.0 in if head then (let w2 = M.setTextures sys entity (geti sys arrowI) 0 0 in M.setAlphaCutoff sys entity 0.5) else ()) else () in
+       let along = if head then 0.17 +. length +. 0.2 else 0.17 +. length /. 2.0 in
+       let v2 = M.setRotation tr (yaw a) in
+       let v3 = M.setScale tr (if head then (0.46, 1.0, 0.52) else (length, 1.0, 0.18)) in
+       M.setTranslation tr (if aimed then (bx +. F.cos a *. along, 0.02, bz +. F.sin a *. along) else (0.0, -50.0, 0.0)))
+    else splash sys (i - dots - 1) splashing t tr)
+
+-- Green when soft, gold midway, red at the hardest; glowing a little.
+fun arrowShade (power : Float) : (Float, Float, Float) =
+  if power <. 0.5 then (let k = power /. 0.5 in (0.3 +. 1.1 *. k, 1.4 -. 0.1 *. k, 0.3 -. 0.15 *. k))
+  else (let k = (power -. 0.5) /. 0.5 in (1.4, 1.3 -. 1.0 *. k, 0.15))
 
 -- A splash where a ball went into the water: drops thrown up and out, and rings spreading.
 fun splash (sys : M.System) (j : Int) (on : Bool) (t : Float) (tr : Ptr) : () ! Process =
@@ -1457,15 +1897,16 @@ fun splash (sys : M.System) (j : Int) (on : Bool) (t : Float) (tr : Ptr) : () ! 
 
 -- The camera: over the course looking down at the title; else behind the ball to play,
 -- from whichever way round it has been turned, looking a quarter of the way from it to the
--- cup, from far enough back to see both above and below the bars on the screen, the ball a
+-- cup (or the way round to it), from far enough back to see both above and below the bars on the screen, the ball a
 -- little below the middle (room to drag it back). It glides there, but turns at once.
 fun moveEye (sys : M.System) (dt : Float) : () ! Process =
   let phase = geti sys phaseI in
   let (goalEye, goalLook) =
-    if phase == title then ((0.0, 14.0, 0.0), (0.0, 0.0, -0.02))
+    if phase == title or phase == choose then ((0.0, 14.0, 0.0), (0.0, 0.0, -0.02))
     else
       (let (bx, bz) = spotOf sys (geti sys turnI) in
-       let (cx, cz) = cup (geti sys holeI) in
+       -- Toward the cup, or the way round to it.
+       let (cx, cz) = via (holeAt sys) (bx, bz) in
        let mx = bx +. (cx -. bx) *. 0.25 in
        let mz = bz +. (cz -. bz) *. 0.25 in
        let back = fclamp 4.5 16.0 (2.5 +. 1.2 *. apart (bx, bz) (cx, cz)) in
@@ -1575,23 +2016,48 @@ fun layout (sys : M.System) : ([(Float, Float, Float, (Float, Float, Float), Str
   let phase = geti sys phaseI in
   match phase with
   | 0 -> titleScreen sys
+  | 6 -> chooseScreen sys
   | 4 -> scorecard sys False
   | 5 -> scorecard sys True
   | _ -> playScreen sys
 
 fun titleScreen (sys : M.System) : ([(Float, Float, Float, (Float, Float, Float), String, Int)], [(Float, Float, Float, Float, (Float, Float, Float))]) ! Process =
-  let best = geti sys bestI in
   let lines = [
       (0.0, 0.72, 0.04, gold, "NINE GREENS", 1),
       (0.0, 0.4, 0.013, dim, "MINI GOLF FOR ONE TO FOUR", 1),
       (0.0, 0.18, 0.017, ink1, "HOW MANY PLAYERS?", 1),
-      (0.0, -0.55, 0.012, dim, "CLICK OR TAP ONE, OR PRESS 1 TO 4", 1),
-      (0.0, -0.75, 0.012, gold, (if best > 0 then "BEST ROUND: ${best}" else ""), 1)
+      (0.0, -0.55, 0.012, dim, "CLICK OR TAP ONE, OR PRESS 1 TO 4", 1)
     ]
   in
   let numbers = map (\n -> (tileX n, tileY +. 0.1, 0.04, ink1, "${n}", 1)) [1, 2, 3, 4] in
   let tiles = map (\n -> let (r, g, b) = colourOf (n - 1) in (tileX n, tileY, 0.36, 0.4, (r *. 0.45, g *. 0.45, b *. 0.45))) [1, 2, 3, 4] in
   (V.append lines numbers, V.append [(0.0, 0.0, 3.0, 1.85, shade)] tiles)
+
+-- The courses to choose from: each's name, par, and the best round played on it alone.
+fun chooseScreen (sys : M.System) : ([(Float, Float, Float, (Float, Float, Float), String, Int)], [(Float, Float, Float, Float, (Float, Float, Float))]) ! Process =
+  let n = geti sys playersI in
+  let heading = [
+      (0.0, 0.7, 0.026, gold, "CHOOSE A COURSE", 1),
+      (0.0, 0.46, 0.012, dim, (if n == 1 then "ONE PLAYER" else "${n} PLAYERS"), 1),
+      (0.0, -0.62, 0.012, dim, "CLICK OR TAP ONE, OR PRESS 1 TO 3", 1)
+    ]
+  in
+  let each = concatMap (\c ->
+      let parTotal = V.foldl (\t i -> t + par (c * holes + i)) 0 (range 0 holes) in
+      let best = geti sys (bestsI + c) in
+      [(courseX c, courseY +. 0.17, 0.017, ink1, courseName c, 1),
+       (courseX c, courseY -. 0.03, 0.011, dim, "PAR ${parTotal}", 1),
+       (courseX c, courseY -. 0.17, 0.011, gold, (if best > 0 then "BEST ${best}" else ""), 1)]) (range 0 courses)
+  in
+  let tiles = map (\c -> (courseX c, courseY, 0.86, 0.64, tileTint c)) (range 0 courses) in
+  (V.append heading each, V.append [(0.0, 0.0, 3.0, 1.85, shade)] tiles)
+
+-- Each course's tile: grass, sand, sea.
+fun tileTint (c : Int) : (Float, Float, Float) =
+  match c with
+  | 1 -> (0.42, 0.28, 0.1)
+  | 2 -> (0.04, 0.2, 0.42)
+  | _ -> (0.06, 0.28, 0.08)
 
 fun playScreen (sys : M.System) : ([(Float, Float, Float, (Float, Float, Float), String, Int)], [(Float, Float, Float, Float, (Float, Float, Float))]) ! Process =
   let h = geti sys holeI in
@@ -1601,7 +2067,7 @@ fun playScreen (sys : M.System) : ([(Float, Float, Float, (Float, Float, Float),
   let stroke = strokes + (if geti sys phaseI == aiming then 1 else 0) in
   let top = [
       (-1.3, 0.95, 0.014, ink1, "HOLE ${h + 1} OF ${holes}", 0),
-      (-1.3, 0.85, 0.011, dim, "PAR ${par h}", 0),
+      (-1.3, 0.85, 0.011, dim, "PAR ${par (holeAt sys)}", 0),
       (1.3, 0.95, 0.014, bright (colourOf p), name p, 2),
       (1.3, 0.85, 0.011, dim, "STROKE ${stroke}", 2)
     ]
@@ -1630,7 +2096,8 @@ fun scorecard (sys : M.System) (over : Bool) : ([(Float, Float, Float, (Float, F
   let h = geti sys holeI in
   let n = geti sys playersI in
   let px = 0.015 in
-  let parTotal = V.foldl (\t i -> t + par i) 0 (range 0 holes) in
+  let first = geti sys courseI * holes in
+  let parTotal = V.foldl (\t i -> t + par (first + i)) 0 (range 0 holes) in
   let heading = V.concat [
       [(-1.3, 0.36, px, dim, "HOLE", 0)],
       map (\i -> (column i, 0.36, px, dim, "${i + 1}", 1)) (range 0 holes),
@@ -1639,7 +2106,7 @@ fun scorecard (sys : M.System) (over : Bool) : ([(Float, Float, Float, (Float, F
   in
   let pars = V.concat [
       [(-1.3, 0.2, px, dim, "PAR", 0)],
-      map (\i -> (column i, 0.2, px, dim, "${par i}", 1)) (range 0 holes),
+      map (\i -> (column i, 0.2, px, dim, "${par (first + i)}", 1)) (range 0 holes),
       [(1.05, 0.2, px, dim, "${parTotal}", 1)]
     ]
   in
@@ -1652,7 +2119,7 @@ fun scorecard (sys : M.System) (over : Bool) : ([(Float, Float, Float, (Float, F
           [(1.05, y, px, c, "${totalOf sys p}", 1)]
         ]) (range 0 n)
   in
-  let headline = if over then winner sys else "AFTER HOLE ${h + 1}" in
+  let headline = if over then winner sys else "${courseName (geti sys courseI)}: AFTER HOLE ${h + 1}" in
   let words = [
       (0.0, 0.62, (if over then 0.026 else 0.018), gold, headline, 1),
       (0.0, -0.72, 0.012, dim, (if over then "CLICK OR TAP TO PLAY AGAIN" else "CLICK OR TAP TO GO ON"), 1)
@@ -1676,4 +2143,5 @@ fun signals (sys : M.System) : () ! Process =
   let u8 = M.setSignalNumber sys "greens.ball.z" z in
   let u9 = M.setSignalNumber sys "greens.power" (if geti sys phaseI == aiming then getf sys powerF else 0.0) in
   let u10 = M.setSignalNumber sys "greens.sway" (sway sys) in
+  let u11 = M.setSignalNumber sys "greens.course.playing" (toFloat (geti sys courseI)) in
   V.forEach (\q -> M.setSignalNumber sys "greens.total.${q}" (toFloat (totalOf sys q))) (range 0 4)
