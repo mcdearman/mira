@@ -2948,6 +2948,11 @@ fn nine_greens_plays_a_round_of_the_lagoon() {
     nine_greens_plays_a_round(2);
 }
 
+#[test]
+fn nine_greens_plays_a_round_of_the_cliffs() {
+    nine_greens_plays_a_round(3);
+}
+
 fn nine_greens_plays_a_round(course: u8) {
     use crate::signal::Signals;
     if !have_meadowboot() {
