@@ -16,3 +16,4 @@ tests/frames/*.diff.png
 
 # The Meadow game's libraries an Android package carries, built by scripts/meadow-for.sh.
 android/retro_dunk/libs/
+android/nine_greens/libs/

@@ -1464,6 +1464,9 @@ impl Plugin for RenderPlugin {
         app.world.on_remove::<Material>(undrawn);
         app.world.on_remove::<Surface>(undrawn);
         app.world.on_remove::<NotShadowCaster>(undrawn);
+        // A marker with no bytes, so plugins may put it on what they draw: words and panels
+        // hung before the camera, say, which should not shadow the world below.
+        app.world.export_component::<NotShadowCaster>("mira.NotShadowCaster");
         app.world.init_resource::<Overlays>();
         app.world.init_resource::<views::ExtraViews>();
         app.world.init_resource::<DebugLines>();

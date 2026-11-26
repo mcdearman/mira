@@ -1,6 +1,6 @@
 name: Android package
 
-# Builds Tail Lights, and RetroDunk (a Meadow script), into packages for an Android phone,
+# Builds Tail Lights, and RetroDunk and Nine Greens (Meadow scripts), into packages for an Android phone,
 # to be put on one and tried. Run by hand, or when what they are built from changes in a
 # pull request.
 on:
@@ -10,6 +10,7 @@ on:
       - 'android/**'
       - 'examples/tail_lights/**'
       - 'examples/retro_dunk/**'
+      - 'examples/nine_greens/**'
       - 'bindings/meadow/**'
       - 'scripts/meadow-for.sh'
       - '.github/workflows/android-apk.yml'
@@ -82,12 +83,19 @@ jobs:
           tried-alive.txt
         if-no-files-found: warn
 
-  # RetroDunk is a Meadow script: MeadowBoot (from Meadow's release, which carries the
-  # phones' runtimes) builds it ahead of time into a library for each kind of processor,
-  # and the package carries it beside the engine.
-  retro-dunk:
+  # RetroDunk and Nine Greens are Meadow scripts: MeadowBoot (from Meadow's release, which
+  # carries the phones' runtimes) builds each ahead of time into a library for each kind of
+  # processor, and its package carries it beside the engine.
+  meadow-game:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { game: retro-dunk, script: examples/retro_dunk/Dunk.mw, lib: Dunk, crate: retro_dunk, id: dev.mira.retrodunk }
+        - { game: nine-greens, script: examples/nine_greens/Greens.mw, lib: Greens, crate: nine_greens, id: dev.mira.ninegreens }
+    name: ${{ matrix.game }}
     env:
       MEADOWBOOT_RELEASE: v0.4.0
     steps:
@@ -107,12 +115,13 @@ jobs:
     - name: The game, for a phone and for the emulator
       run: |
         export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
-        sh scripts/meadow-for.sh examples/retro_dunk/Dunk.mw aarch64-linux-android android/retro_dunk/libs/arm64-v8a
-        sh scripts/meadow-for.sh examples/retro_dunk/Dunk.mw x86_64-linux-android android/retro_dunk/libs/x86_64
+        libs=android/${{ matrix.crate }}/libs
+        sh scripts/meadow-for.sh ${{ matrix.script }} aarch64-linux-android $libs/arm64-v8a
+        sh scripts/meadow-for.sh ${{ matrix.script }} x86_64-linux-android $libs/x86_64
         # Without the names of things, which a phone has no use for; what it exports stays.
         strip="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
-        "$strip" --strip-unneeded android/retro_dunk/libs/arm64-v8a/libDunk.so android/retro_dunk/libs/x86_64/libDunk.so
-        ls -l android/retro_dunk/libs/*
+        "$strip" --strip-unneeded $libs/arm64-v8a/lib${{ matrix.lib }}.so $libs/x86_64/lib${{ matrix.lib }}.so
+        ls -l $libs/*
     - name: Package
       env:
         CARGO_PROFILE_DEV_OPT_LEVEL: 3
@@ -121,16 +130,16 @@ jobs:
       run: |
         export ANDROID_NDK_ROOT="$ANDROID_NDK_LATEST_HOME"
         mkdir -p packages
-        cargo apk build -p retro_dunk_android --target aarch64-linux-android
-        cp target/debug/apk/retro-dunk.apk packages/retro-dunk.apk
-        cargo apk build -p retro_dunk_android --target x86_64-linux-android
-        cp target/debug/apk/retro-dunk.apk packages/retro-dunk-emulator.apk
+        cargo apk build -p ${{ matrix.crate }}_android --target aarch64-linux-android
+        cp target/debug/apk/${{ matrix.game }}.apk packages/${{ matrix.game }}.apk
+        cargo apk build -p ${{ matrix.crate }}_android --target x86_64-linux-android
+        cp target/debug/apk/${{ matrix.game }}.apk packages/${{ matrix.game }}-emulator.apk
         ls -l packages
-        unzip -l packages/retro-dunk.apk | grep -E 'lib/|classes' || true
+        unzip -l packages/${{ matrix.game }}.apk | grep -E 'lib/|classes' || true
     - uses: actions/upload-artifact@v4
       with:
-        name: retro-dunk-apk
-        path: packages/retro-dunk.apk
+        name: ${{ matrix.game }}-apk
+        path: packages/${{ matrix.game }}.apk
         if-no-files-found: error
     - name: Let the emulator use the processor directly
       run: |
@@ -147,11 +156,11 @@ jobs:
         target: google_apis
         emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
         disable-animations: true
-        script: sh android/try-on-emulator.sh packages/retro-dunk-emulator.apk dev.mira.retrodunk
+        script: sh android/try-on-emulator.sh packages/${{ matrix.game }}-emulator.apk ${{ matrix.id }}
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: retro-dunk-on-an-emulator
+        name: ${{ matrix.game }}-on-an-emulator
         path: |
           tried-screen.png
           tried-log.txt

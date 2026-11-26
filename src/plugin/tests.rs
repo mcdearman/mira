@@ -2056,6 +2056,37 @@ fn have_meadowboot() -> bool {
     false
 }
 
+/// A Meadow script built again with nothing changed builds: MeadowBoot leaves the library
+/// as it was, older than the build, and that one is taken. (Once, only one written during
+/// the build was, so a game failed to start the second time it was played.)
+#[test]
+fn a_meadow_script_unchanged_builds_again() {
+    if !have_meadowboot() {
+        return;
+    }
+    let workspace = Workspace::new("meadow-again");
+    let source = workspace.dir.join("Counter.mw");
+    std::fs::write(&source, MEADOW_COUNTER.replace("STEP", "1.0")).unwrap();
+    let out = workspace.dir.join("out");
+    let first = super::scripts::build_meadow("counter", &source, &out).expect("built");
+    // As if it were built an hour ago, as it is when a game is played again another time.
+    fn age(folder: &Path) {
+        for entry in std::fs::read_dir(folder).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                age(&path);
+            } else if path.extension().is_some_and(|ends| ends == std::env::consts::DLL_EXTENSION) {
+                let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+                std::fs::File::options().write(true).open(&path).unwrap().set_modified(hour_ago).unwrap();
+            }
+        }
+    }
+    age(&out.join("meadow"));
+    let second = super::scripts::build_meadow("counter", &source, &out).expect("built again, nothing changed");
+    assert_eq!(first, second);
+    assert!(second.exists());
+}
+
 #[test]
 fn a_meadow_script_is_built_loaded_and_kept_built() {
     if !have_meadowboot() {
@@ -2875,4 +2906,244 @@ fn retro_dunk_is_aimed_with_the_mouse() {
 
     throw(&mut app, &|_| (0.0, -5.4));
     assert_eq!(said(&app, "dunk.phase"), 2.0, "a shot");
+}
+
+/// Nine Greens' script loaded into an app with what it needs, a frame a thirtieth of a
+/// second, and its first frame run.
+fn nine_greens(name: &str) -> (Workspace, App) {
+    use crate::{
+        assets::Assets,
+        audio::SilentAudioPlugin,
+        input::InputPlugin,
+        render::{Image, Mesh},
+        time::Time,
+    };
+    let workspace = Workspace::new(name);
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/nine_greens/Greens.mw");
+    std::fs::copy(script, workspace.dir.join("Greens.mw")).unwrap();
+    let mut app = app();
+    app.add_plugins(InputPlugin).add_plugins(SilentAudioPlugin).init_resource::<Assets<Mesh>>().init_resource::<Assets<Image>>();
+    app.load_scripts(&workspace.dir).unwrap();
+    assert!(app.script_problems().next().is_none(), "{:?}", app.script_problems().next());
+    app.world.resource_mut::<Time>().set_fixed_step(Some(std::time::Duration::from_secs_f64(1.0 / 30.0)));
+    app.update();
+    (workspace, app)
+}
+
+/// Nine Greens plays a round of nine holes by itself, two players taking turns, on each of
+/// its courses: the course asked for is the one played, every hole is played, every player
+/// holes out or picks up on each, and the card is kept.
+#[test]
+fn nine_greens_plays_a_round_of_the_meadow() {
+    nine_greens_plays_a_round(0);
+}
+
+#[test]
+fn nine_greens_plays_a_round_of_the_dunes() {
+    nine_greens_plays_a_round(1);
+}
+
+#[test]
+fn nine_greens_plays_a_round_of_the_lagoon() {
+    nine_greens_plays_a_round(2);
+}
+
+#[test]
+fn nine_greens_plays_a_round_of_the_cliffs() {
+    nine_greens_plays_a_round(3);
+}
+
+fn nine_greens_plays_a_round(course: u8) {
+    use crate::signal::Signals;
+    if !have_meadowboot() {
+        return;
+    }
+    let (_workspace, mut app) = nine_greens(&format!("nine-greens-{course}"));
+    app.world.resource_mut::<Signals>().set("greens.autoplay", 1.0);
+    app.world.resource_mut::<Signals>().set("greens.course", f64::from(course));
+    let said = |app: &App, what: &str| app.world.resource::<Signals>().number(what);
+    let mut played = std::collections::BTreeSet::new();
+    let (mut phases, mut holes, mut turns) = (std::collections::BTreeSet::new(), std::collections::BTreeSet::new(), std::collections::BTreeSet::new());
+    let mut frames = 0;
+    let mut totals = (0.0, 0.0);
+    while said(&app, "greens.rounds") < 1.0 {
+        assert!(frames < 60_000, "no round was finished in {frames} frames: holes {holes:?}, phases {phases:?}");
+        app.update();
+        frames += 1;
+        phases.insert(said(&app, "greens.phase") as i32);
+        if (1.0..=5.0).contains(&said(&app, "greens.phase")) {
+            played.insert(said(&app, "greens.course.playing") as i32);
+            holes.insert(said(&app, "greens.hole") as i32);
+            turns.insert(said(&app, "greens.turn") as i32);
+            let now = (said(&app, "greens.total.0"), said(&app, "greens.total.1"));
+            assert!(now.0 >= totals.0 && now.1 >= totals.1, "a total went down: {now:?} after {totals:?}");
+            totals = now;
+        }
+    }
+    assert_eq!(said(&app, "greens.players"), 2.0);
+    assert_eq!(played, [i32::from(course)].into(), "the course asked for was played");
+    assert_eq!(holes, (1..=9).collect(), "every hole was played");
+    assert_eq!(turns, [0, 1].into(), "both players had turns");
+    for phase in [1, 2, 3, 4, 5, 6] {
+        assert!(phases.contains(&phase), "phase {phase} never came: {phases:?}");
+    }
+    // At least a stroke a hole, and at most seven.
+    for total in [totals.0, totals.1] {
+        assert!((9.0..=63.0).contains(&total), "{totals:?}");
+    }
+}
+
+/// Nine Greens putted with the mouse, alone: a drag that begins off the ball turns the view
+/// and hits nothing, and one with the right button tilts it; held on the ball, the aim
+/// sways; let go where the drag began, nothing is hit; held still (as a test may hold it),
+/// a drag back from the ball sends it the other way, as hard as the drag is long on the
+/// screen; and a putt of the right length at the cup drops, and the hole is done.
+#[test]
+fn nine_greens_is_putted_with_the_mouse() {
+    use crate::{
+        input::{InjectedInput, KeyCode, MouseButton, Played},
+        render::{Camera, PointerSight},
+        signal::Signals,
+        transform::Transform,
+    };
+    if !have_meadowboot() {
+        return;
+    }
+    let (_workspace, mut app) = nine_greens("nine-greens-putt");
+    let said = |app: &App, what: &str| app.world.resource::<Signals>().number(what);
+    let eye = |app: &mut App| *app.world.query::<(&Camera, &Transform)>().iter().next().expect("the game has a camera").1;
+    let ball = |app: &App| (said(app, "greens.ball.x") as f32, said(app, "greens.ball.z") as f32);
+    // The pointer over a spot on the green, as the camera sees it.
+    let point = |app: &mut App, (x, z): (f32, f32)| {
+        let from = eye(app).translation;
+        app.world.insert_resource(PointerSight(Some((from, (Vec3::new(x, 0.1, z) - from).normalize()))));
+    };
+    // Where a spot on the green is on the screen: across and up, in half its height.
+    let on_screen = |app: &mut App, (x, z): (f32, f32)| {
+        let seen = eye(app);
+        let local = seen.rotation.inverse() * (Vec3::new(x, 0.1, z) - seen.translation);
+        glam::Vec2::new(local.x, local.y) / (-local.z * (0.9f32 / 2.0).tan())
+    };
+    // The button pressed with the pointer at `from`, moved to `to` and let go there.
+    let drag = |app: &mut App, from: (f32, f32), to: (f32, f32)| {
+        point(app, from);
+        app.world.resource_mut::<InjectedInput>().play(Played::Button(MouseButton::Left, true));
+        app.update();
+        for step in 1..=10 {
+            let t = step as f32 / 10.0;
+            point(app, (from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t));
+            app.update();
+        }
+        app.world.resource_mut::<InjectedInput>().play(Played::Button(MouseButton::Left, false));
+        app.update();
+        app.update();
+    };
+    // From the ball, back along (dx, dz) as far as is so hard (of the hardest) on the screen.
+    let pull = |app: &mut App, (dx, dz): (f32, f32), power: f32| {
+        let at = ball(app);
+        let screen = on_screen(app, at);
+        let (mut near, mut far) = (0.0f32, 20.0f32);
+        for _ in 0..40 {
+            let mid = (near + far) / 2.0;
+            if (on_screen(app, (at.0 + dx * mid, at.1 + dz * mid)) - screen).length() < power * 0.5 {
+                near = mid;
+            } else {
+                far = mid;
+            }
+        }
+        drag(app, at, (at.0 + dx * near, at.1 + dz * near));
+    };
+    let wait = |app: &mut App, frames: usize| {
+        for _ in 0..frames {
+            app.update();
+        }
+    };
+    let settle = |app: &mut App| {
+        for _ in 0..600 {
+            if said(app, "greens.phase") == 1.0 || said(app, "greens.phase") >= 4.0 {
+                return;
+            }
+            app.update();
+        }
+        panic!("the ball never came to rest");
+    };
+
+    // One player, then the first course.
+    for _ in 0..2 {
+        app.world.resource_mut::<InjectedInput>().play(Played::Key(KeyCode::Digit1, true));
+        app.update();
+        app.world.resource_mut::<InjectedInput>().play(Played::Key(KeyCode::Digit1, false));
+        app.update();
+        app.update();
+    }
+    wait(&mut app, 120);
+    assert_eq!((said(&app, "greens.phase"), said(&app, "greens.players"), said(&app, "greens.hole")), (1.0, 1.0, 1.0), "one player, on the first hole");
+    let tee = ball(&app);
+
+    // Off the ball and across: the view turns round the hole, and nothing is hit.
+    let before = eye(&mut app).translation;
+    drag(&mut app, (tee.0 + 1.5, tee.1 - 1.5), (tee.0 - 1.5, tee.1 - 1.5));
+    let after = eye(&mut app).translation;
+    assert_eq!((said(&app, "greens.phase"), said(&app, "greens.strokes")), (1.0, 0.0), "a drag off the ball hits nothing");
+    assert!((after.x - before.x).abs() > 1.0, "the view turned: {before} to {after}");
+    wait(&mut app, 30);
+
+    // With the right button, up the screen: the view tilts, lower, and nothing is hit.
+    let before = eye(&mut app).translation;
+    point(&mut app, (tee.0, tee.1 - 1.0));
+    app.world.resource_mut::<InjectedInput>().play(Played::Button(MouseButton::Right, true));
+    app.update();
+    for step in 1..=10 {
+        point(&mut app, (tee.0, tee.1 - 1.0 - 0.3 * step as f32));
+        app.update();
+    }
+    app.world.resource_mut::<InjectedInput>().play(Played::Button(MouseButton::Right, false));
+    app.update();
+    app.update();
+    let after = eye(&mut app).translation;
+    assert_eq!((said(&app, "greens.phase"), said(&app, "greens.strokes")), (1.0, 0.0), "a drag with the right button hits nothing");
+    assert!(after.y < before.y - 0.5, "the view tilted lower: {before} to {after}");
+    wait(&mut app, 30);
+
+    // Held on the ball and drawn back, the aim sways while it is held; brought back to where
+    // it began and let go, nothing is hit.
+    point(&mut app, tee);
+    app.world.resource_mut::<InjectedInput>().play(Played::Button(MouseButton::Left, true));
+    app.update();
+    point(&mut app, (tee.0, tee.1 + 0.5));
+    let mut sways = Vec::new();
+    for _ in 0..60 {
+        app.update();
+        sways.push(said(&app, "greens.sway"));
+    }
+    point(&mut app, tee);
+    app.update();
+    app.world.resource_mut::<InjectedInput>().play(Played::Button(MouseButton::Left, false));
+    app.update();
+    app.update();
+    let (least, most) = sways.iter().fold((f64::MAX, f64::MIN), |(l, m), &s| (l.min(s), m.max(s)));
+    assert!(most - least > 0.02, "the aim swayed: {least} to {most}");
+    assert_eq!((said(&app, "greens.phase"), said(&app, "greens.strokes")), (1.0, 0.0), "let go where it began, nothing is hit");
+    app.world.resource_mut::<Signals>().set("greens.steady", 1.0);
+
+    drag(&mut app, tee, (tee.0 + 0.02, tee.1 + 0.01));
+    assert_eq!((said(&app, "greens.phase"), said(&app, "greens.strokes")), (1.0, 0.0), "let go where it began, nothing is hit");
+
+    // Drawn back toward the tee's end: up the hole, half as hard as can be.
+    pull(&mut app, (0.0, 1.0), 0.5);
+    assert_eq!((said(&app, "greens.phase"), said(&app, "greens.strokes")), (2.0, 1.0), "a putt");
+    settle(&mut app);
+    let (x, z) = ball(&app);
+    assert!(x.abs() < 0.05 && f64::from(z) < tee.1 as f64 - 4.0, "it went up the hole: {x}, {z} from {tee:?}");
+    wait(&mut app, 120);
+
+    // At the cup, as hard as gets it half a metre past: in.
+    let cup = (0.0f32, -4.4f32);
+    let (dx, dz) = (cup.0 - x, cup.1 - z);
+    let reach = (dx * dx + dz * dz).sqrt();
+    let speed = (2.0 * 1.1 * (reach + 0.5)).sqrt();
+    pull(&mut app, (-dx / reach, -dz / reach), (speed - 0.3) / 6.7);
+    settle(&mut app);
+    assert_eq!(said(&app, "greens.total.0"), 2.0, "in, in two");
+    assert_eq!(said(&app, "greens.phase"), 4.0, "the card, everyone being in");
 }
